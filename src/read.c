@@ -27,15 +27,15 @@ struct passwd *getpwnam (char *name);
 # include <pwd.h>
 #endif
 
-#include "filedef.h"
+#include "commands.h"
+#include "debug.h"
 #include "dep.h"
+#include "filedef.h"
+#include "hash.h"
 #include "job.h"
 #include "os.h"
-#include "commands.h"
-#include "variable.h"
 #include "rule.h"
-#include "debug.h"
-#include "hash.h"
+#include "variable.h"
 #include "warning.h"
 
 /* A 'struct ebuffer' controls the origin of the makefile we are currently

@@ -15,10 +15,6 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-#include "filedef.h"
-#include "dep.h"
-#include "os.h"
-#include "debug.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -38,6 +34,11 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #else
 # include <sys/file.h>
 #endif
+
+#include "debug.h"
+#include "dep.h"
+#include "filedef.h"
+#include "os.h"
 
 unsigned int
 make_toui (const char *str, const char **error)

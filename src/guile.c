@@ -20,12 +20,12 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "gnumake.h"
 
-#include "debug.h"
-#include "filedef.h"
-#include "dep.h"
-#include "variable.h"
-
 #include <libguile.h>
+
+#include "debug.h"
+#include "dep.h"
+#include "filedef.h"
+#include "variable.h"
 
 /* Pre-2.0 versions of Guile don't have a typedef for gsubr function types.  */
 #if SCM_MAJOR_VERSION < 2

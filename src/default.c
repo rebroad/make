@@ -18,12 +18,12 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
 
-#include "filedef.h"
-#include "variable.h"
-#include "rule.h"
-#include "dep.h"
-#include "job.h"
 #include "commands.h"
+#include "dep.h"
+#include "filedef.h"
+#include "job.h"
+#include "rule.h"
+#include "variable.h"
 
 /* Define GCC_IS_NATIVE if gcc is the native development environment on
    your system (gcc/bison/flex vs cc/yacc/lex).  */

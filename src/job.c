@@ -16,6 +16,8 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
+#include "job.h"
+
 #include <assert.h>
 #include <string.h>
 
@@ -186,14 +188,13 @@ int getgid ();
 int getloadavg (double loadavg[], int nelem);
 #endif
 
-#include "job.h"
-#include "debug.h"
-#include "filedef.h"
 #include "commands.h"
-#include "variable.h"
-#include "os.h"
+#include "debug.h"
 #include "dep.h"
+#include "filedef.h"
+#include "os.h"
 #include "shuffle.h"
+#include "variable.h"
 #include "warning.h"
 
 /* Different systems have different requirements for pid_t.

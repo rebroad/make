@@ -16,20 +16,21 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
+#include "variable.h"
+
 #include <assert.h>
 
-#include "filedef.h"
+#include "commands.h"
 #include "debug.h"
 #include "dep.h"
+#include "filedef.h"
+#include "hash.h"
 #include "job.h"
-#include "commands.h"
-#include "variable.h"
 #include "os.h"
-#include "rule.h"
 #if MK_OS_W32
 #include "pathstuff.h"
 #endif
-#include "hash.h"
+#include "rule.h"
 #include "warning.h"
 
 /* Incremented every time we enter target_environment().  */

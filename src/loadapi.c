@@ -16,9 +16,9 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
+#include "dep.h"
 #include "filedef.h"
 #include "variable.h"
-#include "dep.h"
 
 /* Allocate a buffer in our context, so we can free it.  */
 char *

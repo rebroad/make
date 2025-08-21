@@ -16,14 +16,15 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
 
+#include "rule.h"
+
 #include <assert.h>
 
-#include "filedef.h"
-#include "dep.h"
-#include "job.h"
 #include "commands.h"
+#include "dep.h"
+#include "filedef.h"
+#include "job.h"
 #include "variable.h"
-#include "rule.h"
 
 static void freerule (struct rule *rule, struct rule *lastrule);
 

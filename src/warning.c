@@ -15,7 +15,9 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
+
 #include "warning.h"
+
 #include "variable.h"
 
 /* Current action for each warning.  */

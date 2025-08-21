@@ -82,16 +82,16 @@ void exit (int) NORETURN;
 double atof ();
 #endif
 
-#include "os.h"
-#include "filedef.h"
-#include "dep.h"
-#include "variable.h"
-#include "job.h"
 #include "commands.h"
-#include "rule.h"
 #include "debug.h"
+#include "dep.h"
+#include "filedef.h"
 #include "getopt.h"
+#include "job.h"
+#include "os.h"
+#include "rule.h"
 #include "shuffle.h"
+#include "variable.h"
 #include "warning.h"
 
 static void clean_jobserver (int status);

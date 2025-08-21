@@ -15,15 +15,17 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-#include "filedef.h"
-#include "rule.h"
-#include "dep.h"
-#include "debug.h"
-#include "variable.h"
-#include "job.h"      /* struct child, used inside commands.h */
-#include "commands.h" /* set_file_variables */
-#include "shuffle.h"
+
 #include <assert.h>
+
+#include "commands.h" /* set_file_variables */
+#include "debug.h"
+#include "dep.h"
+#include "filedef.h"
+#include "job.h"      /* struct child, used inside commands.h */
+#include "rule.h"
+#include "shuffle.h"
+#include "variable.h"
 
 static int pattern_search (struct file *file, int archive,
                            unsigned int depth, unsigned int recursions,

@@ -15,10 +15,6 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-#include "hash.h"
-#include "filedef.h"
-#include "dep.h"
-#include "debug.h"
 
 #ifdef HAVE_DIRENT_H
 # include <dirent.h>
@@ -59,11 +55,21 @@ const char *vmsify (const char *name, int type);
 # define REAL_DIR_ENTRY(dp) (dp->d_ino != 0)
 # define FAKE_DIR_ENTRY(dp) (dp->d_ino = 1)
 #endif /* POSIX */
-
+
 #if MK_OS_DOS
 #include <ctype.h>
 #include <fcntl.h>
+#endif
 
+#include "debug.h"
+#include "dep.h"
+#include "filedef.h"
+#include "hash.h"
+#if MK_OS_W32
+#include "pathstuff.h"
+#endif
+
+#if MK_OS_DOS
 /* If it's MSDOS that doesn't have _USE_LFN, disable LFN support.  */
 #ifndef _USE_LFN
 #define _USE_LFN 0
@@ -109,10 +115,6 @@ dosify (const char *filename)
   return dos_filename;
 }
 #endif /* MK_OS_DOS */
-
-#if MK_OS_W32
-#include "pathstuff.h"
-#endif
 
 #ifdef HAVE_CASE_INSENSITIVE_FS
 static const char *

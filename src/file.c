@@ -18,15 +18,15 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
 
-#include "filedef.h"
-#include "dep.h"
-#include "job.h"
 #include "commands.h"
-#include "variable.h"
 #include "debug.h"
+#include "dep.h"
+#include "filedef.h"
 #include "hash.h"
-#include "shuffle.h"
+#include "job.h"
 #include "rule.h"
+#include "shuffle.h"
+#include "variable.h"
 
 
 /* Remember whether snap_deps has been invoked: we need this to be sure we

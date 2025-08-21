@@ -15,11 +15,12 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
+
 #include "filedef.h"
-#include "variable.h"
 #if MK_OS_W32
 #include "pathstuff.h"
 #endif
+#include "variable.h"
 
 
 /* Structure used to represent a selective VPATH searchpath.  */

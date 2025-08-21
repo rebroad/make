@@ -15,16 +15,19 @@ You should have received a copy of the GNU General Public License along with
 this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include "makeint.h"
-#include "filedef.h"
-#include "os.h"
-#include "dep.h"
-#include "variable.h"
-#include "job.h"
+
 #include "commands.h"
+
 #if MK_OS_W32
 #include <windows.h>
 #include "w32err.h"
 #endif
+
+#include "dep.h"
+#include "filedef.h"
+#include "job.h"
+#include "os.h"
+#include "variable.h"
 
 #if MK_OS_VMS
 # define FILE_LIST_SEPARATOR (vms_comma_separator ? ',' : ' ')
