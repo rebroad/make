@@ -320,18 +320,13 @@ extern mode_t umask (mode_t);
 #define ISDIGIT(c) ((unsigned) (c) - '0' <= 9)
 
 /* Test if two strings are equal. Is this worthwhile?  Should be profiled.  */
-#define streq(a, b) \
-   ((a) == (b) || \
-    (*(a) == *(b) && (*(a) == '\0' || !strcmp ((a) + 1, (b) + 1))))
+#define streq(a, b) (*(a) == *(b) && (*(a) == '\0' || !strcmp ((a) + 1, (b) + 1)))
 
 /* Test if two strings are equal, but match case-insensitively on systems
    which have case-insensitive filesystems.  Should only be used for
    filenames!  */
 #ifdef HAVE_CASE_INSENSITIVE_FS
-# define patheq(a, b) \
-    ((a) == (b) \
-     || (tolower((unsigned char)*(a)) == tolower((unsigned char)*(b)) \
-         && (*(a) == '\0' || !strcasecmp ((a) + 1, (b) + 1))))
+# define patheq(a, b) (strcasecmp ((a), (b)) == 0)
 #else
 # define patheq(a, b) streq(a, b)
 #endif
