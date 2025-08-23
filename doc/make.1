@@ -114,26 +114,21 @@ This is typically used with recursive invocations of
 .TP 0.5i
 .B \-d
 Print debugging information in addition to normal processing.
-The debugging information says which files are being considered for
-remaking, which file-times are being compared and with what results,
-which files actually need to be remade, which implicit rules are
-considered and which are applied---everything interesting about how
-.B make
-decides what to do.
+This is the same as specifying
+.BR \-\-debug=all .
 .TP 0.5i
 .BI \-\-debug "[=FLAGS]"
 Print debugging information in addition to normal processing.
 If the
 .I FLAGS
 are omitted, then the behavior is the same as if
-.B \-d
+.B \-\-debug=basic
 was specified.
 .I FLAGS
 may be any or all of the following names, comma- or space-separated.  Only the
 first character is significant: the rest may be omitted:
 .I all
-for all debugging output (same as using
-.BR \-d ),
+for all debugging output,
 .I basic
 for basic debugging,
 .I verbose
