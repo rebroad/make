@@ -7753,26 +7753,25 @@ directive would make it more robust.
 @cindex searching for strings
 @cindex finding strings
 @cindex strings, searching for
-Searches @var{in} for an occurrence of @var{find}.  If it occurs, the
-value is @var{find}; otherwise, the value is empty.  You can use this
-function in a conditional to test for the presence of a specific
-substring in a given string.  Thus, the two examples,
+Searches the string @var{in} for an occurrence of the string @var{find}.  If
+it occurs, the result is @var{find}; otherwise, the result is the empty
+string.  You can use this function in a conditional to test for the presence
+of a specific substring in a given string.  These two examples:
 
 @example
-$(findstring a,a b c)
-$(findstring a,b c)
+$(findstring lo Wo,Hello World!)
+$(findstring lo Wo,World Hello!)
 @end example
 
 @noindent
-produce the values @samp{a} and @samp{} (the empty string),
-respectively.  @xref{Testing Flags}, for a practical application of
-@code{findstring}.
+expand to @samp{lo Wo} and @samp{} (the empty string), respectively.
+@xref{Testing Flags}, for a practical application of @code{findstring}.
 
 @need 750
+@item $(filter @var{pattern}@dots{},@var{text})
 @findex filter
 @cindex filtering words
 @cindex words, filtering
-@item $(filter @var{pattern}@dots{},@var{text})
 Returns all whitespace-separated words in @var{text} that @emph{do} match
 any of the @var{pattern} words, removing any words that @emph{do not}
 match.  Each word in @var{pattern} is compared to every word in @var{text}
