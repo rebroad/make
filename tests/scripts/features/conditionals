@@ -3,7 +3,7 @@ $description = "Check GNU Make conditionals.";
 
 $details = "Attempt various different flavors of GNU Make conditionals.";
 
-run_make_test('
+run_make_test(q!
 arg1 = first
 arg2 = second
 arg3 = third
@@ -12,33 +12,33 @@ arg5 = second
 
 all:
 ifeq ($(arg1),$(arg2))
-	@echo arg1 equals arg2
+#TAB#@echo arg1 equals arg2
 else
-	@echo arg1 NOT equal arg2
+#TAB#@echo arg1 NOT equal arg2
 endif
 
-ifeq \'$(arg2)\' "$(arg5)"
-	@echo arg2 equals arg5
+ifeq '$(arg2)' "$(arg5)"
+#TAB#@echo arg2 equals arg5
 else
-	@echo arg2 NOT equal arg5
+#TAB#@echo arg2 NOT equal arg5
 endif
 
-ifneq \'$(arg3)\' \'$(arg4)\'
-	@echo arg3 NOT equal arg4
+ifneq '$(arg3)' '$(arg4)'
+#TAB#@echo arg3 NOT equal arg4
 else
-	@echo arg3 equal arg4
+#TAB#@echo arg3 equal arg4
 endif
 
 ifndef undefined
-	@echo variable is undefined
+#TAB#@echo variable is undefined
 else
-	@echo variable undefined is defined
+#TAB#@echo variable undefined is defined
 endif
 ifdef arg4
-	@echo arg4 is defined
+#TAB#@echo arg4 is defined
 else
-	@echo arg4 is NOT defined
-endif',
+#TAB#@echo arg4 is NOT defined
+endif!,
               '',
               'arg1 NOT equal arg2
 arg2 equals arg5
@@ -49,7 +49,7 @@ arg4 is defined');
 
 # Test expansion of variables inside ifdef.
 
-run_make_test('
+run_make_test(q!
 foo = 1
 
 FOO = foo
@@ -73,14 +73,14 @@ ifdef $(call FUNC,DEF)3
   DEF3 = yes
 endif
 
-all:; @echo DEF=$(DEF) DEF2=$(DEF2) DEF3=$(DEF3)',
+all:; @echo DEF=$(DEF) DEF2=$(DEF2) DEF3=$(DEF3)!,
               '',
               'DEF=yes DEF2=yes DEF3=yes');
 
 
 # Test all the different "else if..." constructs
 
-run_make_test('
+run_make_test(q!
 arg1 = first
 arg2 = second
 arg3 = third
@@ -91,9 +91,9 @@ result =
 
 ifeq ($(arg1),$(arg2))
   result += arg1 equals arg2
-else ifeq \'$(arg2)\' "$(arg5)"
+else ifeq '$(arg2)' "$(arg5)"
   result += arg2 equals arg5
-else ifneq \'$(arg3)\' \'$(arg3)\'
+else ifneq '$(arg3)' '$(arg3)'
   result += arg3 NOT equal arg4
 else ifndef arg5
   result += variable is undefined
@@ -104,14 +104,14 @@ else
 endif
 
 
-all: ; @echo $(result)',
+all: ; @echo $(result)!,
               '',
               'success');
 
 
 # Test some random "else if..." construct nesting
 
-run_make_test('
+run_make_test(q!
 arg1 = first
 arg2 = second
 arg3 = third
@@ -120,13 +120,13 @@ arg5 = second
 
 ifeq ($(arg1),$(arg2))
   $(info failed 1)
-else ifeq \'$(arg2)\' "$(arg2)"
+else ifeq '$(arg2)' "$(arg2)"
   ifdef undefined
     $(info failed 2)
   else
     $(info success)
   endif
-else ifneq \'$(arg3)\' \'$(arg3)\'
+else ifneq '$(arg3)' '$(arg3)'
   $(info failed 3)
 else ifdef arg5
   $(info failed 4)
@@ -137,20 +137,20 @@ else
 endif
 
 .PHONY: all
-all: ; @:',
+all: ; @:!,
               '',
               'success');
 
 # SV 47960 : ensure variable assignments in non-taken legs don't cause problems
-run_make_test('
+run_make_test(q!
 ifneq ($(FOO),yes)
 target:
 else
 BAR = bar
 target:
 endif
-	@echo one
-',
+#TAB#@echo one
+!,
               '', "one\n");
 
 # SV 64085: Ensure recipe prefixed conditionals are never considered
@@ -158,7 +158,7 @@ run_make_test(q!
 blah=1
 ifdef blah
 else
-	else
+#TAB#else
 endif
 all:;
 !,
@@ -168,7 +168,7 @@ run_make_test(q!
 blah=1
 ifdef blah
 else
-	endif
+#TAB#endif
 endif
 all:;
 !,
@@ -178,7 +178,7 @@ run_make_test(q!
 blah=1
 ifdef blah
 else
-	ifdef blah
+#TAB#ifdef blah
 endif
 all:;
 !,
@@ -189,7 +189,7 @@ blah=1
 all:;
 foo:
 ifdef blah
-	ifdef blah
+#TAB#ifdef blah
 endif
 !,
     '', "#MAKE#: 'all' is up to date.");
@@ -199,7 +199,7 @@ blah=1
 all:;
 foo:
 ifdef blah
-	endif
+#TAB#endif
 endif
 !,
     '', "#MAKE#: 'all' is up to date.");
@@ -209,7 +209,7 @@ blah=1
 all:;
 foo:
 ifdef blah
-	else
+#TAB#else
 else
 endif
 !,
@@ -255,7 +255,3 @@ all:;
 
 # This tells the test driver that the perl test script executed properly.
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:

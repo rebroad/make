@@ -6,10 +6,9 @@ Create a makefile containing various flavors of pattern-specific variable
 settings, override and non-override, and using various variable expansion
 rules, semicolon interference, etc.";
 
-open(MAKEFILE,"> $makefile");
+# basics
 
-print MAKEFILE <<'EOF';
-all: one.x two.x three.x
+run_make_test(q!all: one.x two.x three.x
 FOO = foo
 BAR = bar
 BAZ = baz
@@ -29,50 +28,34 @@ a%: BBB += ddd
 %b: AAA += bbb
 .PHONY: ab
 ab: ; @echo $(AAA); echo $(BBB)
-EOF
+!,
+              "", "one.x: one two baz\ntwo.x: foo four baz\nthree.x: foo four three\n");
 
-close(MAKEFILE);
+# try the override feature
 
+run_make_test(undef, "BAZ=five",
+              "one.x: one two five\ntwo.x: foo four five\nthree.x: foo four three\n");
 
-# TEST #1 -- basics
+# make sure patterns are inherited properly
 
-&run_make_with_options($makefile, "", &get_logfile);
-$answer = "one.x: one two baz\ntwo.x: foo four baz\nthree.x: foo four three\n";
-&compare_output($answer,&get_logfile(1));
+run_make_test(undef, "four.x",
+              "baz: foo two baz\nfour.x: foo two baz\n");
 
+# test multiple patterns matching the same target
 
-# TEST #2 -- try the override feature
+run_make_test(undef, "ab", "aaa bbb\nccc ddd\n");
 
-&run_make_with_options($makefile, "BAZ=five", &get_logfile);
-$answer = "one.x: one two five\ntwo.x: foo four five\nthree.x: foo four three\n";
-&compare_output($answer,&get_logfile(1));
+# test pattern-specific exported variables
 
-
-# TEST #3 -- make sure patterns are inherited properly
-
-&run_make_with_options($makefile, "four.x", &get_logfile);
-$answer = "baz: foo two baz\nfour.x: foo two baz\n";
-&compare_output($answer,&get_logfile(1));
-
-
-# TEST #4 -- test multiple patterns matching the same target
-
-&run_make_with_options($makefile, "ab", &get_logfile);
-$answer = "aaa bbb\nccc ddd\n";
-&compare_output($answer,&get_logfile(1));
-
-# TEST #5 -- test pattern-specific exported variables
-#
 run_make_test('
 /%: export foo := foo
 
 /bar:
-	@echo $(foo) $$foo
+#TAB#@echo $(foo) $$foo
 ', '', 'foo foo');
 
+# test expansion of pattern-specific simple variables
 
-# TEST #6 -- test expansion of pattern-specific simple variables
-#
 run_make_test('
 .PHONY: all
 
@@ -112,15 +95,14 @@ global := new $$t
 'normal: global: original $t pattern:  inherit: ;
 pattern: global: original $t pattern:  inherit: ;');
 
+# test expansion of pattern-specific recursive variables
 
-# TEST #7 -- test expansion of pattern-specific recursive variables
-#
 run_make_test(undef, # reuse previous makefile
 'rec=1',
 'normal: global: new $t pattern: good $t inherit: good $t;
 pattern: global: new $t pattern: good $t inherit: good $t;');
 
-# TEST #8: override in pattern-specific variables
+# override in pattern-specific variables
 
 run_make_test('
 a%: override FOO += f1
@@ -131,7 +113,7 @@ ab: ; @echo "$(FOO)"
 
 run_make_test(undef, 'FOO=C', "C f1\n");
 
-# TEST #9: Test shortest stem selection in pattern-specific variables.
+# Test shortest stem selection in pattern-specific variables.
 
 run_make_test('
 %-mt.x: x := two

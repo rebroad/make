@@ -79,8 +79,8 @@ all.foo.bar: %.foo.bar: %.one
 all.foo.bar: %.bar: %.two
 
 all.foo.bar:
->	@echo $*
->	@echo $^
+>#TAB#@echo $*
+>#TAB#@echo $^
 
 .DEFAULT:;@:
 ',
@@ -102,8 +102,8 @@ all.foo.bar: %.foo.bar: %.one $$*-one
 all.foo.bar: %.bar: %.two $$*-two
 
 all.foo.bar:
->	@echo $*
->	@echo $^
+>#TAB#@echo $*
+>#TAB#@echo $^
 
 .DEFAULT:;@:
 ',

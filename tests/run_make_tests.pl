@@ -165,6 +165,8 @@ sub subst_make_string
     $makefile and s/#MAKEFILE#/$makefile/g;
     s/#MAKEPATH#/$mkpath/g;
     s/#MAKE#/$make_name/g;
+    s/#TAB#/\t/g;
+    s/#SPACE#/ /g;
     s/#PERL#/$perl_name/g;
     s/#PWD#/$wd/g;
     s/#HELPER#/$perl_name $helptool/g;

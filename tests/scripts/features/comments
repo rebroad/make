@@ -1,3 +1,5 @@
+#                                                                    -*-perl-*-
+
 $description = "The following test creates a makefile to test comments\n"
               ."and comment continuation to the next line using a \n"
               ."backslash within makefiles.";
@@ -15,23 +17,18 @@ open(MAKEFILE,"> $makefile");
 # The Contents of the MAKEFILE ...
 
 print MAKEFILE <<\EOF;
-# Test comment vs semicolon parsing and line continuation
-target: # this ; is just a comment \
-	@echo This is within a comment. 
-	@echo There should be no errors for this makefile.
 EOF
 
 # END of Contents of MAKEFILE
 
 close(MAKEFILE);
 
-&run_make_with_options($makefile,"",&get_logfile);
-
-# Create the answer to what should be produced by this Makefile
-$answer = "There should be no errors for this makefile.\n";
-
-# COMPARE RESULTS
-
-&compare_output($answer,&get_logfile(1));
+run_make_test(q!
+# Test comment vs semicolon parsing and line continuation
+target: # this ; is just a comment \
+#TAB#@echo This is within a comment.#SPACE#
+#TAB#@echo There should be no errors for this makefile.
+!,
+              '', "There should be no errors for this makefile.\n");
 
 1;

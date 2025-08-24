@@ -4,7 +4,7 @@ $description = "Test special GNU Make variables.";
 
 $details = "";
 
-&run_make_test('
+run_make_test(q!
 
 X1 := $(sort $(filter FOO BAR,$(.VARIABLES)))
 
@@ -15,12 +15,12 @@ X2 := $(sort $(filter FOO BAR,$(.VARIABLES)))
 BAR := bar
 
 all: ; @echo X1 = $(X1); echo X2 = $(X2); echo LAST = $(sort $(filter FOO BAR,$(.VARIABLES)))
-',
+!,
                '', "X1 =\nX2 = FOO\nLAST = BAR FOO\n");
 
 # SV 45728: Test that undefining a variable is reflected properly
 
-&run_make_test('
+run_make_test(q!
 FOO := foo
 BAR := bar
 $(info one: $(sort $(filter FOO BAR BAZ,$(.VARIABLES))))
@@ -28,7 +28,7 @@ undefine BAR
 BAZ := baz
 $(info two: $(sort $(filter FOO BAR BAZ,$(.VARIABLES))))
 all:;@:
-',
+!,
                '', "one: BAR FOO\ntwo: BAZ FOO\n");
 
 # $makefile2 = &get_tmpfile;
@@ -39,9 +39,9 @@ all:;@:
 # X1 := $(sort $(.TARGETS))
 
 # all: foo
-#	@echo X1 = $(X1)
-#	@echo X2 = $(X2)
-#	@echo LAST = $(sort $(.TARGETS))
+##TAB#@echo X1 = $(X1)
+##TAB#@echo X2 = $(X2)
+##TAB#@echo LAST = $(sort $(.TARGETS))
 
 # X2 := $(sort $(.TARGETS))
 
@@ -59,46 +59,46 @@ all:;@:
 # &compare_output($answer, &get_logfile(1));
 
 # Test the .RECIPEPREFIX variable
-&run_make_test('
+run_make_test(q!
 define foo
 : foo-one\
 foo-two
 : foo-three
-	: foo-four
+#TAB#: foo-four
 endef
 
 orig: ; : orig-one
-	: orig-two \
+#TAB#: orig-two \
 orig-three \
-	orig-four \
-		orig-five \\\\
-	: orig-six
-	$(foo)
+#TAB#orig-four \
+#TAB##TAB#orig-five \\\\
+#TAB#: orig-six
+#TAB#$(foo)
 
 .RECIPEPREFIX = >
 test: ; : test-one
 >: test-two \
 test-three \
 >test-four \
->	test-five \\\\
+>#TAB#test-five \\\\
 >: test-six
 >$(foo)
 
 .RECIPEPREFIX =
 reset: ; : reset-one
-	: reset-two \
+#TAB#: reset-two \
 reset-three \
-	reset-four \
-		reset-five \\\\
-	: reset-six
-	$(foo)
-',
+#TAB#reset-four \
+#TAB##TAB#reset-five \\\\
+#TAB#: reset-six
+#TAB#$(foo)
+!,
                'orig test reset',
                ': orig-one
 : orig-two \
 orig-three \
 orig-four \
-	orig-five \\\\
+#TAB#orig-five \\\\
 : orig-six
 : foo-one foo-two
 : foo-three
@@ -107,7 +107,7 @@ orig-four \
 : test-two \
 test-three \
 test-four \
-	test-five \\\\
+#TAB#test-five \\\\
 : test-six
 : foo-one foo-two
 : foo-three
@@ -116,14 +116,10 @@ test-four \
 : reset-two \
 reset-three \
 reset-four \
-	reset-five \\\\
+#TAB#reset-five \\\\
 : reset-six
 : foo-one foo-two
 : foo-three
 : foo-four');
 
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:

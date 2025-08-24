@@ -150,7 +150,7 @@ $(eval $(FOO))
 run_make_test('
 define FOO
 all: ; @echo '."'".'he\llo'."'".'
-	@echo world
+#TAB#@echo world
 endef
 $(eval $(FOO))
 ', '', 'he\llo

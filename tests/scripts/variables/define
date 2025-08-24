@@ -52,10 +52,10 @@ endef
 FOO = there
 
 all: ; $(multi)
-	$(simple)
-	$(posix)
-	$(append)
-	$(cond)
+#TAB#$(simple)
+#TAB#$(posix)
+#TAB#$(append)
+#TAB#$(cond)
 ',
               '', "echo hi\nhi\nthere\nfoo\nfoo\na\nb\nfirst\n");
 
@@ -99,11 +99,11 @@ endef
 FOO = there
 
 all: ; $(multi)
-	$(simple)
-	$(posix)
-	$(posixbsd)
-	$(append)
-	$(cond)
+#TAB#$(simple)
+#TAB#$(posix)
+#TAB#$(posixbsd)
+#TAB#$(append)
+#TAB#$(cond)
 !,
               '', "echo hi\nhi\nthere\nfoo\nfoo\nfoo\$bar\na\nb\nfirst\n");
 

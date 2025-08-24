@@ -10,16 +10,16 @@ is built again.";
 
 &touch('bar.x');
 
-run_make_test('
+run_make_test(q!
 .SUFFIXES:
 
 .PHONY: all
 all: foo
 
 foo: bar.x
-	@echo cp $< $@
-	@echo "" > $@
-',
+#TAB#@echo cp $< $@
+#TAB#@echo "" > $@
+!,
               '', 'cp bar.x foo');
 
 run_make_test(undef, '', "#MAKE#: Nothing to be done for 'all'.");
@@ -39,12 +39,12 @@ rmfiles('bar.x', 'foo');
 # Test -B with the re-exec feature: we don't want to re-exec forever
 # Savannah bug # 7566
 
-run_make_test('
+run_make_test(q!
 all: ; @:
 $(info MAKE_RESTARTS=$(MAKE_RESTARTS))
 include foo.x
 foo.x: ; @touch $@
-',
+!,
               '-B', 'MAKE_RESTARTS=
 MAKE_RESTARTS=1');
 
@@ -55,13 +55,13 @@ rmfiles('foo.x');
 
 &touch('blah.x');
 
-run_make_test('
+run_make_test(q!
 all: blah.x ; @echo $@
 $(info MAKE_RESTARTS=$(MAKE_RESTARTS))
 include foo.x
 foo.x: ; @touch $@
 blah.x: ; @echo $@
-',
+!,
               '-B', 'MAKE_RESTARTS=
 MAKE_RESTARTS=1
 blah.x
@@ -82,7 +82,3 @@ x.a: x.b ; @echo $?
 unlink(qw(x.a x.b));
 
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:

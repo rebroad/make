@@ -4,10 +4,10 @@ $description = "Test make -W (what if) option.\n";
 
 # Basic build
 
-run_make_test('
+run_make_test(q!
 a.x: b.x
 a.x b.x: ; echo >> $@
-',
+!,
               '', "echo >> b.x\necho >> a.x");
 
 # Run it again: nothing should happen
@@ -34,15 +34,15 @@ rmfiles('a.x', 'b.x');
 
 # First set it up with a normal build
 
-run_make_test('
+run_make_test(q!
 all: baz.x ; @:
 include foo.x
 foo.x: bar.x
-	@echo "\$$(info restarts=\$$(MAKE_RESTARTS))" > $@
-	@echo "touch $@"
+#TAB#@echo "\$$(info restarts=\$$(MAKE_RESTARTS))" > $@
+#TAB#@echo "touch $@"
 bar.x: ; echo >> $@
 baz.x: bar.x ; @echo "touch $@"
-',
+!,
               '', 'echo >> bar.x
 touch foo.x
 restarts=1
@@ -66,17 +66,17 @@ mkdir('x-dir', 0777);
 utouch(-20, 'x-dir/x');
 touch('y');
 
-run_make_test('
+run_make_test(q!
 y: x ; @echo cp $< $@
-',
+!,
               '-W x-dir/x VPATH=x-dir',
               'cp x-dir/x y');
 
 # Make sure ./ stripping doesn't interfere with the match.
 
-run_make_test('
+run_make_test(q!
 y: x ; @echo cp $< $@
-',
+!,
               '-W ./x-dir/x VPATH=x-dir',
               'cp x-dir/x y');
 
@@ -88,7 +88,3 @@ unlink(qw(y x-dir/x));
 rmdir('x-dir');
 
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:

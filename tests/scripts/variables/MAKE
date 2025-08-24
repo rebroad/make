@@ -1,4 +1,4 @@
-#								     -*-perl-*-
+#                                                                    -*-perl-*-
 
 $description = "Test proper behavior of the MAKE variable";
 
@@ -8,11 +8,11 @@ run_make_test(q!
 TMP  := $(MAKE)
 MAKE := $(subst X=$(X),,$(MAKE))
 all:
-	@echo $(TMP)
-	$(MAKE) -f #MAKEFILE# foo
+#TAB#@echo $(TMP)
+#TAB#$(MAKE) -f #MAKEFILE# foo
 
 foo:
-	@echo $(MAKE)
+#TAB#@echo $(MAKE)
 !,
               '',
               "#MAKEPATH#\n#MAKEPATH# -f #MAKEFILE# foo\n"

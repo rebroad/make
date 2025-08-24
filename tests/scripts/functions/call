@@ -35,7 +35,7 @@ DEP_foo = bar baz quux
 DEP_baz = quux blarp
 rest = $(wordlist 2,$(words ${1}),${1})
 tclose = $(if $1,$(firstword $1)\
-		$(call tclose,$(sort ${DEP_$(firstword $1)} $(call rest,$1))))
+#TAB##TAB#$(call tclose,$(sort ${DEP_$(firstword $1)} $(call rest,$1))))
 
 all: ; @echo '$(call reverse,bar,foo)'; \
         echo '$(call map,origin,MAKE reverse map)'; \
@@ -44,7 +44,7 @@ all: ; @echo '$(call reverse,bar,foo)'; \
         echo '$(call my-foreach,a,,,)'; \
         echo '$(call my-if,a,b,c)'; \
         echo '$(call two,bar,baz)'; \
-	echo '$(call tclose,foo)';
+#TAB#echo '$(call tclose,foo)';
 !,
               "", "foo bar\ndefault file file\nb d f\n\n\nb\nbar foo baz\nfoo bar baz blarp quux \n");
 
@@ -67,10 +67,10 @@ level2 = $(call level1,$1,$2,$3)
 level3 = $(call level2,$1,$2,$3,$4,$5)
 
 all:
-	@echo $(call all,1,2,3,4,5,6,7,8,9,10,11)
-	@echo $(call level1,1,2,3,4,5,6,7,8)
-	@echo $(call level2,1,2,3,4,5,6,7,8)
-	@echo $(call level3,1,2,3,4,5,6,7,8)
+#TAB#@echo $(call all,1,2,3,4,5,6,7,8,9,10,11)
+#TAB#@echo $(call level1,1,2,3,4,5,6,7,8)
+#TAB#@echo $(call level2,1,2,3,4,5,6,7,8)
+#TAB#@echo $(call level3,1,2,3,4,5,6,7,8)
 !,
               "", "1 2 3 4 5 6 7 8 9\n1 2 3 4 5\n1 2 3\n1 2 3\n");
 
@@ -78,15 +78,11 @@ all:
 
 delete $ENV{X123};
 
-run_make_test('
+run_make_test(q!
 tst = $(eval export X123)
 $(call tst)
 all: ; @echo "$${X123-not set}"
-',
+!,
               '', "\n");
 
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:

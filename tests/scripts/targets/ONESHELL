@@ -18,8 +18,8 @@ if ($port_type ne 'W32') {
 run_make_test(q!
 .ONESHELL:
 all:
-	a=$$$$
-	[ 0"$$a" -eq "$$$$" ] || echo fail
+#TAB#a=$$$$
+#TAB#[ 0"$$a" -eq "$$$$" ] || echo fail
 !,
               '', 'a=$$
 [ 0"$a" -eq "$$" ] || echo fail
@@ -32,8 +32,8 @@ if ($multi_ok) {
 .ONESHELL:
 .SHELLFLAGS = -e -c
 all:
-	a=$$$$
-	[ 0"$$a" -eq "$$$$" ] || echo fail
+#TAB#a=$$$$
+#TAB#[ 0"$$a" -eq "$$$$" ] || echo fail
 !,
               '', 'a=$$
 [ 0"$a" -eq "$$" ] || echo fail
@@ -45,8 +45,8 @@ all:
 run_make_test(q!
 .ONESHELL:
 all:
-	a=$$$$
-	@-+    [ 0"$$a" -eq "$$$$" ] || echo fail
+#TAB#a=$$$$
+#TAB#@-+    [ 0"$$a" -eq "$$$$" ] || echo fail
 !,
               '', 'a=$$
 [ 0"$a" -eq "$$" ] || echo fail
@@ -57,8 +57,8 @@ all:
 run_make_test(q!
 .ONESHELL:
 all:
-	   @a=$$$$
-	    [ 0"$$a" -eq "$$$$" ] || echo fail
+#TAB#   @a=$$$$
+#TAB#    [ 0"$$a" -eq "$$$$" ] || echo fail
 !,
               '', '');
 
@@ -68,8 +68,8 @@ all:
 run_make_test(q!
 .ONESHELL:
 all:
-	   @a=$$$$
-	    -@     +[ 0"$$a" -eq "$$$$" ] || echo fail
+#TAB#   @a=$$$$
+#TAB#    -@     +[ 0"$$a" -eq "$$$$" ] || echo fail
 !,
               '', '');
 
@@ -83,9 +83,9 @@ if ($port_type ne 'W32') {
 SHELL = #PERL#
 .SHELLFLAGS = -e
 all:
->	   @$$a=5
->	    +7;
->	@y=qw(a b c);
+>#TAB#   @$$a=5
+>#TAB#    +7;
+>#TAB#@y=qw(a b c);
 >print "a = $$a, y = (@y)\n";
 !,
                   '', "a = 12, y = (a b c)\n");
@@ -137,7 +137,3 @@ all:; @print "it works: $$foo\n"
 
 # This tells the test driver that the perl test script executed properly.
 1;
-
-### Local Variables:
-### eval: (setq whitespace-action (delq 'auto-cleanup whitespace-action))
-### End:
