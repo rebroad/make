@@ -166,5 +166,19 @@ load |: ; echo $@
 !,
               "", "all\n");
 
+# Verify that load does not start with TAB
+
+run_make_test(q!
+#TAB#load ./testload.so
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: load lines cannot start with TAB\nhi\n");
+
+run_make_test(q!
+#TAB#-load ./testload.so
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: -load lines cannot start with TAB\nhi\n");
+
 # This tells the test driver that the perl test script executed properly.
 1;

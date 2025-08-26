@@ -113,4 +113,12 @@ vpa/foo.x: ; @echo vpath $@
 
 rmdir("vpa");
 
+# Validate that vpath indented with TAB gives a warning
+
+run_make_test(q!
+#TAB#vpath %.h b3
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: vpath directive lines cannot start with TAB\nhi");
+
 1;

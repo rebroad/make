@@ -88,4 +88,12 @@ foo:;
 !,
     '', "undefine\n");
 
+# Directive lines cannot begin with TAB
+
+run_make_test(q!
+#TAB#undefine FOO
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nhi");
+
 1;

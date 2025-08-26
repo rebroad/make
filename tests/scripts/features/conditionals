@@ -153,7 +153,59 @@ endif
 !,
               '', "one\n");
 
-# SV 64085: Ensure recipe prefixed conditionals are never considered
+# SV 64085: Ensure tab-prefixed conditional directives are warned about
+# In a future release these will become errors: according to the docs this
+# was never allowed, but unfortunately the code didn't check for it.
+my @defcond = ('ifdef', 'ifndef');
+my @eqcond = ('ifeq', 'ifneq');
+
+for my $d (@defcond) {
+    run_make_test(qq!
+blah=1
+#TAB#$d blah
+endif
+all:;
+!,
+    '', "#MAKEFILE#:3: warning: conditional directive lines cannot start with TAB\n#MAKE#: 'all' is up to date.");
+}
+
+for my $d (@eqcond) {
+    run_make_test(qq!
+blah=1
+#TAB#$d (a,b)
+endif
+all:;
+!,
+    '', "#MAKEFILE#:3: warning: conditional directive lines cannot start with TAB\n#MAKE#: 'all' is up to date.");
+}
+
+run_make_test(q!
+ifeq (a, b)
+#TAB## noop
+else
+#TAB#ifeq (a, b)
+#TAB##TAB## noop
+#TAB#endif
+endif
+
+all:
+#TAB#@echo foo
+!,
+              '', "#MAKEFILE#:5: warning: conditional directive lines cannot start with TAB\n#MAKEFILE#:7: warning: conditional directive lines cannot start with TAB\nfoo");
+
+run_make_test(q!
+all:
+
+$(info hello)
+ifdef blah
+junk:
+#TAB#else
+else
+endif
+!,
+              '', "hello\n#MAKEFILE#:7: warning: conditional directive lines cannot start with TAB\n#MAKEFILE#:8: *** only one 'else' per conditional.  Stop.",
+              512);
+
 run_make_test(q!
 blah=1
 ifdef blah
@@ -162,7 +214,8 @@ else
 endif
 all:;
 !,
-    '', "#MAKE#: 'all' is up to date.");
+              '', "#MAKEFILE#:5: warning: conditional directive lines cannot start with TAB\n#MAKEFILE#:5: *** only one 'else' per conditional.  Stop.",
+              512);
 
 run_make_test(q!
 blah=1
@@ -172,7 +225,8 @@ else
 endif
 all:;
 !,
-    '', "#MAKE#: 'all' is up to date.");
+              '', "#MAKEFILE#:5: warning: conditional directive lines cannot start with TAB\n#MAKEFILE#:6: *** extraneous 'endif'.  Stop.",
+              512);
 
 run_make_test(q!
 blah=1
@@ -182,7 +236,8 @@ else
 endif
 all:;
 !,
-    '', "#MAKE#: 'all' is up to date.");
+              '', "#MAKEFILE#:5: warning: conditional directive lines cannot start with TAB\n#MAKEFILE#:8: *** missing 'endif'.  Stop.",
+              512);
 
 run_make_test(q!
 blah=1

@@ -174,4 +174,24 @@ b: ; @#HELPER# env FOO
 !,
               '', 'FOO=<unset>');
 
+# Directive lines cannot begin with TAB
+
+run_make_test(q!
+#TAB#private FOO = bar
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nhi");
+
+run_make_test(q!
+#TAB#private#TAB#export FOO = bar
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nhi");
+
+run_make_test(q!
+    private#TAB#export FOO = bar
+all:;@echo hi
+!,
+              '', "hi");
+
 1;

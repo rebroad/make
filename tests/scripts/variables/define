@@ -4,7 +4,7 @@ $description = "Test define/endef variable assignments.";
 
 $details = "";
 
-# TEST 0: old-style basic define/endef
+# old-style basic define/endef
 
 run_make_test('
 define multi
@@ -16,7 +16,7 @@ all: ; $(multi)
 ',
               '', "hi\necho there\nthere\n");
 
-# TEST 1: Various new-style define/endef
+# Various new-style define/endef
 
 run_make_test('
 FOO = foo
@@ -59,7 +59,7 @@ all: ; $(multi)
 ',
               '', "echo hi\nhi\nthere\nfoo\nfoo\na\nb\nfirst\n");
 
-# TEST 1a: Various new-style define/endef, with no spaces
+# Various new-style define/endef, with no spaces
 
 run_make_test(q!
 FOO = foo
@@ -107,7 +107,7 @@ all: ; $(multi)
 !,
               '', "echo hi\nhi\nthere\nfoo\nfoo\nfoo\$bar\na\nb\nfirst\n");
 
-# TEST 2: define in true section of conditional (containing conditional)
+# define in true section of conditional (containing conditional)
 
 run_make_test('
 FOO = foo
@@ -126,11 +126,11 @@ all: ; @echo $(FOO)
 ',
               'BOGUS=1', "bar\n");
 
-# TEST 3: define in false section of conditional (containing conditional)
+# define in false section of conditional (containing conditional)
 
 run_make_test(undef, '', "foo\n");
 
-# TEST 4: nested define (supported?)
+# nested define (supported?)
 
 run_make_test('
 define outer
@@ -145,7 +145,7 @@ outer: ; @echo $(inner)
 ',
               '', "A = B\n");
 
-# TEST 5: NEGATIVE: Missing variable name
+# NEGATIVE: Missing variable name
 
 run_make_test('
 NAME =
@@ -156,7 +156,7 @@ all: ; @echo ouch
 ',
               '', "#MAKEFILE#:3: *** empty variable name.  Stop.\n", 512);
 
-# TEST 6: NEGATIVE: extra text after define
+# NEGATIVE: extra text after define
 
 run_make_test('
 NAME =
@@ -167,7 +167,7 @@ all: ; @echo ok
 ',
               '', "#MAKEFILE#:3: extraneous text after 'define' directive\nok\n");
 
-# TEST 7: NEGATIVE: extra text after endef
+# NEGATIVE: extra text after endef
 
 run_make_test('
 NAME =
@@ -178,7 +178,7 @@ all: ; @echo ok
 ',
               '', "#MAKEFILE#:5: extraneous text after 'endef' directive\nok\n");
 
-# TEST 8: NEGATIVE: missing endef
+# NEGATIVE: missing endef
 
 run_make_test('
 NAME =
@@ -215,9 +215,6 @@ endef$(NAME)
 # can't know anymore whether the prefix character came before the variable
 # reference or was included in the first line of the variable reference.
 
-# TEST #5
-# -------
-
 run_make_test('
 define FOO
 $(V1)echo hello
@@ -227,14 +224,8 @@ all: ; @$(FOO)
 ', '', 'hello
 world');
 
-# TEST #6
-# -------
-
 run_make_test(undef, 'V1=@ V2=@', 'hello
 world');
-
-# TEST #7
-# -------
 
 run_make_test('
 define FOO
@@ -246,21 +237,13 @@ all: ; $(FOO)
 echo world
 world');
 
-# TEST #8
-# -------
-
 run_make_test(undef, 'V2=@', 'echo hello
 hello
 world');
 
-# TEST #9
-# -------
-
 run_make_test(undef, 'V1=@ V2=@', 'hello
 world');
 
-# TEST #10
-# -------
 # Test the basics; a "@" internally to the variable applies to only one line.
 # A "@" before the variable applies to the entire variable.
 
@@ -301,5 +284,60 @@ all: define foo
 foo:;
 !,
     '', "define\n");
+
+# Verify that define indented by TAB is warned about.
+# This will be an error in future versions.
+
+run_make_test(q!
+#TAB#define foo
+  @echo foo
+endef
+
+all:;$(foo)
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nfoo\n");
+
+# The failure doesn't happen at define time for nested defines, it happens
+# at eval time
+
+run_make_test(q!
+foo = echo foo
+
+define bar
+#TAB#define foo
+#TAB#  echo bar
+#TAB#endef
+endef
+
+all:;@$(foo)
+!,
+              '', "foo\n");
+
+run_make_test(q!
+foo = echo foo
+
+define bar
+#TAB#define foo
+#TAB#  echo bar
+#TAB#endef
+endef
+
+$(eval $(bar))
+
+all:;@echo foo
+!,
+              '', "#MAKEFILE#:10: warning: directive lines cannot start with TAB\n#MAKEFILE#:10: *** missing 'endef', unterminated 'define'.  Stop.\n",
+              512);
+
+# endef indented by TAB is an error; this has always been true!
+
+run_make_test(q!
+define foo
+  @echo foo
+#TAB#endef
+
+all:;$(foo)
+!,
+              '', "#MAKEFILE#:2: *** missing 'endef', unterminated 'define'.  Stop.\n", 512);
 
 1;

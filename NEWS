@@ -47,6 +47,16 @@ https://sv.gnu.org/bugs/index.php?group=make&report_id=111&fix_release_id=111&se
   when combined with command-line settings or -e overrides.
   See https://savannah.gnu.org/bugs/index.php?64822
 
+* WARNING: Backward-incompatibility!
+  The documentation has always stated that makefile directive lines cannot
+  begin with a TAB character.  However, the parser was lenient and allowed
+  initial TAB characters outside of a recipe context.  Unfortunately this
+  leads to unresolvable parsing errors in some situations.
+  This version of GNU Make will continue to parse directives as before, but
+  will print a warning whenever a makefile directive line begins with a TAB.
+  In a future version of GNU Make a line beginning with a TAB character will
+  never be allowed to contain a makefile directive.
+
 * NOTE: Deprecated behavior.
   The check in GNU Make 4.3 for suffix rules with prerequisites didn't check
   single-suffix rules, only double-suffix rules.  Add the missing check.
@@ -90,10 +100,6 @@ https://sv.gnu.org/bugs/index.php?group=make&report_id=111&fix_release_id=111&se
   using the same form as for file timestamps, e.g., "2023-05-10
   10:43:57.570558743".  Previously it used the form "Wed May 10
   10:43:57 2023", which has less detail and is harder to compare.
-
-* Conditional statements starting with the recipe prefix were sometimes
-  interpreted in previous versions.  As per the documentation, lines starting
-  with the recipe prefix are now never considered conditional statements.
 
 * Tests in the regression test suite now are run in their own directory to
   avoid cross-contamination and allow cleanup if the tests are interrupted.

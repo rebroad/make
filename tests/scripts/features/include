@@ -489,4 +489,18 @@ test: test.x; touch $@
 
 unlink('test.foo', 'test.x', 'test');
 
+# Verify that include prefixed by TAB gives a warning
+
+my @inctypes = ('include', '-include', 'sinclude');
+
+touch('inc.mk');
+
+for my $inc (@inctypes) {
+    run_make_test(qq!
+#TAB#$inc inc.mk
+all:;\@echo hi
+!,
+                  '', "#MAKEFILE#:2: warning: $inc lines cannot start with TAB\nhi");
+}
+
 1;

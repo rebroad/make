@@ -137,7 +137,8 @@ static void do_undefine (char *name, enum variable_origin origin,
                          struct ebuffer *ebuf);
 static struct variable *do_define (char *name, enum variable_origin origin,
                                    struct ebuffer *ebuf);
-static int conditional_line (char *line, size_t len, const floc *flocp);
+static int conditional_line (char *line, size_t len, const floc *flocp,
+                             unsigned int initial_tab);
 static void check_specials (struct nameseq *filep, int set_default);
 static void check_special_file (struct file *filep, const floc *flocp);
 static void record_files (struct nameseq *filenames, int are_also_makes,
@@ -477,6 +478,8 @@ eval_buffer (char *buffer, const floc *flocp)
 
 /* Check LINE to see if it's a variable assignment or undefine.
 
+   If flocp is not NULL, then the assignment line begins with TAB.
+
    It might use one of the modifiers "export", "override", "private", or it
    might be one of the conditional tokens like "ifdef", "include", etc.
 
@@ -487,7 +490,7 @@ eval_buffer (char *buffer, const floc *flocp)
    based on the modifiers found if any, plus V_ASSIGN is 1.
  */
 static char *
-parse_var_assignment (const char *line, int targvar, struct vmodifiers *vmod)
+parse_var_assignment (const char *line, int targvar, const floc *flocp, struct vmodifiers *vmod)
 {
   const char *p;
   memset (vmod, '\0', sizeof (*vmod));
@@ -524,6 +527,8 @@ parse_var_assignment (const char *line, int targvar, struct vmodifiers *vmod)
         vmod->private_v = 1;
       else if (!targvar && word1eq ("define"))
         {
+          if (flocp)
+            O (error, flocp, _("warning: directive lines cannot start with TAB"));
           /* We can't have modifiers after 'define' */
           vmod->define_v = 1;
           p = next_token (p2);
@@ -531,6 +536,8 @@ parse_var_assignment (const char *line, int targvar, struct vmodifiers *vmod)
         }
       else if (!targvar && word1eq ("undefine"))
         {
+          if (flocp)
+            O (error, flocp, _("warning: directive lines cannot start with TAB"));
           /* We can't have modifiers after 'undefine' */
           vmod->undefine_v = 1;
           p = next_token (p2);
@@ -540,7 +547,14 @@ parse_var_assignment (const char *line, int targvar, struct vmodifiers *vmod)
         /* Not a variable or modifier: this is not a variable assignment.  */
         return (char *) line;
 
-      /* It was a modifier.  Try the next word.  */
+      /* It was a modifier.  Check for TAB and try the next word.  */
+      if (flocp)
+        {
+          O (error, flocp, _("warning: directive lines cannot start with TAB"));
+          /* Only warn about the first directive.  */
+          flocp = NULL;
+        }
+
       p = next_token (p2);
       if (*p == '\0')
         return (char *) line;
@@ -622,6 +636,7 @@ eval (struct ebuffer *ebuf, int set_default)
       char *p;
       char *p2;
       unsigned int is_rule;
+      unsigned int initial_tab;
       struct vmodifiers vmod;
 
       /* At the top of this loop, we are starting a brand new line.  */
@@ -652,9 +667,12 @@ eval (struct ebuffer *ebuf, int set_default)
                 }
             }
         }
+
       /* If this line is empty, skip it.  */
       if (line[0] == '\0')
         continue;
+
+      initial_tab = line[0] == '\t';
 
       linelen = strlen (line);
 
@@ -662,20 +680,17 @@ eval (struct ebuffer *ebuf, int set_default)
          If it is not one, we can stop treating cmd_prefix specially.  */
       if (line[0] == cmd_prefix)
         {
+          /* Ignore recipe lines in a rule with no targets.  */
           if (no_targets)
-            /* Ignore the commands in a rule with no targets.  */
             continue;
 
-          if (ignoring)
-            /* Yep, this is a shell command, and we don't care.  */
-            continue;
-
-          /* If there is no preceding rule line, don't treat this line
-             as a command, even though it begins with a recipe prefix.
-             SunOS 4 make appears to behave this way.  */
-
+          /* Only part of a recipe if it appears in a recipe context.  */
           if (filenames != 0)
             {
+              /* Are we in the un-taken leg of a conditional directive?  */
+              if (ignoring)
+                continue;
+
               if (commands_idx == 0)
                 cmds_started = ebuf->floc.lineno;
 
@@ -689,6 +704,8 @@ eval (struct ebuffer *ebuf, int set_default)
               memcpy (&commands[commands_idx], line + 1, linelen - 1);
               commands_idx += linelen - 1;
               commands[commands_idx++] = '\n';
+
+              /* This line is fully consumed.  */
               continue;
             }
         }
@@ -715,7 +732,7 @@ eval (struct ebuffer *ebuf, int set_default)
 
       /* See if this is a variable assignment.  We need to do this early, to
          allow variables with names like 'ifdef', 'export', 'private', etc.  */
-      p = parse_var_assignment (p, 0, &vmod);
+      p = parse_var_assignment (p, 0, initial_tab ? &ebuf->floc : NULL, &vmod);
       if (vmod.assign_v)
         {
           struct variable *v;
@@ -775,7 +792,7 @@ eval (struct ebuffer *ebuf, int set_default)
 
       /* Check for conditional state changes.  */
       {
-        int i = conditional_line (p, wlen, fstart);
+        int i = conditional_line (p, wlen, fstart, initial_tab);
         if (i != -2)
           {
             if (i == -1)
@@ -795,6 +812,11 @@ eval (struct ebuffer *ebuf, int set_default)
       if (word1eq ("export") || word1eq ("unexport"))
         {
           int exporting = *p == 'u' ? 0 : 1;
+
+          if (initial_tab)
+            OS (error, &ebuf->floc,
+                _("warning: %s lines cannot start with TAB"),
+                exporting ? "export" : "unexport");
 
           /* Export/unexport ends the previous rule.  */
           record_waiting_files ();
@@ -833,6 +855,10 @@ eval (struct ebuffer *ebuf, int set_default)
           char *vpat;
           size_t l;
 
+          if (initial_tab)
+            O (error, &ebuf->floc,
+               _("warning: vpath directive lines cannot start with TAB"));
+
           /* vpath ends the previous rule.  */
           record_waiting_files ();
 
@@ -865,6 +891,11 @@ eval (struct ebuffer *ebuf, int set_default)
           /* "-include" (vs "include") says no error if the file does not
              exist.  "sinclude" is an alias for this from SGI.  */
           int noerror = (p[0] != 'i');
+
+          if (initial_tab)
+            OS (error, &ebuf->floc,
+                _("warning: %s lines cannot start with TAB"),
+                *p == 'i' ? "include" : *p == '-' ? "-include" : "sinclude");
 
           /* Include ends the previous rule.  */
           record_waiting_files ();
@@ -919,6 +950,11 @@ eval (struct ebuffer *ebuf, int set_default)
           /* A 'load' line specifies a dynamic object to load.  */
           struct nameseq *files;
           int noerror = (p[0] == '-');
+
+          if (initial_tab)
+            OS (error, &ebuf->floc,
+                _("warning: %s lines cannot start with TAB"),
+                noerror ? "-load" : "load");
 
           /* Load ends the previous rule.  */
           record_waiting_files ();
@@ -1196,7 +1232,7 @@ eval (struct ebuffer *ebuf, int set_default)
             p2 = variable_buffer + l;
           }
 
-        p2 = parse_var_assignment (p2, 1, &vmod);
+        p2 = parse_var_assignment (p2, 1, NULL, &vmod);
         if (vmod.assign_v)
           {
             /* If there was a semicolon found, add it back, plus anything
@@ -1503,7 +1539,7 @@ do_define (char *name, enum variable_origin origin, struct ebuffer *ebuf)
    1 if following text should be ignored.  */
 
 static int
-conditional_line (char *line, size_t len, const floc *flocp)
+conditional_line (char *line, size_t len, const floc *flocp, unsigned int initial_tab)
 {
   const char *cmdname;
   enum { c_ifdef, c_ifndef, c_ifeq, c_ifneq, c_else, c_endif } cmdtype;
@@ -1523,6 +1559,10 @@ conditional_line (char *line, size_t len, const floc *flocp)
   else chkword ("endif", c_endif)
   else
     return -2;
+
+  if (initial_tab)
+    O (error, flocp,
+       _("warning: conditional directive lines cannot start with TAB"));
 
   /* Found one: skip past it and any whitespace after it.  */
   line += len;
@@ -1583,13 +1623,13 @@ conditional_line (char *line, size_t len, const floc *flocp)
          and cannot be an 'else' or 'endif'.  */
 
       /* Find the length of the next word.  */
-      for (p = line+1; ! STOP_SET (*p, MAP_SPACE|MAP_NUL); ++p)
+      for (p = line+1; ! STOP_SET (*p, MAP_BLANK|MAP_NUL); ++p)
         ;
       len = p - line;
 
       /* If it's 'else' or 'endif' or an illegal conditional, fail.  */
       if (word1eq ("else") || word1eq ("endif")
-          || conditional_line (line, len, flocp) < 0)
+          || conditional_line (line, len, flocp, 0) < 0)
         EXTRATEXT ();
       else
         {

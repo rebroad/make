@@ -41,5 +41,24 @@ all: ; $(foo)
 ',
               'foo=Hello', "First comes the definition.\nThen comes the override.\n");
 
+# Directive lines cannot begin with TAB
+
+run_make_test(q!
+#TAB#override FOO = bar
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nhi");
+
+run_make_test(q!
+#TAB#override#TAB#export FOO = bar
+all:;@echo hi
+!,
+              '', "#MAKEFILE#:2: warning: directive lines cannot start with TAB\nhi");
+
+run_make_test(q!
+    override#TAB#export FOO = bar
+all:;@echo hi
+!,
+              '', "hi");
 
 1;
