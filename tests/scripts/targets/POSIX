@@ -82,7 +82,7 @@ all: .SHELLFLAGS = -ec
 # Different versions of sh generate different output for -x so check it
 my $script = subst_make_string('#HELPER# -q fail 1; true');
 my $flags = '-xc';
-my $out = `$sh_name $flags '$script' 2>&1`;
+my $out = `"$sh_name" $flags '$script' 2>&1`;
 
 run_make_test(qq!
 .SHELLFLAGS = $flags

@@ -131,7 +131,7 @@ close($F) or die "close: testapi.c: $!\n";
 my $cflags = get_config('CFLAGS');
 my $cppflags = get_config('CPPFLAGS');
 my $ldflags = get_config('LDFLAGS');
-my $sobuild = "$cc ".($srcdir? "-I$srcdir/src":'')." $cppflags $cflags -shared -fPIC $ldflags -o testapi.so testapi.c";
+my $sobuild = "\"$cc\" ".($srcdir? "-I$srcdir/src":'')." $cppflags $cflags -shared -fPIC $ldflags -o testapi.so testapi.c";
 
 my $clog = `$sobuild 2>&1`;
 if ($? != 0) {

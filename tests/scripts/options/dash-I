@@ -83,7 +83,7 @@ rmdir('idir2');
 # won't work if none of the default directories contain any files :-/
 
 create_file('defaultdirs.mk', "\$(info \$(.INCLUDE_DIRS))\nall:;\@:\n");
-my $cmd = subst_make_string("#MAKEPATH# -f defaultdirs.mk");
+my $cmd = subst_make_string('"#MAKEPATH#" -f defaultdirs.mk');
 my @dirs = `$cmd`;
 my $dirs = $dirs[0];
 $dirs =~ s/\r?\n//g;

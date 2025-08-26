@@ -70,7 +70,7 @@ one two:;@echo "$@: $(SHELL) $$SHELL"
 # printed by the shell in -x mode has a trailing space!
 my $script = 'true; true';
 my $flags = '-xc';
-my $out = `$sh_name $flags '$script' 2>&1`;
+my $out = `"$sh_name" $flags '$script' 2>&1`;
 
 run_make_test(qq!
 .SHELLFLAGS = $flags
@@ -82,7 +82,7 @@ all: ; \@$script
 
 # Some shells (*shakes fist at Solaris*) cannot handle multiple flags in
 # separate arguments.
-my $t = `$sh_name -e -c true 2>/dev/null`;
+my $t = `"$sh_name" -e -c true 2>/dev/null`;
 my $multi_ok = $? == 0;
 
 if ($multi_ok) {
@@ -96,7 +96,7 @@ all: ; \@$script
 
 $script = subst_make_string('true; #HELPER# -q fail 1; true');
 $flags = '-xec';
-$out = `$sh_name $flags '$script' 2>&1`;
+$out = `"$sh_name" $flags '$script' 2>&1`;
 
 run_make_test(qq!
 .SHELLFLAGS = $flags

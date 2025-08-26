@@ -1051,7 +1051,7 @@ sub compare_output
   if (! $matched) {
     # Create the difference file
     if ($diff_name) {
-        run_command_with_output($diff, "$diff_name -c $base $logfile");
+        run_command_with_output($diff, "\"$diff_name\" -c $base $logfile");
     } else {
         create_file($diff, "Log file $logfile differs from base file $base\n");
     }

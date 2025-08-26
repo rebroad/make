@@ -24,7 +24,7 @@ all: ; @:
 
 # Find the realpath to the root of the partition
 create_file('root.mk', 'all:;$(info $(realpath /))');
-my $root = `$make_path -sf root.mk`;
+my $root = `"$make_path" -sf root.mk`;
 unlink('root.mk');
 $root =~ s/\r?\n//g;
 

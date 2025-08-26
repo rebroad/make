@@ -41,7 +41,7 @@ my $arvar = "AR=\"$ar\"";
 # which forces all timestamps (among other things) to always be 0, defeating
 # GNU Make's archive support.  See if ar supports the U option to disable it.
 unlink('libxx.a');
-$_ = `$ar ${arflags}U libxx.a a1.o $redir`;
+$_ = `"$ar" ${arflags}U libxx.a a1.o $redir`;
 if ($? == 0) {
     $arflags = "${arflags}U";
     $arvar = "$arvar ARFLAGS=\"$arflags\"";
@@ -49,15 +49,15 @@ if ($? == 0) {
 
 # Some versions of ar print different things on creation.  Find out.
 unlink('libxx.a');
-my $created = `$ar $arflags libxx.a a1.o $redir`;
+my $created = `"$ar" $arflags libxx.a a1.o $redir`;
 $created =~ s/a1\.o/#OBJECT#/g;
 
 # Some versions of ar print different things on add.  Find out.
-my $add = `$ar $arflags libxx.a a2.o $redir`;
+my $add = `"$ar" $arflags libxx.a a2.o $redir`;
 $add =~ s/a2\.o/#OBJECT#/g;
 
 # Some versions of ar print different things on replacement.  Find out.
-my $repl = `$ar $arflags libxx.a a2.o $redir`;
+my $repl = `"$ar" $arflags libxx.a a2.o $redir`;
 $repl =~ s/a2\.o/#OBJECT#/g;
 
 unlink('libxx.a');
@@ -244,9 +244,9 @@ if ($osname ne 'os390') {
 # Find the output when creating an archive from multiple files
 
 utouch(-10, 'a.o', 'b.o');
-my $create2 = `$ar $arflags mylib.a a.o b.o $redir`;
+my $create2 = `"$ar" $arflags mylib.a a.o b.o $redir`;
 touch('b.o');
-my $add2 = `$ar $arflags mylib.a b.o $redir`;
+my $add2 = `"$ar" $arflags mylib.a b.o $redir`;
 unlink('a.o', 'b.o', 'mylib.a');
 
 # Some systems complain when compiling empty files

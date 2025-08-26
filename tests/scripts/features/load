@@ -57,7 +57,7 @@ close($F) or die "close: testload.c: $!\n";
 my $cppflags = get_config('CPPFLAGS') . ($srcdir ? " -I$srcdir/src" : '');
 my $cflags = get_config('CFLAGS') . ' -fPIC';
 my $ldflags = get_config('LDFLAGS') . ' -shared';
-my $sobuild = "$cc $cppflags $cflags $ldflags -o testload.so testload.c";
+my $sobuild = "\"$cc\" $cppflags $cflags $ldflags -o testload.so testload.c";
 
 my $clog = `$sobuild 2>&1`;
 if ($? != 0) {
