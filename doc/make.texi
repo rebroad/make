@@ -7682,11 +7682,14 @@ produces the value @samp{fEEt on the strEEt}.
 Finds whitespace-separated words in @var{text} that match @var{pattern} and
 replaces them with @var{replacement}.  Here @var{pattern} may contain a
 @samp{%} which acts as a wildcard, matching any number of any characters
-within a word.  If @var{replacement} also contains a @samp{%}, the @samp{%} is
-replaced by the text that matched the @samp{%} in @var{pattern}.  Words that
-do not match the pattern are kept without change in the output.  Only the
-first @samp{%} in the @var{pattern} and @var{replacement} is treated this way;
-any subsequent @samp{%} is unchanged.
+within a word.  The @var{pattern} must match the entire word, otherwise the
+word does not match.  Words that do not match @var{pattern} are preserved
+in the result without change.
+
+If @var{replacement} also contains a @samp{%}, the @samp{%} is replaced by the
+text that matched the @samp{%} in @var{pattern}.  Only the first @samp{%} in
+the @var{pattern} and @var{replacement} is treated this way; any subsequent
+@samp{%} is unchanged.
 
 If @var{pattern} does not contain a @samp{%} then the entire word must compare
 equal to be a match.
@@ -7695,17 +7698,16 @@ equal to be a match.
 @cindex @code{\} (backslash), to quote @code{%}
 @cindex backslash (@code{\}), to quote @code{%}
 @cindex quoting @code{%}, in @code{patsubst}
-@samp{%} characters in @code{patsubst} function invocations can be
-quoted with preceding backslashes (@samp{\}).  Backslashes that would
-otherwise quote @samp{%} characters can be quoted with more backslashes.
-Backslashes that quote @samp{%} characters or other backslashes are
-removed from the pattern before it is compared to file names or has a stem
-substituted into it.  Backslashes that are not in danger of quoting
-@samp{%} characters go unmolested.  For example, the pattern
-@file{the\%weird\\%pattern\\} has @samp{the%weird\} preceding the
-operative @samp{%} character, and @samp{pattern\\} following it.  The
-final two backslashes are left alone because they cannot affect any
-@samp{%} character.
+@samp{%} characters in @code{patsubst} function invocations can be quoted with
+preceding backslashes (@samp{\}).  Backslashes that would otherwise quote
+@samp{%} characters can be quoted with more backslashes.  Backslashes that
+quote @samp{%} characters or other backslashes are removed from the pattern
+before it is compared to file names or has a stem substituted into it.
+Backslashes that are not in danger of quoting @samp{%} characters go
+unmolested.  For example, the pattern @file{the\%weird\\%pattern\\} has
+@samp{the%weird\} preceding the operative @samp{%} character, and
+@samp{pattern\\} following it.  The final two backslashes are left alone
+because they cannot affect any @samp{%} character.
 
 Whitespace between words is folded into single space characters;
 leading and trailing whitespace is discarded.
