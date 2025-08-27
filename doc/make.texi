@@ -1259,8 +1259,11 @@ include @var{filenames}@dots{}
 @end example
 
 @noindent
-@var{filenames} can contain shell file name patterns.  If
-@var{filenames} is empty, nothing is included and no error is printed.
+If @var{filenames} is empty, nothing is included and no error is printed.
+@var{filenames} can contain shell file name patterns.  If no files match the
+pattern, then @code{make} will treat the pattern as a filename and try to
+include it (and attempt to rebuild if it doesn't exist--@ref{Remaking
+Makefiles, , How Makefiles Are Remade}).
 @cindex shell file name pattern (in @code{include})
 @cindex shell wildcards (in @code{include})
 @cindex wildcard, in @code{include}
