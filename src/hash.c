@@ -59,6 +59,7 @@ hash_init (struct hash_table *ht, unsigned long size,
   ht->ht_collisions = 0;
   ht->ht_lookups = 0;
   ht->ht_rehashes = 0;
+  ht->ht_in_map = 0;
   ht->ht_hash_1 = hash_1;
   ht->ht_hash_2 = hash_2;
   ht->ht_compare = hash_cmp;
@@ -138,6 +139,10 @@ void *
 hash_insert_at (struct hash_table *ht, const void *item, const void *slot)
 {
   const void *old_item = *(void **) slot;
+
+  /* It's illegal to insert while in hash_map*().  */
+  assert (! ht->ht_in_map);
+
   if (HASH_VACANT (old_item))
     {
       ht->ht_fill++;
@@ -181,6 +186,10 @@ hash_free_items (struct hash_table *ht)
 {
   void **vec = ht->ht_vec;
   void **end = &vec[ht->ht_size];
+
+  /* It's illegal to free items while in hash_map*().  */
+  assert (! ht->ht_in_map);
+
   for (; vec < end; vec++)
     {
       void *item = *vec;
@@ -197,6 +206,10 @@ hash_delete_items (struct hash_table *ht)
 {
   void **vec = ht->ht_vec;
   void **end = &vec[ht->ht_size];
+
+  /* It's illegal to delete all items while in hash_map*().  */
+  assert (! ht->ht_in_map);
+
   for (; vec < end; vec++)
     *vec = 0;
   ht->ht_fill = 0;
@@ -209,6 +222,9 @@ hash_delete_items (struct hash_table *ht)
 void
 hash_free (struct hash_table *ht, int free_items)
 {
+  /* It's illegal to free while in hash_map*().  */
+  assert (! ht->ht_in_map);
+
   if (free_items)
     hash_free_items (ht);
   else
@@ -227,11 +243,15 @@ hash_map (struct hash_table *ht, hash_map_func_t map)
   void **slot;
   void **end = &ht->ht_vec[ht->ht_size];
 
+  ht->ht_in_map = 1;
+
   for (slot = ht->ht_vec; slot < end; slot++)
     {
       if (!HASH_VACANT (*slot))
         (*map) (*slot);
     }
+
+  ht->ht_in_map = 0;
 }
 
 void
@@ -240,11 +260,15 @@ hash_map_arg (struct hash_table *ht, hash_map_arg_func_t map, void *arg)
   void **slot;
   void **end = &ht->ht_vec[ht->ht_size];
 
+  ht->ht_in_map = 1;
+
   for (slot = ht->ht_vec; slot < end; slot++)
     {
       if (!HASH_VACANT (*slot))
         (*map) (*slot, arg);
     }
+
+  ht->ht_in_map = 0;
 }
 
 /* Double the size of the hash table in the event of overflow... */
