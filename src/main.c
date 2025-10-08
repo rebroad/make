@@ -27,6 +27,8 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "shuffle.h"
 
 #include <assert.h>
+#include <sys/time.h>
+#include <pthread.h>
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -109,7 +111,7 @@ static void decode_env_switches (const char *envar, size_t len,
 static char *quote_for_env (char *out, const char *in);
 static void initialize_global_hash_tables (void);
 
-
+
 /* True if C is a switch value that corresponds to a short option.  */
 
 #define short_option(c) ((c) <= CHAR_MAX)
@@ -252,6 +254,23 @@ static char *sync_mutex = NULL;
 double max_load_average = -1.0;
 double default_load_average = -1.0;
 
+/* Memory-aware job adjustment */
+static int auto_adjust_jobs_flag = 0;
+static unsigned int memory_check_interval = 3;  /* seconds */
+static unsigned int memory_critical_percent = 88;
+static unsigned int memory_high_percent = 82;
+static unsigned int memory_comfortable_percent = 70;
+static unsigned long memory_emergency_free_mb = 1024;  /* Stop jobs if <1GB free */
+static unsigned int saved_job_slots = 0;  /* Save job_slots when paused */
+static int jobs_paused = 0;  /* Are we currently paused due to memory? */
+static time_t last_memory_check = 0;
+static time_t last_job_adjustment = 0;
+static time_t last_status_display = 0;
+static int status_line_shown = 0;
+static int spinner_state = 0;
+static pthread_t memory_monitor_thread;
+static volatile int monitor_thread_running = 0;
+
 /* List of directories given with -C switches.  */
 
 static struct stringlist *directories = 0;
@@ -310,7 +329,7 @@ unsigned long command_count = 1;
 
 static int stdin_offset = -1;
 
-
+
 /* The usage output.  We write it this way to make life easier for the
    translators, especially those trying to translate to right-to-left
    languages like Hebrew.  */
@@ -501,6 +520,7 @@ static struct command_switch switches[] =
     { TEMP_STDIN_OPT, filename, &makefiles, 0, 0, 0, 0, 0, 0, "temp-stdin", 0 },
     { CHAR_MAX+11, string, &shuffle_mode, 1, 1, 0, 0, "random", 0, "shuffle", 0 },
     { CHAR_MAX+12, string, &jobserver_style, 1, 0, 0, 0, 0, 0, "jobserver-style", 0 },
+    { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "auto-adjust-jobs", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
@@ -532,7 +552,7 @@ struct command_variable
     struct variable *variable;
   };
 static struct command_variable *command_variables;
-
+
 /* The name we were invoked with.  */
 
 const char *program;
@@ -607,7 +627,7 @@ unsigned short stopchar_map[UCHAR_MAX + 1] = {0};
 
 struct output make_sync;
 
-
+
 /* Mask of signals that are being caught with fatal_error_signal.  */
 
 #if defined(POSIX)
@@ -789,6 +809,348 @@ debug_signal_handler (int sig UNUSED)
   db_level = db_level ? DB_NONE : DB_BASIC;
 }
 #endif
+
+/* Memory monitoring for auto-adjust-jobs feature */
+static void
+get_memory_stats (unsigned int *percent, unsigned long *free_mb)
+{
+  *percent = 0;
+  *free_mb = 0;
+
+#ifdef __linux__
+  FILE *meminfo = fopen ("/proc/meminfo", "r");
+  if (!meminfo)
+    return;
+
+  unsigned long total_kb = 0, avail_kb = 0;
+  char line[256];
+
+  while (fgets (line, sizeof (line), meminfo))
+    {
+      if (sscanf (line, "MemTotal: %lu", &total_kb) == 1)
+        continue;
+      if (sscanf (line, "MemAvailable: %lu", &avail_kb) == 1)
+        break;
+    }
+
+  fclose (meminfo);
+
+  if (total_kb > 0 && avail_kb > 0)
+    {
+      *percent = (unsigned int)(100 - (avail_kb * 100 / total_kb));
+      *free_mb = avail_kb / 1024;
+    }
+#endif
+}
+
+static void
+display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
+{
+  /* Only show if enabled AND we have active or pending jobs */
+  if (!auto_adjust_jobs_flag || (job_slots_used == 0 && job_slots == 0))
+    return;
+
+  static struct timeval last_display = {0, 0};
+  struct timeval now;
+  gettimeofday (&now, NULL);
+
+  /* Update status line every 300ms for smooth spinner */
+  if (!force)
+    {
+      long elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
+                        (now.tv_usec - last_display.tv_usec) / 1000;
+      if (elapsed_ms < 300)
+        return;
+    }
+
+  last_display = now;
+
+  /* ANSI colors */
+  const char *green = "\033[1;32m";
+  const char *yellow = "\033[1;33m";
+  const char *red = "\033[1;31m";
+  const char *cyan = "\033[1;36m";
+  const char *gray = "\033[0;90m";
+  const char *white = "\033[1;37m";
+  const char *reset = "\033[0m";
+
+  /* Spinner to show we're alive */
+  const char *spinners[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+  const char *spinner = spinners[spinner_state % 10];
+  spinner_state++;
+
+  /* Determine color based on memory pressure */
+  const char *bar_color = green;
+  if (mem_percent >= memory_critical_percent)
+    bar_color = red;
+  else if (mem_percent >= memory_high_percent)
+    bar_color = yellow;
+
+  /* Build memory bar (20 chars) - use safe string building */
+  char bar[256];  /* Plenty of space for ANSI codes */
+  int bar_len = 20;
+  int filled = (mem_percent * bar_len) / 100;
+  int pos = 0;
+  int i;
+
+  /* Add color code */
+  pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", bar_color);
+
+  /* Add filled portion */
+  for (i = 0; i < filled && i < bar_len && pos < sizeof(bar) - 10; i++)
+    pos += snprintf (bar + pos, sizeof(bar) - pos, "█");
+
+  /* Switch to gray for empty portion */
+  pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", gray);
+
+  /* Add empty portion */
+  for (; i < bar_len && pos < sizeof(bar) - 10; i++)
+    pos += snprintf (bar + pos, sizeof(bar) - pos, "░");
+
+  /* Reset color */
+  snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
+
+  /* Get effective job slots - use master if we haven't started yet */
+  unsigned int display_slots = job_slots;
+  if (display_slots == 0 && !jobs_paused && master_job_slots > 0)
+    display_slots = master_job_slots;
+  if (jobs_paused && saved_job_slots > 0)
+    display_slots = saved_job_slots;
+
+  /* Save cursor position, move to bottom, clear line, display status */
+  fprintf (stderr, "\033[s\033[999;1H\033[K%s%s%s %s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
+           cyan, spinner, reset,
+           bar,
+           white, mem_percent, reset,
+           gray, free_mb, reset,
+           green, display_slots, reset,
+           gray, job_slots_used, reset);
+
+  if (jobs_paused)
+    fprintf (stderr, " %s⏸ PAUSED%s", red, reset);
+
+  /* Restore cursor position */
+  fprintf (stderr, "\033[u");
+
+  fflush (stderr);
+  status_line_shown = 1;
+}
+
+static void
+clear_status_line (void)
+{
+  if (status_line_shown)
+    {
+      /* Move to bottom, clear the line, restore cursor */
+      fprintf (stderr, "\033[s\033[999;1H\033[K\033[u");
+      fflush (stderr);
+      status_line_shown = 0;
+    }
+}
+
+/* Memory monitoring thread - runs independently! */
+static void *
+memory_monitor_thread_func (void *arg)
+{
+  (void)arg;
+
+  while (monitor_thread_running)
+    {
+      unsigned int mem_percent;
+      unsigned long free_mb;
+      get_memory_stats (&mem_percent, &free_mb);
+
+      /* Always update status display */
+      display_memory_status (mem_percent, free_mb, 0);
+
+      time_t now = time (NULL);
+
+      /* Check if adjustment needed (every 3 seconds) */
+      if (now - last_memory_check >= memory_check_interval)
+        {
+          last_memory_check = now;
+
+          if (mem_percent == 0)
+            continue;  /* Can't determine memory usage */
+
+          /* EMERGENCY: Less than 1GB free - STOP spawning new jobs completely! */
+          if (free_mb < memory_emergency_free_mb)
+            {
+              if (!jobs_paused && job_slots > 0)
+                {
+                  saved_job_slots = job_slots;
+                  job_slots = 0;  /* Stop spawning new jobs */
+                  jobs_paused = 1;
+                  clear_status_line ();
+                  char msg[256];
+                  sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - pausing new jobs until memory recovers"), free_mb);
+                  OS (error, 0, "%s", msg);
+                }
+              continue;  /* Stay paused, keep monitoring */
+            }
+
+          /* If we were paused and memory recovered, resume */
+          if (jobs_paused && free_mb >= memory_emergency_free_mb + 512)  /* 512MB hysteresis */
+            {
+              job_slots = saved_job_slots;
+              jobs_paused = 0;
+              clear_status_line ();
+              char msg[256];
+              sprintf (msg, _("Memory recovered (%luMB free) - resuming jobs at -j%u"), free_mb, job_slots);
+              OS (message, 0, "%s", msg);
+              last_job_adjustment = now;
+              continue;
+            }
+
+          /* Don't adjust if paused or only 1 job */
+          if (jobs_paused || job_slots <= 1)
+            continue;
+
+          unsigned int old_slots = job_slots;
+
+          /* Critical: drop quickly */
+          if (mem_percent >= memory_critical_percent && job_slots > 1)
+            {
+              if (now - last_job_adjustment >= 10)
+                {
+                  job_slots = (job_slots * 6) / 10;  /* Drop to 60% */
+                  if (job_slots < 1)
+                    job_slots = 1;
+                  last_job_adjustment = now;
+                }
+            }
+          /* High: gentle decrease */
+          else if (mem_percent >= memory_high_percent && job_slots > 1)
+            {
+              if (now - last_job_adjustment >= 15)
+                {
+                  job_slots--;
+                  last_job_adjustment = now;
+                }
+            }
+          /* Comfortable: can increase */
+          else if (mem_percent < memory_comfortable_percent &&
+                   job_slots < master_job_slots && master_job_slots > 0)
+            {
+              if (now - last_job_adjustment >= 20)
+                {
+                  job_slots++;
+                  last_job_adjustment = now;
+                }
+            }
+
+          if (old_slots != job_slots)
+            {
+              clear_status_line ();
+              char msg[256];
+              sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
+                       old_slots, job_slots, free_mb, mem_percent);
+              OS (message, 0, "%s", msg);
+
+              /* If we reduced job_slots, actively kill excess children */
+              if (old_slots > job_slots && job_slots_used > job_slots)
+                {
+                  extern struct child *children;
+                  extern void delete_child_targets (struct child *);
+
+                  unsigned int to_kill = job_slots_used - job_slots;
+                  struct child *c = children;
+                  unsigned int killed = 0;
+
+                  /* Walk the children list and kill the excess */
+                  while (c != NULL && killed < to_kill)
+                    {
+                      struct child *next = c->next;
+
+                      /* Only kill active jobs (not remote, not already deleted) */
+                      if (c->pid > 0 && !c->deleted && !c->remote)
+                        {
+                          clear_status_line ();
+                          char kill_msg[512];
+                          sprintf (kill_msg, _("Terminating job for %s (PID %ld) to free memory"),
+                                   c->file->name, (long)c->pid);
+                          OS (message, 0, "%s", kill_msg);
+
+                          /* Kill the process */
+                          kill (c->pid, SIGTERM);
+
+                          /* Mark targets for deletion (same as make does when interrupted) */
+                          delete_child_targets (c);
+                          c->deleted = 1;
+
+                          killed++;
+                        }
+
+                      c = next;
+                    }
+
+                  if (killed > 0)
+                    {
+                      clear_status_line ();
+                      sprintf (msg, _("Terminated %u job(s) to reduce memory pressure"), killed);
+                      OS (message, 0, "%s", msg);
+                    }
+                }
+            }
+        }  /* End of adjustment check */
+
+      /* Sleep 300ms before next check */
+      usleep (300000);
+    }
+
+  return NULL;
+}
+
+/* Start the memory monitoring thread */
+static void
+start_memory_monitor (void)
+{
+  if (!auto_adjust_jobs_flag)
+    return;
+
+  /* Only top-level make should monitor (not recursive makes) */
+  if (makelevel > 0)
+    return;
+
+  /* Only start once */
+  static int already_started = 0;
+  if (already_started)
+    return;
+  already_started = 1;
+
+  monitor_thread_running = 1;
+
+  if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
+    {
+      O (error, NILF, _("Failed to create memory monitor thread"));
+      auto_adjust_jobs_flag = 0;
+    }
+}
+
+/* Stop the memory monitoring thread */
+static void
+stop_memory_monitor (void)
+{
+  if (!auto_adjust_jobs_flag || !monitor_thread_running)
+    return;
+
+  monitor_thread_running = 0;
+  pthread_join (memory_monitor_thread, NULL);
+  clear_status_line ();
+}
+
+/* Legacy function - now just starts the thread */
+void
+check_and_adjust_jobs (void)
+{
+  /* This is now called once at startup to initialize the thread */
+  static int thread_started = 0;
+  if (!thread_started && auto_adjust_jobs_flag)
+    {
+      thread_started = 1;
+      start_memory_monitor ();
+    }
+}
 
 static void
 decode_debug_flags (void)
@@ -1197,6 +1559,7 @@ main (int argc, char **argv, char **envp)
 #ifdef HAVE_ATEXIT
   if (ANY_SET (check_io_state (), IO_STDOUT_OK))
     atexit (close_stdout);
+  atexit (stop_memory_monitor);
 #endif
 
   output_init (&make_sync);
@@ -1862,6 +2225,17 @@ main (int argc, char **argv, char **envp)
     }
 
  job_setup_complete:
+
+  /* Start memory monitoring thread if auto-adjust-jobs is enabled (top-level only) */
+  if (auto_adjust_jobs_flag && makelevel == 0 && job_slots > 0)
+    {
+      char msg[256];
+      sprintf (msg, _("Memory-aware job adjustment enabled (starting with -j%u)"), job_slots);
+      OS (message, 0, "%s", msg);
+
+      /* Start the background monitoring thread */
+      start_memory_monitor ();
+    }
 
   /* The extra indirection through $(MAKE_COMMAND) is done
      for hysterical raisins.  */
@@ -2945,7 +3319,7 @@ main (int argc, char **argv, char **envp)
   /* NOTREACHED */
   exit (MAKE_SUCCESS);
 }
-
+
 /* Parsing of arguments, decoding of switches.  */
 
 static char options[1 + sizeof (switches) / sizeof (switches[0]) * 3];
@@ -3441,7 +3815,7 @@ decode_env_switches (const char *envar, size_t len, enum variable_origin origin)
   /* Parse those words.  */
   decode_switches (argc, argv, origin);
 }
-
+
 /* Quote the string IN so that it will be interpreted as a single word with
    no magic by decode_env_switches; also double dollar signs to avoid
    variable expansion in make itself.  Write the result into OUT, returning
@@ -3701,7 +4075,7 @@ should_print_dir (void)
        default setting: disable under -s / print in sub-makes and under -C.  */
     return !silent_flag && (makelevel > 0 || directories != NULL);
 }
-
+
 /* Print version information.  */
 
 static void
@@ -3797,7 +4171,7 @@ clean_jobserver (int status)
       reset_jobserver ();
     }
 }
-
+
 /* Exit with STATUS, cleaning up as necessary.  */
 
 void

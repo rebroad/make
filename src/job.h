@@ -74,6 +74,7 @@ void new_job (struct file *file);
 void reap_children (int block, int err);
 void start_waiting_jobs (void);
 void free_childbase (struct childbase* child);
+void check_and_adjust_jobs (void);
 
 char **construct_command_argv (char *line, char **restp, struct file *file,
                                int cmd_flags, char** batch_file);
