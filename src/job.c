@@ -632,6 +632,9 @@ extern pid_t shell_function_pid;
 void
 reap_children (int block, int err)
 {
+  /* Check memory frequently - this function is called constantly */
+  check_and_adjust_jobs ();
+
 #ifndef WINDOWS32
   WAIT_T status;
 #endif
@@ -2185,6 +2188,9 @@ start_waiting_jobs (void)
 
   if (waiting_jobs == 0)
     return;
+
+  /* Check memory and adjust jobs if auto-adjust is enabled */
+  check_and_adjust_jobs ();
 
   do
     {
