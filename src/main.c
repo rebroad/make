@@ -263,11 +263,8 @@ static unsigned int memory_critical_percent = 88;
 static unsigned int memory_high_percent = 82;
 static unsigned int memory_comfortable_percent = 70;
 static unsigned long memory_emergency_free_mb = 1024;  /* Stop jobs if <1GB free */
-static unsigned int saved_job_slots = 0;  /* Save job_slots when paused */
 static int jobs_paused = 0;  /* Are we currently paused due to memory? */
-static time_t last_memory_check = 0;
 static time_t last_job_adjustment = 0;
-static time_t last_status_display = 0;
 static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
@@ -857,16 +854,19 @@ debug_signal_handler (int sig UNUSED)
 static void
 get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 {
+#ifdef __linux__
+  FILE *meminfo;
+  unsigned long total_kb = 0, avail_kb = 0;
+  char line[256];
+#endif
+
   *percent = 0;
   *free_mb = 0;
 
 #ifdef __linux__
-  FILE *meminfo = fopen ("/proc/meminfo", "r");
+  meminfo = fopen ("/proc/meminfo", "r");
   if (!meminfo)
     return;
-
-  unsigned long total_kb = 0, avail_kb = 0;
-  char line[256];
 
   while (fgets (line, sizeof (line), meminfo))
     {
@@ -889,65 +889,73 @@ get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 static void
 display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
 {
+  static struct timeval last_display = {0, 0};
+  struct timeval now;
+  long elapsed_ms;
+  const char *green = "\033[1;32m";
+  const char *yellow = "\033[1;33m";
+  const char *red = "\033[1;31m";
+  const char *gray = "\033[0;90m";
+  const char *white = "\033[1;37m";
+  const char *reset = "\033[0m";
+  const char *spinners[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+  const char *spinner;
+  const char *bar_color;
+  char bar[256];
+  int bar_len = 20;
+  int filled;
+  size_t pos = 0;
+  size_t i;
+  unsigned int display_slots;
+  char status[512];
+  struct winsize w;
+  int term_width = 80;
+  int visible_len = 45;
+  int col_pos;
+
   /* Only show if enabled AND we have active or pending jobs */
   if (!auto_adjust_jobs_flag || (job_slots_used == 0 && job_slots == 0))
     return;
 
-  static struct timeval last_display = {0, 0};
-  struct timeval now;
   gettimeofday (&now, NULL);
 
   /* Update status line every 300ms for smooth spinner */
   if (!force)
     {
-      long elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
-                        (now.tv_usec - last_display.tv_usec) / 1000;
+      elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
+                   (now.tv_usec - last_display.tv_usec) / 1000;
       if (elapsed_ms < 300)
         return;
     }
 
   last_display = now;
 
-  /* ANSI colors */
-  const char *green = "\033[1;32m";
-  const char *yellow = "\033[1;33m";
-  const char *red = "\033[1;31m";
-  const char *cyan = "\033[1;36m";
-  const char *gray = "\033[0;90m";
-  const char *white = "\033[1;37m";
-  const char *reset = "\033[0m";
-
   /* Spinner to show we're alive */
-  const char *spinners[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-  const char *spinner = spinners[spinner_state % 10];
+  spinner = spinners[spinner_state % 10];
   spinner_state++;
 
   /* Determine color based on memory pressure */
-  const char *bar_color = green;
+  bar_color = green;
   if (mem_percent >= memory_critical_percent)
     bar_color = red;
   else if (mem_percent >= memory_high_percent)
     bar_color = yellow;
 
   /* Build memory bar (20 chars) - use safe string building */
-  char bar[256];  /* Plenty of space for ANSI codes */
-  int bar_len = 20;
-  int filled = (mem_percent * bar_len) / 100;
-  int pos = 0;
-  int i;
+  filled = (mem_percent * bar_len) / 100;
 
   /* Add color code */
   pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", bar_color);
 
   /* Add filled portion */
-  for (i = 0; i < filled && i < bar_len && pos < sizeof(bar) - 10; i++)
+  for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
     pos += snprintf (bar + pos, sizeof(bar) - pos, "█");
 
   /* Switch to gray for empty portion */
   pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", gray);
 
   /* Add empty portion */
-  for (; i < bar_len && pos < sizeof(bar) - 10; i++)
+  for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
     pos += snprintf (bar + pos, sizeof(bar) - pos, "░");
 
   /* Reset color */
@@ -955,34 +963,28 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Get effective job slots - use master if we haven't started yet */
   /* In jobserver mode, effective parallelism is master_job_slots - held_tokens */
-  unsigned int display_slots = job_slots;
+  display_slots = job_slots;
   if (display_slots == 0 && !jobs_paused && master_job_slots > 0)
     display_slots = master_job_slots - held_tokens;  /* Jobserver mode */
   if (jobs_paused && master_job_slots > 0)
     display_slots = 0;  /* Paused */
 
   /* Build the status string first to know its length */
-  char status[512];  /* Larger buffer for all the ANSI codes */
-  int len;
-
   if (jobs_paused)
-    len = snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u %u jobs ⏸PAUSED%s",
-                    spinner, bar, white, mem_percent, free_mb, display_slots, job_slots_used, reset);
+    snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u %u jobs ⏸PAUSED%s",
+              spinner, bar, white, mem_percent, free_mb, display_slots, job_slots_used, reset);
   else
-    len = snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
-                    spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-                    green, display_slots, reset, gray, job_slots_used, reset);
+    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
+              spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+              green, display_slots, reset, gray, job_slots_used, reset);
 
   /* Get terminal width (default 80 if unknown) */
-  struct winsize w;
-  int term_width = 80;
   if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
     term_width = w.ws_col;
 
   /* Calculate position (right-aligned with 2 char margin) */
-  /* Note: len includes ANSI codes, so actual visible length is less */
-  int visible_len = 45;  /* Approximate visible length without ANSI codes */
-  int col_pos = term_width - visible_len;
+  /* Note: actual visible length is less than total due to ANSI codes */
+  col_pos = term_width - visible_len;
   if (col_pos < 1)
     col_pos = 1;
 
@@ -996,15 +998,17 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 static void
 clear_status_line (void)
 {
+  struct winsize w;
+  int term_width = 80;
+  int col_pos;
+
   if (status_line_shown)
     {
       /* Save cursor, move to right side, clear to end of line, restore */
-      struct winsize w;
-      int term_width = 80;
       if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
         term_width = w.ws_col;
 
-      int col_pos = term_width - 45;
+      col_pos = term_width - 45;
       if (col_pos < 1)
         col_pos = 1;
 
@@ -1018,29 +1022,48 @@ clear_status_line (void)
 static void *
 memory_monitor_thread_func (void *arg)
 {
-  (void)arg;
-  monitor_start_time = time (NULL);
   struct timeval last_iteration = {0, 0};
   unsigned int effective_critical_percent = memory_critical_percent;
   unsigned int effective_high_percent = memory_high_percent;
+  struct timeval iteration_start;
+  long delay_ms;
+  unsigned int mem_percent_temp;
+  unsigned long free_mb_temp;
+  char warn_msg[256];
+  unsigned int mem_percent;
+  unsigned long free_mb;
+  static time_t last_debug = 0;
+  time_t now;
+  extern unsigned int jobserver_acquire_all (void);
+  extern void jobserver_release (int is_fatal);
+  char msg[256];
+  unsigned int old_slots;
+  unsigned int target;
+  extern struct child *children;
+  extern void delete_child_targets (struct child *);
+  unsigned int to_kill;
+  struct child *c;
+  unsigned int killed;
+  struct child *next;
+  char kill_msg[512];
+
+  (void)arg;
+  monitor_start_time = time (NULL);
 
   while (monitor_thread_running)
     {
-      struct timeval iteration_start;
       gettimeofday (&iteration_start, NULL);
 
       /* Detect if we're being delayed (system degradation!) */
       if (last_iteration.tv_sec > 0)
         {
-          long delay_ms = (iteration_start.tv_sec - last_iteration.tv_sec) * 1000 +
-                          (iteration_start.tv_usec - last_iteration.tv_usec) / 1000;
+          delay_ms = (iteration_start.tv_sec - last_iteration.tv_sec) * 1000 +
+                     (iteration_start.tv_usec - last_iteration.tv_usec) / 1000;
 
           /* If we're delayed >500ms, system is already struggling! */
           if (delay_ms > 500)
             {
               /* Dynamically lower thresholds - we're already in trouble! */
-              unsigned int mem_percent_temp;
-              unsigned long free_mb_temp;
               get_memory_stats (&mem_percent_temp, &free_mb_temp);
 
               if (mem_percent_temp > 70)
@@ -1049,7 +1072,6 @@ memory_monitor_thread_func (void *arg)
                   effective_high_percent = mem_percent_temp - 5;
 
                   clear_status_line ();
-                  char warn_msg[256];
                   sprintf (warn_msg, _("System degradation detected! (delay=%ldms) Lowering thresholds to %u%%/%u%%"),
                            delay_ms, effective_critical_percent, effective_high_percent);
                   OS (error, 0, "%s", warn_msg);
@@ -1065,16 +1087,13 @@ memory_monitor_thread_func (void *arg)
 
       last_iteration = iteration_start;
 
-      unsigned int mem_percent;
-      unsigned long free_mb;
       get_memory_stats (&mem_percent, &free_mb);
 
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
 
       /* Debug: Show actual state periodically */
-      static time_t last_debug = 0;
-      time_t now = time (NULL);
+      now = time (NULL);
       if (now - last_debug >= 5)
         {
           fprintf (stderr, "[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
@@ -1093,11 +1112,9 @@ memory_monitor_thread_func (void *arg)
           if (!jobs_paused && master_job_slots > 0)
             {
               /* Acquire ALL jobserver tokens to effectively pause parallel execution */
-              extern unsigned int jobserver_acquire_all (void);
               held_tokens = jobserver_acquire_all ();
               jobs_paused = 1;
               clear_status_line ();
-              char msg[256];
               sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - holding %u tokens to reduce parallelism"), free_mb, held_tokens);
               OS (error, 0, "%s", msg);
             }
@@ -1107,7 +1124,6 @@ memory_monitor_thread_func (void *arg)
       /* If we were paused and memory recovered, release tokens */
       if (jobs_paused && free_mb >= memory_emergency_free_mb + 512)  /* 512MB hysteresis */
         {
-          extern void jobserver_release (int is_fatal);
           /* Release all held tokens back to the pool */
           while (held_tokens > 0)
             {
@@ -1116,7 +1132,6 @@ memory_monitor_thread_func (void *arg)
             }
           jobs_paused = 0;
           clear_status_line ();
-          char msg[256];
           sprintf (msg, _("Memory recovered (%luMB free) - released tokens, resuming parallelism"), free_mb);
           OS (message, 0, "%s", msg);
           last_job_adjustment = now;
@@ -1127,7 +1142,7 @@ memory_monitor_thread_func (void *arg)
       if (master_job_slots > 0 && job_slots == 0)
         continue;  /* Jobserver mode - just do emergency pause/resume */
 
-      unsigned int old_slots = job_slots;
+      old_slots = job_slots;
 
       /* Critical: drop quickly (use effective threshold which may be lowered) */
       if (mem_percent >= effective_critical_percent && job_slots > 1)
@@ -1151,7 +1166,7 @@ memory_monitor_thread_func (void *arg)
           if (job_slots == 0 || (job_slots < master_job_slots / 2))
             {
               /* Restore half the gap immediately */
-              unsigned int target = master_job_slots - (master_job_slots - job_slots) / 2;
+              target = master_job_slots - (master_job_slots - job_slots) / 2;
               if (target < 1)
                 target = 1;
               job_slots = target;
@@ -1168,7 +1183,6 @@ memory_monitor_thread_func (void *arg)
       if (old_slots != job_slots)
         {
           clear_status_line ();
-          char msg[256];
           sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
                    old_slots, job_slots, free_mb, mem_percent);
           OS (message, 0, "%s", msg);
@@ -1176,23 +1190,19 @@ memory_monitor_thread_func (void *arg)
           /* If we reduced job_slots, actively kill excess children */
           if (old_slots > job_slots && job_slots_used > job_slots)
             {
-              extern struct child *children;
-              extern void delete_child_targets (struct child *);
-
-              unsigned int to_kill = job_slots_used - job_slots;
-              struct child *c = children;
-              unsigned int killed = 0;
+              to_kill = job_slots_used - job_slots;
+              c = children;
+              killed = 0;
 
               /* Walk the children list and kill the excess */
               while (c != NULL && killed < to_kill)
                 {
-                  struct child *next = c->next;
+                  next = c->next;
 
                   /* Only kill active jobs (not remote, not already deleted) */
                   if (c->pid > 0 && !c->deleted && !c->remote)
                     {
                       clear_status_line ();
-                      char kill_msg[512];
                       sprintf (kill_msg, _("Terminating job for %s (PID %ld) to free memory"),
                                c->file->name, (long)c->pid);
                       OS (message, 0, "%s", kill_msg);
@@ -1230,6 +1240,8 @@ memory_monitor_thread_func (void *arg)
 static void
 start_memory_monitor (void)
 {
+  static int already_started = 0;
+
   if (!auto_adjust_jobs_flag)
     return;
 
@@ -1238,7 +1250,6 @@ start_memory_monitor (void)
     return;
 
   /* Only start once */
-  static int already_started = 0;
   if (already_started)
     return;
   already_started = 1;
@@ -1262,6 +1273,20 @@ stop_memory_monitor (void)
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
   clear_status_line ();
+}
+
+/* Immediate stop for signal handlers - don't wait for thread join */
+void
+stop_memory_monitor_immediate (void)
+{
+  if (!auto_adjust_jobs_flag || !monitor_thread_running)
+    return;
+
+  /* Just set the flag - don't pthread_join in a signal handler! */
+  monitor_thread_running = 0;
+
+  /* Give thread a moment to see the flag and exit */
+  usleep (10000);  /* 10ms */
 }
 
 /* Legacy function - now just starts the thread */
