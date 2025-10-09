@@ -1347,10 +1347,15 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
-  fprintf (stderr, "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
-
-  fflush (stderr);
-  status_line_shown = 1;
+  /* Use non-blocking lock to avoid freezing when main thread is writing to stderr */
+  if (ftrylockfile (stderr) == 0)
+    {
+      fprintf (stderr, "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+      fflush (stderr);
+      funlockfile (stderr);
+      status_line_shown = 1;
+    }
+  /* If stderr is locked, skip this update - next iteration will try again */
 }
 
 static void
@@ -1425,6 +1430,13 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running)
     {
       iteration_count++;
+
+      /* Debug EVERY iteration - something is wrong! */
+      if (iteration_count % 5 == 0)
+        {
+          fprintf (stderr, "[LOOP_TOP] Iteration %d started (monitor_thread_running=%d)\n",
+                   iteration_count, monitor_thread_running);
+        }
 
       gettimeofday (&iteration_start, NULL);
 
