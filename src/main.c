@@ -1234,9 +1234,14 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   time_t current_time;
   static unsigned int cached_descendants = 0;
   static time_t last_count_time = 0;
-  static int display_call_count = 0;
+  static int write_count = 0;
   struct timeval count_start, count_end;
   long count_time_ms;
+  char output_buf[1024];
+  int output_len;
+  ssize_t written;
+  char debug_msg[128];
+  int debug_len;
 
   /* Only show if enabled AND we have active jobs OR we're in emergency pause */
   /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
@@ -1244,15 +1249,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     return;
 
   gettimeofday (&now, NULL);
-
-  display_call_count++;
-
-  /* Debug: Show we're being called */
-  if (display_call_count % 20 == 0)
-    {
-      fprintf (stderr, "[DISPLAY_CALLED] Call #%d mem=%u%% at %ldms\n",
-               display_call_count, mem_percent, (long)(now.tv_sec * 1000 + now.tv_usec / 1000));
-    }
 
   /* Update status line every 300ms for smooth spinner */
   if (!force)
@@ -1320,9 +1316,14 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
                       (count_end.tv_usec - count_start.tv_usec) / 1000;
 
-      /* DEBUG: Show how long counting took */
-      fprintf (stderr, "[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
-               cached_descendants, count_time_ms, mem_percent);
+      /* DEBUG: Show how long counting took (non-blocking) */
+      if (ftrylockfile (stderr) == 0)
+        {
+          fprintf (stderr, "[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
+                   cached_descendants, count_time_ms, mem_percent);
+          fflush (stderr);
+          funlockfile (stderr);
+        }
 
       last_count_time = current_time;
     }
@@ -1347,15 +1348,26 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
-  /* Use non-blocking lock to avoid freezing when main thread is writing to stderr */
-  if (ftrylockfile (stderr) == 0)
+  /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
+  output_len = snprintf (output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+
+  if (output_len > 0 && output_len < (int)sizeof(output_buf))
     {
-      fprintf (stderr, "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
-      fflush (stderr);
-      funlockfile (stderr);
+      write_count++;
+
+      /* Debug every 20 writes */
+      if (write_count % 20 == 0)
+        {
+          debug_len = snprintf (debug_msg, sizeof(debug_msg), "\n[WRITE_STATUS] Call #%d mem=%u%%\n", write_count, mem_percent);
+          written = write (STDERR_FILENO, debug_msg, debug_len);
+          (void)written;
+        }
+
+      /* write() is atomic for small buffers and bypasses stdio locks */
+      written = write (STDERR_FILENO, output_buf, output_len);
+      (void)written;  /* Ignore errors - if it fails, next iteration will try again */
       status_line_shown = 1;
     }
-  /* If stderr is locked, skip this update - next iteration will try again */
 }
 
 static void
@@ -1431,21 +1443,7 @@ memory_monitor_thread_func (void *arg)
     {
       iteration_count++;
 
-      /* Debug EVERY iteration - something is wrong! */
-      if (iteration_count % 5 == 0)
-        {
-          fprintf (stderr, "[LOOP_TOP] Iteration %d started (monitor_thread_running=%d)\n",
-                   iteration_count, monitor_thread_running);
-        }
-
       gettimeofday (&iteration_start, NULL);
-
-      /* Debug: Show we're alive every 10 iterations (3 seconds) */
-      if (iteration_count % 10 == 0)
-        {
-          fprintf (stderr, "[THREAD_ALIVE] Iteration %d at %ldms\n",
-                   iteration_count, (long)(iteration_start.tv_sec * 1000 + iteration_start.tv_usec / 1000));
-        }
 
       /* Detect if we're being delayed (system degradation!) */
       if (last_iteration.tv_sec > 0)
@@ -1482,28 +1480,24 @@ memory_monitor_thread_func (void *arg)
 
       get_memory_stats (&mem_percent, &free_mb);
 
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT A] Got memory stats: %u%% %luMB\n", mem_percent, free_mb);
-
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
 
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT B] Display updated\n");
-
-      /* Debug: Show actual state periodically */
+      /* Debug: Show actual state periodically (non-blocking) */
       now = time (NULL);
       if (now - last_debug >= 5)
         {
-          fprintf (stderr, "[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
-                   (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
+          if (ftrylockfile (stderr) == 0)
+            {
+              fprintf (stderr, "[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
+                       (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
+              fflush (stderr);
+              funlockfile (stderr);
+            }
           last_debug = now;
         }
 
       /* Check adjustments on EVERY iteration (300ms) for fast response */
-
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT C] Starting trajectory calculation\n");
 
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
@@ -1546,11 +1540,16 @@ memory_monitor_thread_func (void *arg)
             {
               mb_per_second = total_mb_change / total_time;
 
-              /* Debug trajectory calculation (every 5 samples = 1.5 seconds) */
-              if (samples_collected >= 5 && debug_sample_count % 5 == 0)
+              /* Debug trajectory calculation only when memory is concerning (non-blocking) */
+              if (samples_collected >= 5 && debug_sample_count % 10 == 0 && mem_percent >= 75)
                 {
-                  fprintf (stderr, "[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
-                           samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
+                  if (ftrylockfile (stderr) == 0)
+                    {
+                      fprintf (stderr, "[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
+                               samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
+                      fflush (stderr);
+                      funlockfile (stderr);
+                    }
                 }
 
               /* If memory is declining (mb_per_second < 0), project forward */
@@ -1561,10 +1560,14 @@ memory_monitor_thread_func (void *arg)
                   /* If we're projected to hit <1.5GB in 5 seconds, AGGRESSIVELY reduce -j NOW! */
                   if (projected_free_in_5s < 1500 && job_slots > 1)
                     {
-                      clear_status_line ();
-                      sprintf (msg, _("PROACTIVE WARNING: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - EMERGENCY -j reduction!"),
-                               -mb_per_second, projected_free_in_5s);
-                      OS (error, 0, "%s", msg);
+                      if (ftrylockfile (stderr) == 0)
+                        {
+                          clear_status_line ();
+                          sprintf (msg, _("PROACTIVE WARNING: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - EMERGENCY -j reduction!"),
+                                   -mb_per_second, projected_free_in_5s);
+                          OS (error, 0, "%s", msg);
+                          funlockfile (stderr);
+                        }
 
                       /* Emergency drop to -j1 immediately! */
                       job_slots = 1;
@@ -1578,16 +1581,18 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT D] Trajectory complete, checking emergency\n");
-
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
       if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
         {
           if (now - last_approaching_msg >= 1)
             {
-              fprintf (stderr, "[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
-                       free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
+              if (ftrylockfile (stderr) == 0)
+                {
+                  fprintf (stderr, "[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
+                           free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
+                  fflush (stderr);
+                  funlockfile (stderr);
+                }
               last_approaching_msg = now;
             }
         }
@@ -1598,6 +1603,7 @@ memory_monitor_thread_func (void *arg)
         {
           if (!jobs_paused)
             {
+              /* Use fatal() which will block but that's OK - we're exiting anyway */
               clear_status_line ();
               sprintf (msg, _("CRITICAL MEMORY EMERGENCY: Only %luMB free - dynamic adjustment failed! Aborting build."),
                        free_mb);
@@ -1606,15 +1612,10 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT E] Starting job adjustment (master=%u job_slots=%u)\n", master_job_slots, job_slots);
-
       /* In jobserver mode, adjust by holding/releasing tokens (non-blocking!) */
       /* In direct mode, adjust job_slots directly */
       if (master_job_slots > 0 && job_slots == 0)
         {
-          if (iteration_count % 10 == 0)
-            fprintf (stderr, "[CHECKPOINT F] In jobserver mode\n");
 
           /* JOBSERVER MODE: Adjust effective parallelism by holding tokens */
           current_parallelism = master_job_slots - held_tokens;
@@ -1643,24 +1644,21 @@ memory_monitor_thread_func (void *arg)
           /* Acquire tokens to reduce parallelism (non-blocking!) */
           if (desired_procs < current_parallelism)
             {
-              if (iteration_count % 10 == 0)
-                fprintf (stderr, "[CHECKPOINT G] About to acquire tokens: desired=%u current=%u held=%u\n",
-                         desired_procs, current_parallelism, held_tokens);
-
               while (held_tokens < (master_job_slots - desired_procs) && jobserver_acquire(0))
                 {
                   held_tokens++;
                 }
 
-              if (iteration_count % 10 == 0)
-                fprintf (stderr, "[CHECKPOINT H] After acquire: held=%u\n", held_tokens);
-
               if (held_tokens > 0 && now - last_job_adjustment >= 1)
                 {
-                  clear_status_line ();
-                  sprintf (msg, _("Reduced parallelism: %u -> %u (holding %u tokens, memory: %luMB, %u%%)"),
-                           current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
-                  OS (message, 0, "%s", msg);
+                  if (ftrylockfile (stderr) == 0)
+                    {
+                      clear_status_line ();
+                      sprintf (msg, _("Reduced parallelism: %u -> %u (holding %u tokens, memory: %luMB, %u%%)"),
+                               current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
+                      OS (message, 0, "%s", msg);
+                      funlockfile (stderr);
+                    }
                   last_job_adjustment = now;
                 }
             }
@@ -1675,10 +1673,14 @@ memory_monitor_thread_func (void *arg)
 
               if (now - last_job_adjustment >= 1)
                 {
-                  clear_status_line ();
-                  sprintf (msg, _("Increased parallelism to -j%u (released tokens, memory: %luMB, %u%%)"),
-                           master_job_slots - held_tokens, free_mb, mem_percent);
-                  OS (message, 0, "%s", msg);
+                  if (ftrylockfile (stderr) == 0)
+                    {
+                      clear_status_line ();
+                      sprintf (msg, _("Increased parallelism to -j%u (released tokens, memory: %luMB, %u%%)"),
+                               master_job_slots - held_tokens, free_mb, mem_percent);
+                      OS (message, 0, "%s", msg);
+                      funlockfile (stderr);
+                    }
                   last_job_adjustment = now;
                 }
             }
@@ -1714,15 +1716,16 @@ memory_monitor_thread_func (void *arg)
 
           if (old_slots != job_slots)
             {
-              clear_status_line ();
-              sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
-                       old_slots, job_slots, free_mb, mem_percent);
-              OS (message, 0, "%s", msg);
+              if (ftrylockfile (stderr) == 0)
+                {
+                  clear_status_line ();
+                  sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
+                           old_slots, job_slots, free_mb, mem_percent);
+                  OS (message, 0, "%s", msg);
+                  funlockfile (stderr);
+                }
             }
         }
-
-      if (iteration_count % 10 == 0)
-        fprintf (stderr, "[CHECKPOINT Z] End of loop, sleeping 300ms\n");
 
       /* Sleep 300ms before next check */
       usleep (300000);
