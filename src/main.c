@@ -31,6 +31,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <dirent.h>
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -271,6 +272,98 @@ static pthread_t memory_monitor_thread;
 static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
 static unsigned int held_tokens = 0;  /* Tokens we're holding to reduce parallelism */
+
+/* Count all descendant processes (recursive - includes grandchildren!) */
+static unsigned int
+count_all_descendants (void)
+{
+  unsigned int count = 0;
+  DIR *proc_dir;
+  struct dirent *entry;
+  char stat_path[512];  /* Increased for safety */
+  FILE *stat_file;
+  pid_t ppid;
+  pid_t my_pid;
+  pid_t check_pid;
+  int i;
+  int j;
+
+  /* Simple array to track PIDs we've identified as descendants */
+#define MAX_TRACKED_PIDS 1000
+  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  int descendant_count = 0;
+  int found;
+
+  my_pid = getpid ();
+  descendant_pids[descendant_count++] = my_pid;
+
+  /* Walk /proc multiple times to catch all levels of descendants */
+  for (i = 0; i < 5; i++)  /* Up to 5 levels deep should be enough */
+    {
+      proc_dir = opendir ("/proc");
+      if (!proc_dir)
+        break;
+
+      while ((entry = readdir (proc_dir)) != NULL)
+        {
+          /* Skip non-numeric entries */
+          if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
+            continue;
+
+          check_pid = atoi (entry->d_name);
+          if (check_pid <= 0)
+            continue;
+
+          /* Read /proc/[pid]/stat to get PPID */
+          snprintf (stat_path, sizeof(stat_path), "/proc/%s/stat", entry->d_name);
+          stat_file = fopen (stat_path, "r");
+          if (!stat_file)
+            continue;
+
+          /* Format: pid (comm) state ppid ... */
+          if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
+            {
+              /* Check if PPID is in our descendant list */
+              found = 0;
+              for (j = 0; j < descendant_count; j++)
+                {
+                  if (ppid == descendant_pids[j])
+                    {
+                      found = 1;
+                      break;
+                    }
+                }
+
+              /* If parent is a descendant, add this PID too (if not already added) */
+              if (found)
+                {
+                  found = 0;
+                  for (j = 0; j < descendant_count; j++)
+                    {
+                      if (check_pid == descendant_pids[j])
+                        {
+                          found = 1;
+                          break;
+                        }
+                    }
+
+                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                    {
+                      descendant_pids[descendant_count++] = check_pid;
+                      count++;
+                    }
+                }
+            }
+
+          fclose (stat_file);
+        }
+
+      closedir (proc_dir);
+    }
+
+  /* Subtract 1 for ourselves */
+  return count > 0 ? count : 0;
+}
 
 /* Initialize memory monitoring settings from environment */
 static void
@@ -910,11 +1003,12 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   char status[512];
   struct winsize w;
   int term_width = 80;
-  int visible_len = 45;
+  int visible_len = 50;  /* Adjusted for "(jobserver)" display */
   int col_pos;
 
-  /* Only show if enabled AND we have active or pending jobs */
-  if (!auto_adjust_jobs_flag || (job_slots_used == 0 && job_slots == 0))
+  /* Only show if enabled AND we have active jobs OR we're in emergency pause */
+  /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
+  if (!auto_adjust_jobs_flag)
     return;
 
   gettimeofday (&now, NULL);
@@ -971,10 +1065,18 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Build the status string first to know its length */
   if (jobs_paused)
-    snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u %u jobs ⏸PAUSED%s",
-              spinner, bar, white, mem_percent, free_mb, display_slots, job_slots_used, reset);
+    snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u ⏸PAUSED%s",
+              spinner, bar, white, mem_percent, free_mb, display_slots, reset);
+  else if (master_job_slots > 0 && job_slots == 0)
+    {
+      /* Jobserver mode - count ALL descendants (grandchildren too!) */
+      unsigned int total_descendants = count_all_descendants ();
+      snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
+                spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+                green, display_slots, reset, gray, total_descendants, reset);
+    }
   else
-    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
+    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u active%s",
               spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
               green, display_slots, reset, gray, job_slots_used, reset);
 
@@ -1009,7 +1111,7 @@ clear_status_line (void)
       if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
         term_width = w.ws_col;
 
-      col_pos = term_width - 45;
+      col_pos = term_width - 50;
       if (col_pos < 1)
         col_pos = 1;
 
@@ -1035,6 +1137,26 @@ memory_monitor_thread_func (void *arg)
   unsigned long free_mb;
   static time_t last_debug = 0;
   time_t now;
+  long mb_per_second;
+  long projected_free_in_5s;
+  int i;
+  long total_mb_change;
+  long total_time;
+  int valid_samples;
+  time_t time_diff;
+  long mb_diff;
+  int idx;
+  int newest_idx;
+
+  /* Sliding window for smoothed rate calculation (last 10 samples = 3 seconds) */
+#define MEMORY_SAMPLE_WINDOW 10
+  static unsigned long memory_samples[MEMORY_SAMPLE_WINDOW];
+  static time_t memory_sample_times[MEMORY_SAMPLE_WINDOW];
+  static int sample_index = 0;
+  static int samples_collected = 0;
+  static int debug_sample_count = 0;
+  static time_t last_approaching_msg = 0;
+  static time_t last_emergency_msg = 0;
   extern unsigned int jobserver_acquire_all (void);
   extern void jobserver_release (int is_fatal);
   char msg[256];
@@ -1107,9 +1229,121 @@ memory_monitor_thread_func (void *arg)
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
 
+      /* SLIDING WINDOW TRAJECTORY PREDICTION: Add current sample to window */
+      memory_samples[sample_index] = free_mb;
+      memory_sample_times[sample_index] = now;
+      sample_index = (sample_index + 1) % MEMORY_SAMPLE_WINDOW;
+      if (samples_collected < MEMORY_SAMPLE_WINDOW)
+        samples_collected++;
+      debug_sample_count++;
+
+      /* Calculate smoothed rate of memory decline (average over all samples) */
+      if (samples_collected >= 3)  /* Need at least 3 samples for trend */
+        {
+          total_mb_change = 0;
+          total_time = 0;
+          valid_samples = 0;
+          newest_idx = (sample_index - 1 + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
+
+          /* Compare each sample with the newest to get rate */
+          for (i = 0; i < samples_collected; i++)
+            {
+              idx = (sample_index - 1 - i + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
+              if (idx == newest_idx && i == 0)
+                continue;  /* Skip the newest sample comparing with itself */
+
+              time_diff = now - memory_sample_times[idx];
+              if (time_diff > 0 && time_diff <= 5)  /* Only use samples from last 5 seconds */
+                {
+                  mb_diff = (long)free_mb - (long)memory_samples[idx];
+                  total_mb_change += mb_diff;
+                  total_time += time_diff;
+                  valid_samples++;
+                }
+            }
+
+          /* Calculate average rate (negative = declining) */
+          if (valid_samples > 0 && total_time > 0)
+            {
+              mb_per_second = total_mb_change / total_time;
+
+              /* Debug trajectory calculation (every 5 samples = 1.5 seconds) */
+              if (samples_collected >= 5 && debug_sample_count % 5 == 0)
+                {
+                  fprintf (stderr, "[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
+                           samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
+                }
+
+              /* If memory is declining (mb_per_second < 0), project forward */
+              if (mb_per_second < -50)  /* Dropping more than 50MB/s is concerning */
+                {
+                  projected_free_in_5s = (long)free_mb + (mb_per_second * 5);
+
+                  /* If we're projected to hit <1.5GB in 5 seconds, ACT NOW! */
+                  if (projected_free_in_5s < 1500)
+                    {
+                      clear_status_line ();
+                      sprintf (msg, _("PROACTIVE EMERGENCY: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - KILLING JOBS NOW!"),
+                               -mb_per_second, projected_free_in_5s);
+                      OS (error, 0, "%s", msg);
+
+                      /* Kill ALL children immediately to stop the bleed! */
+                      if (master_job_slots > 0)
+                        {
+                          held_tokens = jobserver_acquire_all ();
+                          jobs_paused = 1;
+
+                          c = children;
+                          killed = 0;
+                          while (c != NULL)
+                            {
+                              next = c->next;
+                              if (c->pid > 0 && !c->deleted && !c->remote)
+                                {
+                                  kill (c->pid, SIGKILL);
+                                  delete_child_targets (c);
+                                  c->deleted = 1;
+                                  killed++;
+                                }
+                              c = next;
+                            }
+
+                          if (killed > 0)
+                            {
+                              clear_status_line ();
+                              sprintf (msg, _("Killed %u job(s) to prevent predicted OOM"), killed);
+                              OS (error, 0, "%s", msg);
+                            }
+                        }
+                      /* Sleep before continuing to avoid spinning */
+                      usleep (300000);
+                      continue;  /* Stay paused */
+                    }
+                }
+            }
+        }
+
+      /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
+      if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
+        {
+          if (now - last_approaching_msg >= 1)
+            {
+              fprintf (stderr, "[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
+                       free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
+              last_approaching_msg = now;
+            }
+        }
+
       /* EMERGENCY: Less than 1GB free - acquire all jobserver tokens to pause! */
       if (free_mb < memory_emergency_free_mb)
         {
+          if (now - last_emergency_msg >= 1)
+            {
+              fprintf (stderr, "[EMERGENCY TRIGGERED] %luMB < %luMB jobs_paused=%d master_job_slots=%u\n",
+                       free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
+              last_emergency_msg = now;
+            }
+
           if (!jobs_paused && master_job_slots > 0)
             {
               /* Acquire ALL jobserver tokens to effectively pause parallel execution */
@@ -1119,6 +1353,8 @@ memory_monitor_thread_func (void *arg)
               sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - holding %u tokens to reduce parallelism"), free_mb, held_tokens);
               OS (error, 0, "%s", msg);
             }
+          /* Sleep before continuing to avoid spinning at full CPU */
+          usleep (300000);
           continue;  /* Stay paused, keep monitoring */
         }
 
