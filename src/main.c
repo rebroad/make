@@ -988,8 +988,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   if (col_pos < 1)
     col_pos = 1;
 
-  /* Save cursor, move to right side of current line, display, restore */
-  fprintf (stderr, "\033[s\033[%dG%s\033[u", col_pos, status);
+  /* Move up one line, save cursor, move to right side, display, restore, move down */
+  /* This makes the status appear on the line ABOVE the current compilation message */
+  fprintf (stderr, "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
 
   fflush (stderr);
   status_line_shown = 1;
