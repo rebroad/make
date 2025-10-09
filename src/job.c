@@ -632,14 +632,14 @@ extern pid_t shell_function_pid;
 void
 reap_children (int block, int err)
 {
-  /* Check memory frequently - this function is called constantly */
-  check_and_adjust_jobs ();
-
 #ifndef WINDOWS32
   WAIT_T status;
 #endif
   /* Initially, assume we have some.  */
   int reap_more = 1;
+
+  /* Check memory frequently - this function is called constantly */
+  check_and_adjust_jobs ();
 
 #ifdef WAIT_NOHANG
 # define REAP_MORE reap_more

@@ -523,6 +523,10 @@ fatal_error_signal (int sig)
         }
     }
 #endif
+  /* Stop memory monitor thread FIRST if it's running - it could interfere with cleanup */
+  extern void stop_memory_monitor_immediate (void);
+  stop_memory_monitor_immediate ();
+
   handling_fatal_signal = 1;
 
   /* Set the handling for this signal to the default.
