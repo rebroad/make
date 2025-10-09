@@ -273,6 +273,232 @@ static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
 static unsigned int held_tokens = 0;  /* Tokens we're holding to reduce parallelism */
 
+/* Freeze or resume ALL descendant make processes (recursive!) */
+static unsigned int UNUSED
+signal_all_descendant_makes (int sig)
+{
+  DIR *proc_dir;
+  struct dirent *entry;
+  char stat_path[512];
+  char cmdline_path[512];
+  FILE *stat_file;
+  FILE *cmdline_file;
+  pid_t ppid;
+  pid_t my_pid;
+  pid_t check_pid;
+  int i;
+  int j;
+  unsigned int signaled = 0;
+  char cmdline[256];
+
+  /* Track all our descendants */
+#define MAX_TRACKED_PIDS 1000
+  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  int descendant_count = 0;
+  int found;
+
+  my_pid = getpid ();
+  descendant_pids[descendant_count++] = my_pid;
+
+  /* Walk /proc multiple times to find all descendants */
+  for (i = 0; i < 5; i++)
+    {
+      proc_dir = opendir ("/proc");
+      if (!proc_dir)
+        break;
+
+      while ((entry = readdir (proc_dir)) != NULL)
+        {
+          if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
+            continue;
+
+          check_pid = atoi (entry->d_name);
+          if (check_pid <= 0)
+            continue;
+
+          snprintf (stat_path, sizeof(stat_path), "/proc/%s/stat", entry->d_name);
+          stat_file = fopen (stat_path, "r");
+          if (!stat_file)
+            continue;
+
+          if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
+            {
+              found = 0;
+              for (j = 0; j < descendant_count; j++)
+                {
+                  if (ppid == descendant_pids[j])
+                    {
+                      found = 1;
+                      break;
+                    }
+                }
+
+              if (found)
+                {
+                  found = 0;
+                  for (j = 0; j < descendant_count; j++)
+                    {
+                      if (check_pid == descendant_pids[j])
+                        {
+                          found = 1;
+                          break;
+                        }
+                    }
+
+                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                    {
+                      descendant_pids[descendant_count++] = check_pid;
+                    }
+                }
+            }
+
+          fclose (stat_file);
+        }
+
+      closedir (proc_dir);
+    }
+
+  /* Now signal only descendant make processes (not ourselves, not gcc) */
+  for (i = 0; i < descendant_count; i++)
+    {
+      if (descendant_pids[i] == my_pid)
+        continue;  /* Don't signal ourselves */
+
+      snprintf (cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", descendant_pids[i]);
+      cmdline_file = fopen (cmdline_path, "r");
+      if (!cmdline_file)
+        continue;
+
+      if (fread (cmdline, 1, sizeof(cmdline) - 1, cmdline_file) > 0)
+        {
+          /* Signal ONLY make processes */
+          if (strstr(cmdline, "make"))
+            {
+              kill (descendant_pids[i], sig);
+              signaled++;
+            }
+        }
+
+      fclose (cmdline_file);
+    }
+
+  return signaled;
+}
+
+/* Kill all descendant compilation jobs (gcc, g++, ld) but NOT make processes */
+static unsigned int UNUSED
+kill_compilation_jobs (int sig)
+{
+  DIR *proc_dir;
+  struct dirent *entry;
+  char stat_path[512];
+  char cmdline_path[512];
+  FILE *stat_file;
+  FILE *cmdline_file;
+  pid_t ppid;
+  pid_t my_pid;
+  pid_t check_pid;
+  int i;
+  int j;
+  unsigned int killed = 0;
+  char cmdline[256];
+
+  /* Track all our descendants */
+#define MAX_TRACKED_PIDS 1000
+  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  int descendant_count = 0;
+  int found;
+
+  my_pid = getpid ();
+  descendant_pids[descendant_count++] = my_pid;
+
+  /* Walk /proc multiple times to find all descendants */
+  for (i = 0; i < 5; i++)
+    {
+      proc_dir = opendir ("/proc");
+      if (!proc_dir)
+        break;
+
+      while ((entry = readdir (proc_dir)) != NULL)
+        {
+          if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
+            continue;
+
+          check_pid = atoi (entry->d_name);
+          if (check_pid <= 0)
+            continue;
+
+          snprintf (stat_path, sizeof(stat_path), "/proc/%s/stat", entry->d_name);
+          stat_file = fopen (stat_path, "r");
+          if (!stat_file)
+            continue;
+
+          if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
+            {
+              found = 0;
+              for (j = 0; j < descendant_count; j++)
+                {
+                  if (ppid == descendant_pids[j])
+                    {
+                      found = 1;
+                      break;
+                    }
+                }
+
+              if (found)
+                {
+                  found = 0;
+                  for (j = 0; j < descendant_count; j++)
+                    {
+                      if (check_pid == descendant_pids[j])
+                        {
+                          found = 1;
+                          break;
+                        }
+                    }
+
+                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                    {
+                      descendant_pids[descendant_count++] = check_pid;
+                    }
+                }
+            }
+
+          fclose (stat_file);
+        }
+
+      closedir (proc_dir);
+    }
+
+  /* Now kill only compilation jobs (gcc, g++, ld, etc - NOT make!) */
+  for (i = 0; i < descendant_count; i++)
+    {
+      if (descendant_pids[i] == my_pid)
+        continue;  /* Don't kill ourselves */
+
+      snprintf (cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", descendant_pids[i]);
+      cmdline_file = fopen (cmdline_path, "r");
+      if (!cmdline_file)
+        continue;
+
+      if (fread (cmdline, 1, sizeof(cmdline) - 1, cmdline_file) > 0)
+        {
+          /* Check if this is a compilation job (not make) */
+          if (strstr(cmdline, "gcc") || strstr(cmdline, "g++") ||
+              strstr(cmdline, "cc1") || strstr(cmdline, "ld") ||
+              strstr(cmdline, "as") || strstr(cmdline, "ar"))
+            {
+              kill (descendant_pids[i], sig);
+              killed++;
+            }
+        }
+
+      fclose (cmdline_file);
+    }
+
+  return killed;
+}
+
 /* Count all descendant processes (recursive - includes grandchildren!) */
 static unsigned int
 count_all_descendants (void)
@@ -1003,8 +1229,14 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   char status[512];
   struct winsize w;
   int term_width = 80;
-  int visible_len = 50;  /* Adjusted for "(jobserver)" display */
+  int visible_len = 50;  /* Adjusted for "X procs" display */
   int col_pos;
+  time_t current_time;
+  static unsigned int cached_descendants = 0;
+  static time_t last_count_time = 0;
+  static int display_call_count = 0;
+  struct timeval count_start, count_end;
+  long count_time_ms;
 
   /* Only show if enabled AND we have active jobs OR we're in emergency pause */
   /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
@@ -1012,6 +1244,15 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     return;
 
   gettimeofday (&now, NULL);
+
+  display_call_count++;
+
+  /* Debug: Show we're being called */
+  if (display_call_count % 20 == 0)
+    {
+      fprintf (stderr, "[DISPLAY_CALLED] Call #%d mem=%u%% at %ldms\n",
+               display_call_count, mem_percent, (long)(now.tv_sec * 1000 + now.tv_usec / 1000));
+    }
 
   /* Update status line every 300ms for smooth spinner */
   if (!force)
@@ -1055,30 +1296,44 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Reset color */
   snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
 
-  /* Get effective job slots - use master if we haven't started yet */
-  /* In jobserver mode, effective parallelism is master_job_slots - held_tokens */
-  display_slots = job_slots;
-  if (display_slots == 0 && !jobs_paused && master_job_slots > 0)
+  /* Get effective job slots */
+  /* In jobserver mode: effective parallelism = master_job_slots - held_tokens */
+  /* In direct mode: effective parallelism = job_slots */
+  if (master_job_slots > 0 && job_slots == 0)
     display_slots = master_job_slots - held_tokens;  /* Jobserver mode */
-  if (jobs_paused && master_job_slots > 0)
+  else
+    display_slots = job_slots;  /* Direct mode */
+
+  if (jobs_paused)
     display_slots = 0;  /* Paused */
 
-  /* Build the status string first to know its length */
+  /* Build the status string - show total descendant count */
+  /* Measure how long counting actually takes */
+  current_time = time (NULL);
+
+  if (current_time - last_count_time >= 2)
+    {
+      gettimeofday (&count_start, NULL);
+      cached_descendants = count_all_descendants ();
+      gettimeofday (&count_end, NULL);
+
+      count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
+                      (count_end.tv_usec - count_start.tv_usec) / 1000;
+
+      /* DEBUG: Show how long counting took */
+      fprintf (stderr, "[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
+               cached_descendants, count_time_ms, mem_percent);
+
+      last_count_time = current_time;
+    }
+
   if (jobs_paused)
     snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u ⏸PAUSED%s",
               spinner, bar, white, mem_percent, free_mb, display_slots, reset);
-  else if (master_job_slots > 0 && job_slots == 0)
-    {
-      /* Jobserver mode - count ALL descendants (grandchildren too!) */
-      unsigned int total_descendants = count_all_descendants ();
-      snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
-                spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-                green, display_slots, reset, gray, total_descendants, reset);
-    }
   else
-    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u active%s",
+    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
               spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-              green, display_slots, reset, gray, job_slots_used, reset);
+              green, display_slots, reset, gray, cached_descendants, reset);
 
   /* Get terminal width (default 80 if unknown) */
   if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
@@ -1156,26 +1411,29 @@ memory_monitor_thread_func (void *arg)
   static int samples_collected = 0;
   static int debug_sample_count = 0;
   static time_t last_approaching_msg = 0;
-  static time_t last_emergency_msg = 0;
-  extern unsigned int jobserver_acquire_all (void);
-  extern void jobserver_release (int is_fatal);
+  static int iteration_count = 0;
   char msg[256];
   unsigned int old_slots;
-  unsigned int target;
-  extern struct child *children;
-  extern void delete_child_targets (struct child *);
-  unsigned int to_kill;
-  struct child *c;
-  unsigned int killed;
-  struct child *next;
-  char kill_msg[512];
+  unsigned int desired_procs;
+  unsigned int current_parallelism;
+  extern unsigned int jobserver_acquire (int timeout);
+  extern void jobserver_release (int is_fatal);
 
   (void)arg;
   monitor_start_time = time (NULL);
 
   while (monitor_thread_running)
     {
+      iteration_count++;
+
       gettimeofday (&iteration_start, NULL);
+
+      /* Debug: Show we're alive every 10 iterations (3 seconds) */
+      if (iteration_count % 10 == 0)
+        {
+          fprintf (stderr, "[THREAD_ALIVE] Iteration %d at %ldms\n",
+                   iteration_count, (long)(iteration_start.tv_sec * 1000 + iteration_start.tv_usec / 1000));
+        }
 
       /* Detect if we're being delayed (system degradation!) */
       if (last_iteration.tv_sec > 0)
@@ -1212,8 +1470,14 @@ memory_monitor_thread_func (void *arg)
 
       get_memory_stats (&mem_percent, &free_mb);
 
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT A] Got memory stats: %u%% %luMB\n", mem_percent, free_mb);
+
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
+
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT B] Display updated\n");
 
       /* Debug: Show actual state periodically */
       now = time (NULL);
@@ -1225,6 +1489,9 @@ memory_monitor_thread_func (void *arg)
         }
 
       /* Check adjustments on EVERY iteration (300ms) for fast response */
+
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT C] Starting trajectory calculation\n");
 
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
@@ -1279,49 +1546,28 @@ memory_monitor_thread_func (void *arg)
                 {
                   projected_free_in_5s = (long)free_mb + (mb_per_second * 5);
 
-                  /* If we're projected to hit <1.5GB in 5 seconds, ACT NOW! */
-                  if (projected_free_in_5s < 1500)
+                  /* If we're projected to hit <1.5GB in 5 seconds, AGGRESSIVELY reduce -j NOW! */
+                  if (projected_free_in_5s < 1500 && job_slots > 1)
                     {
                       clear_status_line ();
-                      sprintf (msg, _("PROACTIVE EMERGENCY: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - KILLING JOBS NOW!"),
+                      sprintf (msg, _("PROACTIVE WARNING: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - EMERGENCY -j reduction!"),
                                -mb_per_second, projected_free_in_5s);
                       OS (error, 0, "%s", msg);
 
-                      /* Kill ALL children immediately to stop the bleed! */
-                      if (master_job_slots > 0)
-                        {
-                          held_tokens = jobserver_acquire_all ();
-                          jobs_paused = 1;
+                      /* Emergency drop to -j1 immediately! */
+                      job_slots = 1;
+                      last_job_adjustment = now;
 
-                          c = children;
-                          killed = 0;
-                          while (c != NULL)
-                            {
-                              next = c->next;
-                              if (c->pid > 0 && !c->deleted && !c->remote)
-                                {
-                                  kill (c->pid, SIGKILL);
-                                  delete_child_targets (c);
-                                  c->deleted = 1;
-                                  killed++;
-                                }
-                              c = next;
-                            }
-
-                          if (killed > 0)
-                            {
-                              clear_status_line ();
-                              sprintf (msg, _("Killed %u job(s) to prevent predicted OOM"), killed);
-                              OS (error, 0, "%s", msg);
-                            }
-                        }
-                      /* Sleep before continuing to avoid spinning */
+                      /* Skip the rest of the adjustment logic */
                       usleep (300000);
-                      continue;  /* Stay paused */
+                      continue;
                     }
                 }
             }
         }
+
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT D] Trajectory complete, checking emergency\n");
 
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
       if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
@@ -1334,137 +1580,137 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
-      /* EMERGENCY: Less than 1GB free - acquire all jobserver tokens to pause! */
+      /* CRITICAL EMERGENCY: Less than 1GB free - dynamic adjustment failed! */
+      /* This should rarely happen if adjustment is working correctly */
       if (free_mb < memory_emergency_free_mb)
         {
-          if (now - last_emergency_msg >= 1)
+          if (!jobs_paused)
             {
-              fprintf (stderr, "[EMERGENCY TRIGGERED] %luMB < %luMB jobs_paused=%d master_job_slots=%u\n",
-                       free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
-              last_emergency_msg = now;
-            }
-
-          if (!jobs_paused && master_job_slots > 0)
-            {
-              /* Acquire ALL jobserver tokens to effectively pause parallel execution */
-              held_tokens = jobserver_acquire_all ();
-              jobs_paused = 1;
               clear_status_line ();
-              sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - holding %u tokens to reduce parallelism"), free_mb, held_tokens);
-              OS (error, 0, "%s", msg);
+              sprintf (msg, _("CRITICAL MEMORY EMERGENCY: Only %luMB free - dynamic adjustment failed! Aborting build."),
+                       free_mb);
+              OS (fatal, 0, "%s", msg);
+              /* fatal() will exit - we can't recover from this */
             }
-          /* Sleep before continuing to avoid spinning at full CPU */
-          usleep (300000);
-          continue;  /* Stay paused, keep monitoring */
         }
 
-      /* If we were paused and memory recovered, release tokens */
-      if (jobs_paused && free_mb >= memory_emergency_free_mb + 512)  /* 512MB hysteresis */
-        {
-          /* Release all held tokens back to the pool */
-          while (held_tokens > 0)
-            {
-              jobserver_release (0);
-              held_tokens--;
-            }
-          jobs_paused = 0;
-          clear_status_line ();
-          sprintf (msg, _("Memory recovered (%luMB free) - released tokens, resuming parallelism"), free_mb);
-          OS (message, 0, "%s", msg);
-          last_job_adjustment = now;
-          continue;
-        }
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT E] Starting job adjustment (master=%u job_slots=%u)\n", master_job_slots, job_slots);
 
-      /* Don't try to adjust job_slots in jobserver mode - jobserver handles it */
+      /* In jobserver mode, adjust by holding/releasing tokens (non-blocking!) */
+      /* In direct mode, adjust job_slots directly */
       if (master_job_slots > 0 && job_slots == 0)
-        continue;  /* Jobserver mode - just do emergency pause/resume */
+        {
+          if (iteration_count % 10 == 0)
+            fprintf (stderr, "[CHECKPOINT F] In jobserver mode\n");
 
-      old_slots = job_slots;
+          /* JOBSERVER MODE: Adjust effective parallelism by holding tokens */
+          current_parallelism = master_job_slots - held_tokens;
+          desired_procs = master_job_slots;
 
-      /* Critical: drop quickly (use effective threshold which may be lowered) */
-      if (mem_percent >= effective_critical_percent && job_slots > 1)
-        {
-          job_slots = (job_slots * 6) / 10;  /* Drop to 60% */
-          if (job_slots < 1)
-            job_slots = 1;
-          last_job_adjustment = now;
-        }
-      /* High: gentle decrease (use effective threshold) */
-      else if (mem_percent >= effective_high_percent && job_slots > 1)
-        {
-          job_slots--;
-          last_job_adjustment = now;
-        }
-      /* Comfortable: can increase */
-      else if (mem_percent < memory_comfortable_percent &&
-               job_slots < master_job_slots && master_job_slots > 0)
-        {
-          /* If job_slots is way too low, restore it aggressively! */
-          if (job_slots == 0 || (job_slots < master_job_slots / 2))
+          /* Critical: drop to 40% */
+          if (mem_percent >= effective_critical_percent && current_parallelism > 1)
             {
-              /* Restore half the gap immediately */
-              target = master_job_slots - (master_job_slots - job_slots) / 2;
-              if (target < 1)
-                target = 1;
-              job_slots = target;
+              desired_procs = (current_parallelism * 4) / 10;
+              if (desired_procs < 1)
+                desired_procs = 1;
+            }
+          /* High: drop to 70% */
+          else if (mem_percent >= effective_high_percent && current_parallelism > 1)
+            {
+              desired_procs = (current_parallelism * 7) / 10;
+              if (desired_procs < 2)
+                desired_procs = 2;
+            }
+          /* Comfortable: can increase */
+          else if (mem_percent < memory_comfortable_percent && current_parallelism < master_job_slots)
+            {
+              desired_procs = current_parallelism + 1;
+            }
+
+          /* Acquire tokens to reduce parallelism (non-blocking!) */
+          if (desired_procs < current_parallelism)
+            {
+              if (iteration_count % 10 == 0)
+                fprintf (stderr, "[CHECKPOINT G] About to acquire tokens: desired=%u current=%u held=%u\n",
+                         desired_procs, current_parallelism, held_tokens);
+
+              while (held_tokens < (master_job_slots - desired_procs) && jobserver_acquire(0))
+                {
+                  held_tokens++;
+                }
+
+              if (iteration_count % 10 == 0)
+                fprintf (stderr, "[CHECKPOINT H] After acquire: held=%u\n", held_tokens);
+
+              if (held_tokens > 0 && now - last_job_adjustment >= 1)
+                {
+                  clear_status_line ();
+                  sprintf (msg, _("Reduced parallelism: %u -> %u (holding %u tokens, memory: %luMB, %u%%)"),
+                           current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
+                  OS (message, 0, "%s", msg);
+                  last_job_adjustment = now;
+                }
+            }
+          /* Release tokens to increase parallelism */
+          else if (desired_procs > current_parallelism && held_tokens > 0)
+            {
+              while (held_tokens > 0 && (master_job_slots - held_tokens) < desired_procs)
+                {
+                  jobserver_release (0);
+                  held_tokens--;
+                }
+
+              if (now - last_job_adjustment >= 1)
+                {
+                  clear_status_line ();
+                  sprintf (msg, _("Increased parallelism to -j%u (released tokens, memory: %luMB, %u%%)"),
+                           master_job_slots - held_tokens, free_mb, mem_percent);
+                  OS (message, 0, "%s", msg);
+                  last_job_adjustment = now;
+                }
+            }
+        }
+      else
+        {
+          /* DIRECT MODE: Adjust job_slots directly */
+          old_slots = job_slots;
+
+          /* Critical: drop quickly */
+          if (mem_percent >= effective_critical_percent && job_slots > 1)
+            {
+              job_slots = (job_slots * 4) / 10;
+              if (job_slots < 1)
+                job_slots = 1;
               last_job_adjustment = now;
             }
-          /* Otherwise increase gradually if we haven't adjusted recently */
-          else if (now - last_job_adjustment >= 5)
+          /* High: gentle decrease */
+          else if (mem_percent >= effective_high_percent && job_slots > 1)
+            {
+              job_slots = (job_slots * 7) / 10;
+              if (job_slots < 2)
+                job_slots = 2;
+              last_job_adjustment = now;
+            }
+          /* Comfortable: can increase */
+          else if (mem_percent < memory_comfortable_percent &&
+                   job_slots < master_job_slots && master_job_slots > 0)
             {
               job_slots++;
               last_job_adjustment = now;
             }
-        }
 
-      if (old_slots != job_slots)
-        {
-          clear_status_line ();
-          sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
-                   old_slots, job_slots, free_mb, mem_percent);
-          OS (message, 0, "%s", msg);
-
-          /* If we reduced job_slots, actively kill excess children */
-          if (old_slots > job_slots && job_slots_used > job_slots)
+          if (old_slots != job_slots)
             {
-              to_kill = job_slots_used - job_slots;
-              c = children;
-              killed = 0;
-
-              /* Walk the children list and kill the excess */
-              while (c != NULL && killed < to_kill)
-                {
-                  next = c->next;
-
-                  /* Only kill active jobs (not remote, not already deleted) */
-                  if (c->pid > 0 && !c->deleted && !c->remote)
-                    {
-                      clear_status_line ();
-                      sprintf (kill_msg, _("Terminating job for %s (PID %ld) to free memory"),
-                               c->file->name, (long)c->pid);
-                      OS (message, 0, "%s", kill_msg);
-
-                      /* Kill the process */
-                      kill (c->pid, SIGTERM);
-
-                      /* Mark targets for deletion (same as make does when interrupted) */
-                      delete_child_targets (c);
-                      c->deleted = 1;
-
-                      killed++;
-                    }
-
-                  c = next;
-                }
-
-              if (killed > 0)
-                {
-                  clear_status_line ();
-                  sprintf (msg, _("Terminated %u job(s) to reduce memory pressure"), killed);
-                  OS (message, 0, "%s", msg);
-                }
+              clear_status_line ();
+              sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
+                       old_slots, job_slots, free_mb, mem_percent);
+              OS (message, 0, "%s", msg);
             }
         }
+
+      if (iteration_count % 10 == 0)
+        fprintf (stderr, "[CHECKPOINT Z] End of loop, sleeping 300ms\n");
 
       /* Sleep 300ms before next check */
       usleep (300000);
@@ -2978,7 +3224,7 @@ main (int argc, char **argv, char **envp)
      submakes it's the token they were given by their parent.  For the top
      make, we just subtract one from the number the user wants.  */
 
-  /* Always use jobserver for parallel builds - it's essential for recursive makes! */
+  /* Always use jobserver for parallel builds - it's the standard mechanism */
   if (job_slots > 1 && jobserver_setup (job_slots - 1, jobserver_style))
     {
       /* Fill in the jobserver_auth for our children.  */
@@ -4632,3 +4878,4 @@ die (int status)
 
   exit (status);
 }
+
