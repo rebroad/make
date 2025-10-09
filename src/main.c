@@ -29,6 +29,8 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <assert.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -270,6 +272,8 @@ static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
 static volatile int monitor_thread_running = 0;
+static time_t monitor_start_time = 0;
+static unsigned int held_tokens = 0;  /* Tokens we're holding to reduce parallelism */
 
 /* Initialize memory monitoring settings from environment */
 static void
@@ -950,26 +954,40 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
 
   /* Get effective job slots - use master if we haven't started yet */
+  /* In jobserver mode, effective parallelism is master_job_slots - held_tokens */
   unsigned int display_slots = job_slots;
   if (display_slots == 0 && !jobs_paused && master_job_slots > 0)
-    display_slots = master_job_slots;
-  if (jobs_paused && saved_job_slots > 0)
-    display_slots = saved_job_slots;
+    display_slots = master_job_slots - held_tokens;  /* Jobserver mode */
+  if (jobs_paused && master_job_slots > 0)
+    display_slots = 0;  /* Paused */
 
-  /* Save cursor position, move to bottom, clear line, display status */
-  fprintf (stderr, "\033[s\033[999;1H\033[K%s%s%s %s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
-           cyan, spinner, reset,
-           bar,
-           white, mem_percent, reset,
-           gray, free_mb, reset,
-           green, display_slots, reset,
-           gray, job_slots_used, reset);
+  /* Build the status string first to know its length */
+  char status[512];  /* Larger buffer for all the ANSI codes */
+  int len;
 
   if (jobs_paused)
-    fprintf (stderr, " %s⏸ PAUSED%s", red, reset);
+    len = snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u %u jobs ⏸PAUSED%s",
+                    spinner, bar, white, mem_percent, free_mb, display_slots, job_slots_used, reset);
+  else
+    len = snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u jobs%s",
+                    spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+                    green, display_slots, reset, gray, job_slots_used, reset);
 
-  /* Restore cursor position */
-  fprintf (stderr, "\033[u");
+  /* Get terminal width (default 80 if unknown) */
+  struct winsize w;
+  int term_width = 80;
+  if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+    term_width = w.ws_col;
+
+  /* Calculate position (right-aligned with 2 char margin) */
+  /* Note: len includes ANSI codes, so actual visible length is less */
+  int visible_len = 45;  /* Approximate visible length without ANSI codes */
+  int col_pos = term_width - visible_len;
+  if (col_pos < 1)
+    col_pos = 1;
+
+  /* Save cursor, move to right side of current line, display, restore */
+  fprintf (stderr, "\033[s\033[%dG%s\033[u", col_pos, status);
 
   fflush (stderr);
   status_line_shown = 1;
@@ -980,8 +998,17 @@ clear_status_line (void)
 {
   if (status_line_shown)
     {
-      /* Move to bottom, clear the line, restore cursor */
-      fprintf (stderr, "\033[s\033[999;1H\033[K\033[u");
+      /* Save cursor, move to right side, clear to end of line, restore */
+      struct winsize w;
+      int term_width = 80;
+      if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+        term_width = w.ws_col;
+
+      int col_pos = term_width - 45;
+      if (col_pos < 1)
+        col_pos = 1;
+
+      fprintf (stderr, "\033[s\033[%dG\033[K\033[u", col_pos);
       fflush (stderr);
       status_line_shown = 0;
     }
@@ -992,6 +1019,7 @@ static void *
 memory_monitor_thread_func (void *arg)
 {
   (void)arg;
+  monitor_start_time = time (NULL);
   struct timeval last_iteration = {0, 0};
   unsigned int effective_critical_percent = memory_critical_percent;
   unsigned int effective_high_percent = memory_high_percent;
@@ -1044,45 +1072,60 @@ memory_monitor_thread_func (void *arg)
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
 
+      /* Debug: Show actual state periodically */
+      static time_t last_debug = 0;
+      time_t now = time (NULL);
+      if (now - last_debug >= 5)
+        {
+          fprintf (stderr, "[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
+                   (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
+          last_debug = now;
+        }
+
       /* Check adjustments on EVERY iteration (300ms) for fast response */
 
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
 
-      time_t now = time (NULL);
-
-      /* EMERGENCY: Less than 1GB free - STOP spawning new jobs completely! */
+      /* EMERGENCY: Less than 1GB free - acquire all jobserver tokens to pause! */
       if (free_mb < memory_emergency_free_mb)
         {
-          if (!jobs_paused && job_slots > 0)
+          if (!jobs_paused && master_job_slots > 0)
             {
-              saved_job_slots = job_slots;
-              job_slots = 0;  /* Stop spawning new jobs */
+              /* Acquire ALL jobserver tokens to effectively pause parallel execution */
+              extern unsigned int jobserver_acquire_all (void);
+              held_tokens = jobserver_acquire_all ();
               jobs_paused = 1;
               clear_status_line ();
               char msg[256];
-              sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - pausing new jobs until memory recovers"), free_mb);
+              sprintf (msg, _("MEMORY EMERGENCY: Only %luMB free - holding %u tokens to reduce parallelism"), free_mb, held_tokens);
               OS (error, 0, "%s", msg);
             }
           continue;  /* Stay paused, keep monitoring */
         }
 
-      /* If we were paused and memory recovered, resume */
+      /* If we were paused and memory recovered, release tokens */
       if (jobs_paused && free_mb >= memory_emergency_free_mb + 512)  /* 512MB hysteresis */
         {
-          job_slots = saved_job_slots;
+          extern void jobserver_release (int is_fatal);
+          /* Release all held tokens back to the pool */
+          while (held_tokens > 0)
+            {
+              jobserver_release (0);
+              held_tokens--;
+            }
           jobs_paused = 0;
           clear_status_line ();
           char msg[256];
-          sprintf (msg, _("Memory recovered (%luMB free) - resuming jobs at -j%u"), free_mb, job_slots);
+          sprintf (msg, _("Memory recovered (%luMB free) - released tokens, resuming parallelism"), free_mb);
           OS (message, 0, "%s", msg);
           last_job_adjustment = now;
           continue;
         }
 
-      /* Don't adjust if paused or only 1 job */
-      if (jobs_paused || job_slots <= 1)
-        continue;
+      /* Don't try to adjust job_slots in jobserver mode - jobserver handles it */
+      if (master_job_slots > 0 && job_slots == 0)
+        continue;  /* Jobserver mode - just do emergency pause/resume */
 
       unsigned int old_slots = job_slots;
 
@@ -1104,8 +1147,18 @@ memory_monitor_thread_func (void *arg)
       else if (mem_percent < memory_comfortable_percent &&
                job_slots < master_job_slots && master_job_slots > 0)
         {
-          /* Only increase if we haven't adjusted recently (prevent oscillation) */
-          if (now - last_job_adjustment >= 10)
+          /* If job_slots is way too low, restore it aggressively! */
+          if (job_slots == 0 || (job_slots < master_job_slots / 2))
+            {
+              /* Restore half the gap immediately */
+              unsigned int target = master_job_slots - (master_job_slots - job_slots) / 2;
+              if (target < 1)
+                target = 1;
+              job_slots = target;
+              last_job_adjustment = now;
+            }
+          /* Otherwise increase gradually if we haven't adjusted recently */
+          else if (now - last_job_adjustment >= 5)
             {
               job_slots++;
               last_job_adjustment = now;
@@ -2663,6 +2716,7 @@ main (int argc, char **argv, char **envp)
      submakes it's the token they were given by their parent.  For the top
      make, we just subtract one from the number the user wants.  */
 
+  /* Always use jobserver for parallel builds - it's essential for recursive makes! */
   if (job_slots > 1 && jobserver_setup (job_slots - 1, jobserver_style))
     {
       /* Fill in the jobserver_auth for our children.  */
