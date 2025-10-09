@@ -18,6 +18,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 #include <assert.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "job.h"
 #include "debug.h"
@@ -638,9 +639,6 @@ reap_children (int block, int err)
   /* Initially, assume we have some.  */
   int reap_more = 1;
 
-  /* Check memory frequently - this function is called constantly */
-  check_and_adjust_jobs ();
-
 #ifdef WAIT_NOHANG
 # define REAP_MORE reap_more
 #else
@@ -665,6 +663,10 @@ reap_children (int block, int err)
       int child_failed;
       int any_remote, any_local;
       int dontcare;
+
+      /* Check memory at the TOP of each loop iteration - when alarm interrupts
+         wait(), we'll loop back here and check memory immediately! */
+      check_and_adjust_jobs ();
 
       if (err && block)
         {

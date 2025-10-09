@@ -21,6 +21,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "variable.h"
 #include "job.h"
 #include "commands.h"
+#include <pthread.h>
 #ifdef WINDOWS32
 #include <windows.h>
 #include "w32err.h"
@@ -523,9 +524,20 @@ fatal_error_signal (int sig)
         }
     }
 #endif
-  /* Stop memory monitor thread FIRST if it's running - it could interfere with cleanup */
-  extern void stop_memory_monitor_immediate (void);
-  stop_memory_monitor_immediate ();
+  /* Stop display thread and clear status line */
+  extern volatile int shutting_down;
+  extern volatile int display_thread_running;
+  extern int status_line_shown;
+
+  shutting_down = 1;  /* Thread will see this and stop */
+  display_thread_running = 0;
+
+  if (status_line_shown)
+    {
+      fprintf (stderr, "\n");
+      fflush (stderr);
+      status_line_shown = 0;
+    }
 
   handling_fatal_signal = 1;
 
@@ -538,32 +550,26 @@ fatal_error_signal (int sig)
   jobserver_clear ();
 
   /* A termination signal won't be sent to the entire
-     process group, but it means we want to kill the children.  */
-
-  if (sig == SIGTERM)
-    {
-      struct child *c;
-      for (c = children; c != 0; c = c->next)
-        if (!c->remote && c->pid > 0)
-          (void) kill (c->pid, SIGTERM);
-    }
-
-  /* If we got a signal that means the user
-     wanted to kill make, remove pending targets.  */
+     process group, but it means we want to kill the children.
+     EXPLICITLY kill ALL children - don't rely on automatic signal propagation! */
 
   if (sig == SIGTERM || sig == SIGINT
 #ifdef SIGHUP
-    || sig == SIGHUP
+      || sig == SIGHUP
 #endif
 #ifdef SIGQUIT
-    || sig == SIGQUIT
+      || sig == SIGQUIT
 #endif
-    )
+     )
     {
       struct child *c;
 
-      /* Remote children won't automatically get signals sent
-         to the process group, so we must send them.  */
+      /* Kill local children first */
+      for (c = children; c != 0; c = c->next)
+        if (!c->remote && c->pid > 0)
+          (void) kill (c->pid, sig);
+
+      /* Also kill remote children */
       for (c = children; c != 0; c = c->next)
         if (c->remote && c->pid > 0)
           (void) remote_kill (c->pid, sig);
