@@ -1235,6 +1235,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   static unsigned int cached_descendants = 0;
   static time_t last_count_time = 0;
   static int write_count = 0;
+  static int skip_count = 0;
   struct timeval count_start, count_end;
   long count_time_ms;
   char output_buf[1024];
@@ -1256,7 +1257,18 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
                    (now.tv_usec - last_display.tv_usec) / 1000;
       if (elapsed_ms < 300)
-        return;
+        {
+          skip_count++;
+          /* Debug if we're skipping a LOT */
+          if (skip_count % 100 == 0)
+            {
+              debug_len = snprintf (debug_msg, sizeof(debug_msg), "[SKIP%d:elapsed=%ldms]", skip_count, elapsed_ms);
+              written = write (STDERR_FILENO, debug_msg, debug_len);
+              (void)written;
+            }
+          return;
+        }
+      skip_count = 0;  /* Reset when we do display */
     }
 
   last_display = now;
@@ -1355,13 +1367,10 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     {
       write_count++;
 
-      /* Debug every 20 writes */
-      if (write_count % 20 == 0)
-        {
-          debug_len = snprintf (debug_msg, sizeof(debug_msg), "\n[WRITE_STATUS] Call #%d mem=%u%%\n", write_count, mem_percent);
-          written = write (STDERR_FILENO, debug_msg, debug_len);
-          (void)written;
-        }
+      /* Debug EVERY write for now to see gaps */
+      debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
+      written = write (STDERR_FILENO, debug_msg, debug_len);
+      (void)written;
 
       /* write() is atomic for small buffers and bypasses stdio locks */
       written = write (STDERR_FILENO, output_buf, output_len);
@@ -1433,6 +1442,9 @@ memory_monitor_thread_func (void *arg)
   unsigned int old_slots;
   unsigned int desired_procs;
   unsigned int current_parallelism;
+  char iter_msg[64];
+  int iter_len;
+  ssize_t wr;
   extern unsigned int jobserver_acquire (int timeout);
   extern void jobserver_release (int is_fatal);
 
@@ -1442,6 +1454,14 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running)
     {
       iteration_count++;
+
+      /* Debug: Show loop is running (every 10 iterations = 3s) */
+      if (iteration_count % 10 == 0)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[ITER%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
 
       gettimeofday (&iteration_start, NULL);
 
@@ -1478,10 +1498,34 @@ memory_monitor_thread_func (void *arg)
 
       last_iteration = iteration_start;
 
+      /* Debug marker A */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[A%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
+
       get_memory_stats (&mem_percent, &free_mb);
+
+      /* Debug marker B */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[B%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
 
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
+
+      /* Debug marker C */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[C%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
 
       /* Debug: Show actual state periodically (non-blocking) */
       now = time (NULL);
@@ -1579,6 +1623,14 @@ memory_monitor_thread_func (void *arg)
                     }
                 }
             }
+        }
+
+      /* Debug marker D - after trajectory, before emergency */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[D%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
         }
 
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
@@ -1727,9 +1779,38 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
+      /* Debug: Show we reached end of loop iteration */
+      if (iteration_count % 10 == 0)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[END%d]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
+
+      /* Debug marker E - right before sleep (for iteration 41, 51, etc.) */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[E%d:sleep]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
+
       /* Sleep 300ms before next check */
       usleep (300000);
+
+      /* Debug marker F - after sleep */
+      if (iteration_count % 10 == 1)
+        {
+          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[F%d:awake]", iteration_count);
+          wr = write (STDERR_FILENO, iter_msg, iter_len);
+          (void)wr;
+        }
     }
+
+  /* If we exit the loop, show why */
+  iter_len = snprintf (iter_msg, sizeof(iter_msg), "\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
+  wr = write (STDERR_FILENO, iter_msg, iter_len);
+  (void)wr;
 
   return NULL;
 }
@@ -1765,8 +1846,17 @@ start_memory_monitor (void)
 static void
 stop_memory_monitor (void)
 {
+  char stop_msg[256];
+  int stop_len;
+  ssize_t wr;
+
   if (!auto_adjust_jobs_flag || !monitor_thread_running)
     return;
+
+  /* DEBUG: Show we're stopping */
+  stop_len = snprintf (stop_msg, sizeof(stop_msg), "\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
+  wr = write (STDERR_FILENO, stop_msg, stop_len);
+  (void)wr;
 
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
@@ -1777,8 +1867,17 @@ stop_memory_monitor (void)
 void
 stop_memory_monitor_immediate (void)
 {
+  char stop_msg[256];
+  int stop_len;
+  ssize_t wr;
+
   if (!auto_adjust_jobs_flag || !monitor_thread_running)
     return;
+
+  /* DEBUG: Show we're stopping (from signal handler) */
+  stop_len = snprintf (stop_msg, sizeof(stop_msg), "\n[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+  wr = write (STDERR_FILENO, stop_msg, stop_len);
+  (void)wr;
 
   /* Just set the flag - don't pthread_join in a signal handler! */
   monitor_thread_running = 0;
@@ -2207,7 +2306,9 @@ main (int argc, char **argv, char **envp)
 #ifdef HAVE_ATEXIT
   if (ANY_SET (check_io_state (), IO_STDOUT_OK))
     atexit (close_stdout);
-  atexit (stop_memory_monitor);
+  /* Only top-level make should stop the monitor thread */
+  if (makelevel == 0)
+    atexit (stop_memory_monitor);
 #endif
 
   output_init (&make_sync);
