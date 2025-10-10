@@ -1520,22 +1520,19 @@ memory_monitor_thread_func (void *arg)
       cached_term_width = w.ws_col;
   }
 
-  /* CRITICAL: dup() stderr to create private fd for monitor, set ONLY IT to non-blocking!
-   * This way main thread's stderr stays in blocking mode - fixes output freezing! */
+  /* Use dup() to create private fd for monitor thread
+   * NOTE: We do NOT set O_NONBLOCK because that flag is shared between the original
+   * and dup'd fd (they point to the same file description), which would break echo/printf
+   * in child processes with "write error". Instead, we rely on write() being fast. */
   monitor_stderr_fd = dup (STDERR_FILENO);
   if (monitor_stderr_fd >= 0)
     {
-      int flags = fcntl (monitor_stderr_fd, F_GETFL, 0);
-      if (flags != -1)
-        {
-          fcntl (monitor_stderr_fd, F_SETFL, flags | O_NONBLOCK);
-          debug_write ("[NONBLOCK] Monitor using private fd=%d (non-blocking), main stderr=%d (blocking), term_width=%d\n",
-                      monitor_stderr_fd, STDERR_FILENO, cached_term_width);
-        }
+      debug_write ("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d\n",
+                  monitor_stderr_fd, STDERR_FILENO, cached_term_width);
     }
   else
     {
-      debug_write ("[ERROR] Failed to dup() stderr, monitor will use blocking STDERR_FILENO\n");
+      debug_write ("[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
     }
 
   while (monitor_thread_running)
