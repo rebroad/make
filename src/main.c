@@ -33,6 +33,8 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <unistd.h>
 #include <dirent.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#include <errno.h>
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -272,7 +274,8 @@ static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
 static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
-static unsigned int held_tokens = 0;  /* Tokens we're holding to reduce parallelism */
+/* Note: We used to hold jobserver tokens here, but that deadlocked the build.
+ * Now we just adjust job_slots directly for both jobserver and direct modes. */
 
 /* Freeze or resume ALL descendant make processes (recursive!) */
 static unsigned int UNUSED
@@ -1209,6 +1212,12 @@ get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 /* Forward declaration for non-blocking debug output */
 static void debug_write (const char *format, ...);
 
+/* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
+static int cached_term_width = 80;
+
+/* Monitor thread's private non-blocking stderr fd (dup of STDERR_FILENO) */
+static int monitor_stderr_fd = -1;
+
 static void
 display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
 {
@@ -1231,8 +1240,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   size_t i;
   unsigned int display_slots;
   char status[512];
-  struct winsize w;
-  int term_width = 80;
+  int term_width;
   int visible_len = 50;  /* Adjusted for "X procs" display */
   int col_pos;
   time_t current_time;
@@ -1309,12 +1317,13 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
 
   /* Get effective job slots */
-  /* In jobserver mode: effective parallelism = master_job_slots - held_tokens */
-  /* In direct mode: effective parallelism = job_slots */
-  if (master_job_slots > 0 && job_slots == 0)
-    display_slots = master_job_slots - held_tokens;  /* Jobserver mode */
+  /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
+  if (job_slots > 0)
+    display_slots = job_slots;
+  else if (master_job_slots > 0)
+    display_slots = master_job_slots;
   else
-    display_slots = job_slots;  /* Direct mode */
+    display_slots = 0;  /* Not running jobs */
 
   if (jobs_paused)
     display_slots = 0;  /* Paused */
@@ -1347,9 +1356,8 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
               spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
               green, display_slots, reset, gray, cached_descendants, reset);
 
-  /* Get terminal width (default 80 if unknown) */
-  if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-    term_width = w.ws_col;
+  /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
+  term_width = cached_term_width;
 
   /* Calculate position (right-aligned with 2 char margin) */
   /* Note: actual visible length is less than total due to ANSI codes */
@@ -1368,11 +1376,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
       /* Debug EVERY write for now to see gaps */
       debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
-      written = write (STDERR_FILENO, debug_msg, debug_len);
+      written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
       (void)written;
 
-      /* write() is atomic for small buffers and bypasses stdio locks */
-      written = write (STDERR_FILENO, output_buf, output_len);
+      /* write() to monitor's private non-blocking fd - never blocks! */
+      written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
       (void)written;  /* Ignore errors - if it fails, next iteration will try again */
       status_line_shown = 1;
     }
@@ -1381,8 +1389,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 static void
 clear_status_line (void)
 {
-  struct winsize w;
-  int term_width = 80;
+  int term_width;
   int col_pos;
   char clear_cmd[64];
   int clear_len;
@@ -1390,26 +1397,25 @@ clear_status_line (void)
 
   if (status_line_shown)
     {
-      /* Save cursor, move to right side, clear to end of line, restore */
-      if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
-        term_width = w.ws_col;
+      /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
+      term_width = cached_term_width;
 
       col_pos = term_width - 50;
       if (col_pos < 1)
         col_pos = 1;
 
-      /* Use write() to avoid blocking on stderr */
+      /* Use monitor's private non-blocking fd - never blocks! */
       clear_len = snprintf (clear_cmd, sizeof(clear_cmd), "\033[s\033[%dG\033[K\033[u", col_pos);
       if (clear_len > 0 && clear_len < (int)sizeof(clear_cmd))
         {
-          written = write (STDERR_FILENO, clear_cmd, clear_len);
+          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, clear_cmd, clear_len);
           (void)written;
         }
       status_line_shown = 0;
     }
 }
 
-/* Non-blocking debug write helper - never blocks on stderr! */
+/* Non-blocking debug write helper - uses monitor's private fd! */
 static void
 debug_write (const char *format, ...)
 {
@@ -1417,6 +1423,8 @@ debug_write (const char *format, ...)
   int len;
   ssize_t written;
   va_list args;
+  static int eagain_count = 0;
+  int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
 
   va_start (args, format);
   len = vsnprintf (buf, sizeof(buf), format, args);
@@ -1424,8 +1432,22 @@ debug_write (const char *format, ...)
 
   if (len > 0 && len < (int)sizeof(buf))
     {
-      written = write (STDERR_FILENO, buf, len);
-      (void)written;  /* Ignore errors - non-blocking */
+      written = write (fd, buf, len);
+      if (written < 0 && errno == EAGAIN)
+        {
+          eagain_count++;
+          /* Every 100 EAGAIN errors, try to report it (might fail too!) */
+          if (eagain_count % 100 == 0)
+            {
+              char eagain_msg[64];
+              int eagain_len;
+              ssize_t eagain_written;
+
+              eagain_len = snprintf (eagain_msg, sizeof(eagain_msg), "[EAGAIN x%d]", eagain_count);
+              eagain_written = write (fd, eagain_msg, eagain_len);
+              (void)eagain_written;  /* Ignore - this is a best-effort debug message */
+            }
+        }
     }
 }
 
@@ -1468,11 +1490,34 @@ memory_monitor_thread_func (void *arg)
   unsigned int old_slots;
   unsigned int desired_procs;
   unsigned int current_parallelism;
-  extern unsigned int jobserver_acquire (int timeout);
-  extern void jobserver_release (int is_fatal);
 
   (void)arg;
   monitor_start_time = time (NULL);
+
+  /* Cache terminal width ONCE before setting non-blocking (ioctl can block!) */
+  {
+    struct winsize w;
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+      cached_term_width = w.ws_col;
+  }
+
+  /* CRITICAL: dup() stderr to create private fd for monitor, set ONLY IT to non-blocking!
+   * This way main thread's stderr stays in blocking mode - fixes output freezing! */
+  monitor_stderr_fd = dup (STDERR_FILENO);
+  if (monitor_stderr_fd >= 0)
+    {
+      int flags = fcntl (monitor_stderr_fd, F_GETFL, 0);
+      if (flags != -1)
+        {
+          fcntl (monitor_stderr_fd, F_SETFL, flags | O_NONBLOCK);
+          debug_write ("[NONBLOCK] Monitor using private fd=%d (non-blocking), main stderr=%d (blocking), term_width=%d\n",
+                      monitor_stderr_fd, STDERR_FILENO, cached_term_width);
+        }
+    }
+  else
+    {
+      debug_write ("[ERROR] Failed to dup() stderr, monitor will use blocking STDERR_FILENO\n");
+    }
 
   while (monitor_thread_running)
     {
@@ -1644,13 +1689,21 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
-      /* In jobserver mode, adjust by holding/releasing tokens (non-blocking!) */
-      /* In direct mode, adjust job_slots directly */
+      /* CRITICAL: Monitor thread CANNOT use jobserver (it's for main thread only!)
+       * Instead, we adjust job_slots directly - make will see this and adjust its behavior */
+
+      /* Use job_slots if set, otherwise use master_job_slots */
+      current_parallelism = (job_slots > 0) ? job_slots : master_job_slots;
+      if (current_parallelism == 0)
+        current_parallelism = 1;  /* Fallback */
+
+      desired_procs = current_parallelism;
+
       if (master_job_slots > 0 && job_slots == 0)
         {
-
-          /* JOBSERVER MODE: Adjust effective parallelism by holding tokens */
-          current_parallelism = master_job_slots - held_tokens;
+          /* In jobserver mode, we adjust by modifying job_slots
+           * The main make process will see this and adjust accordingly */
+          current_parallelism = master_job_slots;
           desired_procs = master_job_slots;
 
           /* Critical: drop to 40% */
@@ -1673,43 +1726,21 @@ memory_monitor_thread_func (void *arg)
               desired_procs = current_parallelism + 1;
             }
 
-          /* Acquire tokens to reduce parallelism (non-blocking!) */
-          if (desired_procs < current_parallelism)
+          /* DON'T use jobserver from monitor thread - just set job_slots!
+           * Main thread will see the change and adjust its spawning behavior */
+          if (desired_procs != current_parallelism && now - last_job_adjustment >= 1)
             {
-              while (held_tokens < (master_job_slots - desired_procs) && jobserver_acquire(0))
-                {
-                  held_tokens++;
-                }
+              job_slots = desired_procs;
 
-              if (held_tokens > 0 && now - last_job_adjustment >= 1)
-                {
-                  clear_status_line ();
-                  debug_write ("\n[REDUCED -j] %u -> %u (holding %u tokens, memory: %luMB, %u%%)\n",
-                              current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
-                  last_job_adjustment = now;
-                }
-            }
-          /* Release tokens to increase parallelism */
-          else if (desired_procs > current_parallelism && held_tokens > 0)
-            {
-              while (held_tokens > 0 && (master_job_slots - held_tokens) < desired_procs)
-                {
-                  jobserver_release (0);
-                  held_tokens--;
-                }
-
-              if (now - last_job_adjustment >= 1)
-                {
-                  clear_status_line ();
-                  debug_write ("\n[INCREASED -j] to -j%u (released tokens, memory: %luMB, %u%%)\n",
-                              master_job_slots - held_tokens, free_mb, mem_percent);
-                  last_job_adjustment = now;
-                }
+              clear_status_line ();
+              debug_write ("\n[ADJUSTED -j] %u -> %u (memory: %luMB, %u%%)\n",
+                          current_parallelism, desired_procs, free_mb, mem_percent);
+              last_job_adjustment = now;
             }
         }
-      else
+      else if (job_slots > 0)
         {
-          /* DIRECT MODE: Adjust job_slots directly */
+          /* DIRECT MODE: job_slots already set, adjust it */
           old_slots = job_slots;
 
           /* Critical: drop quickly */
@@ -1762,6 +1793,13 @@ memory_monitor_thread_func (void *arg)
 
   /* If we exit the loop, show why */
   debug_write ("\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
+
+  /* Close our private stderr fd */
+  if (monitor_stderr_fd >= 0)
+    {
+      close (monitor_stderr_fd);
+      monitor_stderr_fd = -1;
+    }
 
   return NULL;
 }
