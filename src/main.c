@@ -1505,7 +1505,6 @@ memory_monitor_thread_func (void *arg)
   static int debug_sample_count = 0;
   static time_t last_approaching_msg = 0;
   static int iteration_count = 0;
-  char msg[256];  /* Still needed for OS (fatal, ...) call */
   unsigned int old_slots;
   unsigned int desired_procs;
   unsigned int current_parallelism;
