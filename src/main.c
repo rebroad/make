@@ -1702,19 +1702,35 @@ memory_monitor_thread_func (void *arg)
             }
         }
 
-      /* CRITICAL EMERGENCY: Less than 1GB free - dynamic adjustment failed! */
-      /* This should rarely happen if adjustment is working correctly */
+      /* CRITICAL EMERGENCY: Less than threshold free - PAUSE build until memory recovers */
       if (free_mb < memory_emergency_free_mb)
         {
           if (!jobs_paused)
             {
-              /* Use fatal() which will block but that's OK - we're exiting anyway */
               clear_status_line ();
-              sprintf (msg, _("CRITICAL MEMORY EMERGENCY: Only %luMB free - dynamic adjustment failed! Aborting build."),
-                       free_mb);
-              OS (fatal, 0, "%s", msg);
-              /* fatal() will exit - we can't recover from this */
+              debug_write ("\n[CRITICAL EMERGENCY] Only %luMB free - PAUSING build (setting -j0) until memory recovers...\n",
+                          free_mb);
+              jobs_paused = 1;
+              job_slots = 0;  /* Stop spawning new jobs immediately */
+              last_job_adjustment = now;
             }
+        }
+      /* RECOVERY: Memory has recovered from emergency - RESUME build */
+      else if (jobs_paused && free_mb >= memory_emergency_free_mb + 500)  /* 500MB buffer */
+        {
+          clear_status_line ();
+          debug_write ("\n[RECOVERY] Memory recovered to %luMB - RESUMING build...\n", free_mb);
+          jobs_paused = 0;
+          /* Start with -j1, will gradually increase as memory allows */
+          job_slots = 1;
+          last_job_adjustment = now;
+        }
+
+      /* Skip normal adjustment when paused - waiting for memory recovery */
+      if (jobs_paused)
+        {
+          usleep (300000);  /* Sleep and check again next iteration */
+          continue;
         }
 
       /* CRITICAL: Monitor thread CANNOT use jobserver (it's for main thread only!)
