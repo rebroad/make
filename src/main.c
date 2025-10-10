@@ -35,6 +35,9 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <stdarg.h>
 #include <fcntl.h>
 #include <errno.h>
+
+/* Set to 1 to enable verbose memory monitor debugging (timing, iteration markers, etc.) */
+#define DEBUG_MEMORY_MONITOR 0
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -1248,8 +1251,10 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   static time_t last_count_time = 0;
   static int write_count = 0;
   static int skip_count = 0;
+#if DEBUG_MEMORY_MONITOR
   struct timeval count_start, count_end;
   long count_time_ms;
+#endif
   char output_buf[1024];
   int output_len;
   ssize_t written;
@@ -1334,8 +1339,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   if (current_time - last_count_time >= 2)
     {
+#if DEBUG_MEMORY_MONITOR
       gettimeofday (&count_start, NULL);
+#endif
       cached_descendants = count_all_descendants ();
+#if DEBUG_MEMORY_MONITOR
       gettimeofday (&count_end, NULL);
 
       count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
@@ -1344,6 +1352,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       /* DEBUG: Show how long counting took (non-blocking) */
       debug_write ("[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
                    cached_descendants, count_time_ms, mem_percent);
+#endif
 
       last_count_time = current_time;
     }
@@ -1375,9 +1384,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       write_count++;
 
       /* Debug EVERY write for now to see gaps */
+#if DEBUG_MEMORY_MONITOR
       debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
       written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
       (void)written;
+#endif
 
       /* write() to monitor's private non-blocking fd - never blocks! */
       written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
@@ -1423,8 +1434,10 @@ debug_write (const char *format, ...)
   int len;
   ssize_t written;
   va_list args;
-  static int eagain_count = 0;
   int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
+#if DEBUG_MEMORY_MONITOR
+  static int eagain_count = 0;
+#endif
 
   va_start (args, format);
   len = vsnprintf (buf, sizeof(buf), format, args);
@@ -1433,6 +1446,7 @@ debug_write (const char *format, ...)
   if (len > 0 && len < (int)sizeof(buf))
     {
       written = write (fd, buf, len);
+#if DEBUG_MEMORY_MONITOR
       if (written < 0 && errno == EAGAIN)
         {
           eagain_count++;
@@ -1448,6 +1462,9 @@ debug_write (const char *format, ...)
               (void)eagain_written;  /* Ignore - this is a best-effort debug message */
             }
         }
+#else
+      (void)written;
+#endif
     }
 }
 
@@ -1464,8 +1481,10 @@ memory_monitor_thread_func (void *arg)
   unsigned long free_mb_temp;
   unsigned int mem_percent;
   unsigned long free_mb;
-  static time_t last_debug = 0;
   time_t now;
+#if DEBUG_MEMORY_MONITOR
+  static time_t last_debug = 0;
+#endif
   long mb_per_second;
   long projected_free_in_5s;
   int i;
@@ -1524,8 +1543,10 @@ memory_monitor_thread_func (void *arg)
       iteration_count++;
 
       /* Debug: Show loop is running (every 10 iterations = 3s) */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 0)
         debug_write ("[ITER%d]", iteration_count);
+#endif
 
       gettimeofday (&iteration_start, NULL);
 
@@ -1562,30 +1583,38 @@ memory_monitor_thread_func (void *arg)
       last_iteration = iteration_start;
 
       /* Debug marker A */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[A%d]", iteration_count);
+#endif
 
       get_memory_stats (&mem_percent, &free_mb);
 
       /* Debug marker B */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[B%d]", iteration_count);
+#endif
 
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
 
       /* Debug marker C */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[C%d]", iteration_count);
+#endif
 
       /* Debug: Show actual state periodically (non-blocking) */
       now = time (NULL);
+#if DEBUG_MEMORY_MONITOR
       if (now - last_debug >= 5)
         {
           debug_write ("[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
                       (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
           last_debug = now;
         }
+#endif
 
       /* Check adjustments on EVERY iteration (300ms) for fast response */
 
@@ -1660,8 +1689,10 @@ memory_monitor_thread_func (void *arg)
         }
 
       /* Debug marker D - after trajectory, before emergency */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[D%d]", iteration_count);
+#endif
 
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
       if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
@@ -1776,23 +1807,29 @@ memory_monitor_thread_func (void *arg)
         }
 
       /* Debug: Show we reached end of loop iteration */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 0)
         debug_write ("[END%d]", iteration_count);
 
       /* Debug marker E - right before sleep (for iteration 41, 51, etc.) */
       if (iteration_count % 10 == 1)
         debug_write ("[E%d:sleep]", iteration_count);
+#endif
 
       /* Sleep 300ms before next check */
       usleep (300000);
 
       /* Debug marker F - after sleep */
+#if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[F%d:awake]", iteration_count);
+#endif
     }
 
   /* If we exit the loop, show why */
+#if DEBUG_MEMORY_MONITOR
   debug_write ("\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
+#endif
 
   /* Close our private stderr fd */
   if (monitor_stderr_fd >= 0)
@@ -1839,7 +1876,9 @@ stop_memory_monitor (void)
     return;
 
   /* DEBUG: Show we're stopping */
+#if DEBUG_MEMORY_MONITOR
   debug_write ("\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
+#endif
 
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
