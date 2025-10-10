@@ -32,6 +32,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <stdarg.h>
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -1205,6 +1206,9 @@ get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 #endif
 }
 
+/* Forward declaration for non-blocking debug output */
+static void debug_write (const char *format, ...);
+
 static void
 display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
 {
@@ -1329,13 +1333,8 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
                       (count_end.tv_usec - count_start.tv_usec) / 1000;
 
       /* DEBUG: Show how long counting took (non-blocking) */
-      if (ftrylockfile (stderr) == 0)
-        {
-          fprintf (stderr, "[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
+      debug_write ("[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
                    cached_descendants, count_time_ms, mem_percent);
-          fflush (stderr);
-          funlockfile (stderr);
-        }
 
       last_count_time = current_time;
     }
@@ -1385,6 +1384,9 @@ clear_status_line (void)
   struct winsize w;
   int term_width = 80;
   int col_pos;
+  char clear_cmd[64];
+  int clear_len;
+  ssize_t written;
 
   if (status_line_shown)
     {
@@ -1396,9 +1398,34 @@ clear_status_line (void)
       if (col_pos < 1)
         col_pos = 1;
 
-      fprintf (stderr, "\033[s\033[%dG\033[K\033[u", col_pos);
-      fflush (stderr);
+      /* Use write() to avoid blocking on stderr */
+      clear_len = snprintf (clear_cmd, sizeof(clear_cmd), "\033[s\033[%dG\033[K\033[u", col_pos);
+      if (clear_len > 0 && clear_len < (int)sizeof(clear_cmd))
+        {
+          written = write (STDERR_FILENO, clear_cmd, clear_len);
+          (void)written;
+        }
       status_line_shown = 0;
+    }
+}
+
+/* Non-blocking debug write helper - never blocks on stderr! */
+static void
+debug_write (const char *format, ...)
+{
+  char buf[512];
+  int len;
+  ssize_t written;
+  va_list args;
+
+  va_start (args, format);
+  len = vsnprintf (buf, sizeof(buf), format, args);
+  va_end (args);
+
+  if (len > 0 && len < (int)sizeof(buf))
+    {
+      written = write (STDERR_FILENO, buf, len);
+      (void)written;  /* Ignore errors - non-blocking */
     }
 }
 
@@ -1413,7 +1440,6 @@ memory_monitor_thread_func (void *arg)
   long delay_ms;
   unsigned int mem_percent_temp;
   unsigned long free_mb_temp;
-  char warn_msg[256];
   unsigned int mem_percent;
   unsigned long free_mb;
   static time_t last_debug = 0;
@@ -1438,13 +1464,10 @@ memory_monitor_thread_func (void *arg)
   static int debug_sample_count = 0;
   static time_t last_approaching_msg = 0;
   static int iteration_count = 0;
-  char msg[256];
+  char msg[256];  /* Still needed for OS (fatal, ...) call */
   unsigned int old_slots;
   unsigned int desired_procs;
   unsigned int current_parallelism;
-  char iter_msg[64];
-  int iter_len;
-  ssize_t wr;
   extern unsigned int jobserver_acquire (int timeout);
   extern void jobserver_release (int is_fatal);
 
@@ -1457,11 +1480,7 @@ memory_monitor_thread_func (void *arg)
 
       /* Debug: Show loop is running (every 10 iterations = 3s) */
       if (iteration_count % 10 == 0)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[ITER%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[ITER%d]", iteration_count);
 
       gettimeofday (&iteration_start, NULL);
 
@@ -1483,9 +1502,8 @@ memory_monitor_thread_func (void *arg)
                   effective_high_percent = mem_percent_temp - 5;
 
                   clear_status_line ();
-                  sprintf (warn_msg, _("System degradation detected! (delay=%ldms) Lowering thresholds to %u%%/%u%%"),
-                           delay_ms, effective_critical_percent, effective_high_percent);
-                  OS (error, 0, "%s", warn_msg);
+                  debug_write ("\n[SYSTEM DEGRADATION] delay=%ldms, lowering thresholds to %u%%/%u%%\n",
+                              delay_ms, effective_critical_percent, effective_high_percent);
                 }
             }
           else
@@ -1500,44 +1518,27 @@ memory_monitor_thread_func (void *arg)
 
       /* Debug marker A */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[A%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[A%d]", iteration_count);
 
       get_memory_stats (&mem_percent, &free_mb);
 
       /* Debug marker B */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[B%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[B%d]", iteration_count);
 
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
 
       /* Debug marker C */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[C%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[C%d]", iteration_count);
 
       /* Debug: Show actual state periodically (non-blocking) */
       now = time (NULL);
       if (now - last_debug >= 5)
         {
-          if (ftrylockfile (stderr) == 0)
-            {
-              fprintf (stderr, "[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
-                       (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
-              fflush (stderr);
-              funlockfile (stderr);
-            }
+          debug_write ("[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
+                      (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
           last_debug = now;
         }
 
@@ -1586,15 +1587,8 @@ memory_monitor_thread_func (void *arg)
 
               /* Debug trajectory calculation only when memory is concerning (non-blocking) */
               if (samples_collected >= 5 && debug_sample_count % 10 == 0 && mem_percent >= 75)
-                {
-                  if (ftrylockfile (stderr) == 0)
-                    {
-                      fprintf (stderr, "[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
-                               samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
-                      fflush (stderr);
-                      funlockfile (stderr);
-                    }
-                }
+                debug_write ("[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
+                            samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
 
               /* If memory is declining (mb_per_second < 0), project forward */
               if (mb_per_second < -50)  /* Dropping more than 50MB/s is concerning */
@@ -1604,14 +1598,9 @@ memory_monitor_thread_func (void *arg)
                   /* If we're projected to hit <1.5GB in 5 seconds, AGGRESSIVELY reduce -j NOW! */
                   if (projected_free_in_5s < 1500 && job_slots > 1)
                     {
-                      if (ftrylockfile (stderr) == 0)
-                        {
-                          clear_status_line ();
-                          sprintf (msg, _("PROACTIVE WARNING: Memory dropping %ldMB/s (smoothed), projected %ldMB in 5s - EMERGENCY -j reduction!"),
-                                   -mb_per_second, projected_free_in_5s);
-                          OS (error, 0, "%s", msg);
-                          funlockfile (stderr);
-                        }
+                      clear_status_line ();
+                      debug_write ("\n[EMERGENCY] Memory dropping %ldMB/s, projected %ldMB in 5s - reducing to -j1!\n",
+                                  -mb_per_second, projected_free_in_5s);
 
                       /* Emergency drop to -j1 immediately! */
                       job_slots = 1;
@@ -1627,24 +1616,15 @@ memory_monitor_thread_func (void *arg)
 
       /* Debug marker D - after trajectory, before emergency */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[D%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[D%d]", iteration_count);
 
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
       if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
         {
           if (now - last_approaching_msg >= 1)
             {
-              if (ftrylockfile (stderr) == 0)
-                {
-                  fprintf (stderr, "[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
-                           free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
-                  fflush (stderr);
-                  funlockfile (stderr);
-                }
+              debug_write ("[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
+                          free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
               last_approaching_msg = now;
             }
         }
@@ -1703,14 +1683,9 @@ memory_monitor_thread_func (void *arg)
 
               if (held_tokens > 0 && now - last_job_adjustment >= 1)
                 {
-                  if (ftrylockfile (stderr) == 0)
-                    {
-                      clear_status_line ();
-                      sprintf (msg, _("Reduced parallelism: %u -> %u (holding %u tokens, memory: %luMB, %u%%)"),
-                               current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
-                      OS (message, 0, "%s", msg);
-                      funlockfile (stderr);
-                    }
+                  clear_status_line ();
+                  debug_write ("\n[REDUCED -j] %u -> %u (holding %u tokens, memory: %luMB, %u%%)\n",
+                              current_parallelism, master_job_slots - held_tokens, held_tokens, free_mb, mem_percent);
                   last_job_adjustment = now;
                 }
             }
@@ -1725,14 +1700,9 @@ memory_monitor_thread_func (void *arg)
 
               if (now - last_job_adjustment >= 1)
                 {
-                  if (ftrylockfile (stderr) == 0)
-                    {
-                      clear_status_line ();
-                      sprintf (msg, _("Increased parallelism to -j%u (released tokens, memory: %luMB, %u%%)"),
-                               master_job_slots - held_tokens, free_mb, mem_percent);
-                      OS (message, 0, "%s", msg);
-                      funlockfile (stderr);
-                    }
+                  clear_status_line ();
+                  debug_write ("\n[INCREASED -j] to -j%u (released tokens, memory: %luMB, %u%%)\n",
+                              master_job_slots - held_tokens, free_mb, mem_percent);
                   last_job_adjustment = now;
                 }
             }
@@ -1768,49 +1738,30 @@ memory_monitor_thread_func (void *arg)
 
           if (old_slots != job_slots)
             {
-              if (ftrylockfile (stderr) == 0)
-                {
-                  clear_status_line ();
-                  sprintf (msg, _("Auto-adjusting jobs: %u -> %u (memory: %luMB free, %u%%)"),
-                           old_slots, job_slots, free_mb, mem_percent);
-                  OS (message, 0, "%s", msg);
-                  funlockfile (stderr);
-                }
+              clear_status_line ();
+              debug_write ("\n[AUTO-ADJUST -j] %u -> %u (memory: %luMB free, %u%%)\n",
+                          old_slots, job_slots, free_mb, mem_percent);
             }
         }
 
       /* Debug: Show we reached end of loop iteration */
       if (iteration_count % 10 == 0)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[END%d]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[END%d]", iteration_count);
 
       /* Debug marker E - right before sleep (for iteration 41, 51, etc.) */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[E%d:sleep]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[E%d:sleep]", iteration_count);
 
       /* Sleep 300ms before next check */
       usleep (300000);
 
       /* Debug marker F - after sleep */
       if (iteration_count % 10 == 1)
-        {
-          iter_len = snprintf (iter_msg, sizeof(iter_msg), "[F%d:awake]", iteration_count);
-          wr = write (STDERR_FILENO, iter_msg, iter_len);
-          (void)wr;
-        }
+        debug_write ("[F%d:awake]", iteration_count);
     }
 
   /* If we exit the loop, show why */
-  iter_len = snprintf (iter_msg, sizeof(iter_msg), "\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
-  wr = write (STDERR_FILENO, iter_msg, iter_len);
-  (void)wr;
+  debug_write ("\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
 
   return NULL;
 }
@@ -1846,17 +1797,11 @@ start_memory_monitor (void)
 static void
 stop_memory_monitor (void)
 {
-  char stop_msg[256];
-  int stop_len;
-  ssize_t wr;
-
   if (!auto_adjust_jobs_flag || !monitor_thread_running)
     return;
 
   /* DEBUG: Show we're stopping */
-  stop_len = snprintf (stop_msg, sizeof(stop_msg), "\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
-  wr = write (STDERR_FILENO, stop_msg, stop_len);
-  (void)wr;
+  debug_write ("\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
 
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
@@ -1867,17 +1812,11 @@ stop_memory_monitor (void)
 void
 stop_memory_monitor_immediate (void)
 {
-  char stop_msg[256];
-  int stop_len;
-  ssize_t wr;
-
   if (!auto_adjust_jobs_flag || !monitor_thread_running)
     return;
 
   /* DEBUG: Show we're stopping (from signal handler) */
-  stop_len = snprintf (stop_msg, sizeof(stop_msg), "\n[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
-  wr = write (STDERR_FILENO, stop_msg, stop_len);
-  (void)wr;
+  debug_write ("\n[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
 
   /* Just set the flag - don't pthread_join in a signal handler! */
   monitor_thread_running = 0;
