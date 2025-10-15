@@ -1813,7 +1813,7 @@ memory_monitor_thread_func (void *arg)
           if (old_slots != job_slots)
             {
               clear_status_line ();
-              debug_write ("\n[AUTO-ADJUST -j] %u -> %u (memory: %luMB free, %u%%)\n",
+              debug_write ("[AUTO-ADJUST -j] %u -> %u (memory: %luMB free, %u%%)\n",
                           old_slots, job_slots, free_mb, mem_percent);
             }
         }
