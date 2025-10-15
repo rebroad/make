@@ -1669,7 +1669,7 @@ memory_monitor_thread_func (void *arg)
                   if (projected_free_in_5s < 1500 && job_slots > 1)
                     {
                       clear_status_line ();
-                      debug_write ("\n[EMERGENCY] Memory dropping %ldMB/s, projected %ldMB in 5s - reducing to -j1!\n",
+                      debug_write ("[EMERGENCY] Memory dropping %ldMB/s, projected %ldMB in 5s - reducing to -j1!\n",
                                   -mb_per_second, projected_free_in_5s);
 
                       /* Emergency drop to -j1 immediately! */
