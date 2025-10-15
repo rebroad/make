@@ -1707,7 +1707,7 @@ memory_monitor_thread_func (void *arg)
           if (!jobs_paused)
             {
               clear_status_line ();
-              debug_write ("\n[CRITICAL EMERGENCY] Only %luMB free - PAUSING build (setting -j0) until memory recovers...\n",
+              debug_write ("[CRITICAL EMERGENCY] Only %luMB free - PAUSING build (setting -j0) until memory recovers...\n",
                           free_mb);
               jobs_paused = 1;
               job_slots = 0;  /* Stop spawning new jobs immediately */
@@ -1718,7 +1718,7 @@ memory_monitor_thread_func (void *arg)
       else if (jobs_paused && free_mb >= memory_emergency_free_mb + 500)  /* 500MB buffer */
         {
           clear_status_line ();
-          debug_write ("\n[RECOVERY] Memory recovered to %luMB - RESUMING build...\n", free_mb);
+          debug_write ("[RECOVERY] Memory recovered to %luMB - RESUMING build...\n", free_mb);
           jobs_paused = 0;
           /* Start with -j1, will gradually increase as memory allows */
           job_slots = 1;
