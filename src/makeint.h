@@ -763,6 +763,8 @@ extern unsigned int no_intermediates;
 extern char *jobserver_auth;
 extern unsigned int job_slots;
 extern double max_load_average;
+extern unsigned long min_memory_mb;
+extern void get_memory_stats (unsigned int *percent, unsigned long *free_mb);
 
 extern const char *program;
 

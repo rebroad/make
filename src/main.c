@@ -265,11 +265,12 @@ double default_load_average = -1.0;
 
 /* Memory-aware job adjustment */
 static int auto_adjust_jobs_flag = -1;  /* -1 = not set, will check env */
+static int disable_memory_display = 0;  /* Disable memory status display */
 static unsigned int memory_check_interval = 3;  /* seconds */
 static unsigned int memory_critical_percent = 88;
 static unsigned int memory_high_percent = 82;
 static unsigned int memory_comfortable_percent = 70;
-static unsigned long memory_emergency_free_mb = 1024;  /* Stop jobs if <1GB free */
+unsigned long min_memory_mb = 1024;  /* Minimum memory threshold (MB) */
 static int jobs_paused = 0;  /* Are we currently paused due to memory? */
 static time_t last_job_adjustment = 0;
 static int status_line_shown = 0;
@@ -629,7 +630,7 @@ init_memory_monitoring_env (void)
 
   env = getenv ("MAKE_MEMORY_EMERGENCY_MB");
   if (env)
-    memory_emergency_free_mb = (unsigned long)atoi (env);
+    min_memory_mb = (unsigned long)atoi (env);
 
   env = getenv ("MAKE_MEMORY_CHECK_INTERVAL");
   if (env)
@@ -738,6 +739,8 @@ static const char *const usage[] =
   -l [N], --load-average[=N], --max-load[=N]\n\
                               Don't start multiple jobs unless load is below N.\n"),
     N_("\
+  --min-mem=N                 Set minimum memory threshold to N MB (default: 1024).\n"),
+    N_("\
   -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n"),
     N_("\
   -n, --just-print, --dry-run, --recon\n\
@@ -781,6 +784,12 @@ static const char *const usage[] =
                               Consider FILE to be infinitely new.\n"),
     N_("\
   --warn-undefined-variables  Warn when an undefined variable is referenced.\n"),
+    N_("\
+  --auto-adjust-jobs          Enable automatic job adjustment based on memory.\n"),
+    N_("\
+  --no-auto-adjust-jobs       Disable automatic job adjustment.\n"),
+    N_("\
+  --nomem                     Disable memory status display.\n"),
     NULL
   };
 
@@ -887,6 +896,8 @@ static struct command_switch switches[] =
     { CHAR_MAX+12, string, &jobserver_style, 1, 0, 0, 0, 0, 0, "jobserver-style", 0 },
     { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "auto-adjust-jobs", 0 },
     { CHAR_MAX+14, flag_off, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "no-auto-adjust-jobs", 0 },
+    { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
+    { CHAR_MAX+16, positive_int, &min_memory_mb, 1, 1, 0, 0, 0, 0, "min-mem", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
@@ -1177,7 +1188,7 @@ debug_signal_handler (int sig UNUSED)
 #endif
 
 /* Memory monitoring for auto-adjust-jobs feature */
-static void
+void
 get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 {
 #ifdef __linux__
@@ -1263,7 +1274,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Only show if enabled AND we have active jobs OR we're in emergency pause */
   /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
-  if (!auto_adjust_jobs_flag)
+  if (!auto_adjust_jobs_flag || disable_memory_display)
     return;
 
   gettimeofday (&now, NULL);
@@ -1691,18 +1702,18 @@ memory_monitor_thread_func (void *arg)
 #endif
 
       /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
-      if (free_mb < memory_emergency_free_mb + 200 && free_mb >= memory_emergency_free_mb)
+      if (free_mb < min_memory_mb + 200 && free_mb >= min_memory_mb)
         {
           if (now - last_approaching_msg >= 1)
             {
               debug_write ("[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
-                          free_mb, memory_emergency_free_mb, jobs_paused, master_job_slots);
+                          free_mb, min_memory_mb, jobs_paused, master_job_slots);
               last_approaching_msg = now;
             }
         }
 
       /* CRITICAL EMERGENCY: Less than threshold free - PAUSE build until memory recovers */
-      if (free_mb < memory_emergency_free_mb)
+      if (free_mb < min_memory_mb)
         {
           if (!jobs_paused)
             {
@@ -1715,7 +1726,7 @@ memory_monitor_thread_func (void *arg)
             }
         }
       /* RECOVERY: Memory has recovered from emergency - RESUME build */
-      else if (jobs_paused && free_mb >= memory_emergency_free_mb + 500)  /* 500MB buffer */
+      else if (jobs_paused && free_mb >= min_memory_mb + 500)  /* 500MB buffer */
         {
           clear_status_line ();
           debug_write ("[RECOVERY] Memory recovered to %luMB - RESUMING build...\n", free_mb);
