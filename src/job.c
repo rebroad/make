@@ -228,6 +228,7 @@ pid2str (pid_t pid)
 static void free_child (struct child *);
 static void start_job_command (struct child *child);
 static int load_too_high (void);
+static int memory_too_low (void);
 static int job_next_command (struct child *);
 static int start_waiting_job (struct child *);
 
@@ -1631,7 +1632,8 @@ start_waiting_job (struct child *c)
   /* If we are running at least one job already and the load average
      is too high, make this one wait.  */
   if (!c->remote
-      && ((job_slots_used > 0 && load_too_high ())
+      && job_slots_used > 0
+      && (load_too_high() || memory_too_low()
 #ifdef WINDOWS32
           || process_table_full ()
 #endif
@@ -2177,6 +2179,37 @@ load_too_high (void)
 
   return guess >= max_load_average;
 #endif
+}
+
+/* Determine if the available memory is too low to start a new job.
+   
+   This function checks if the available system memory is below the
+   minimum threshold set by --min-mem.  If so, it prevents new jobs
+   from starting until memory becomes available.
+   
+   Returns 1 if memory is too low (don't start new jobs), 0 otherwise.  */
+
+static int
+memory_too_low (void)
+{
+  unsigned int mem_percent;
+  unsigned long free_mb;
+  
+  /* If min_memory_mb is not set (default 0), don't limit based on memory */
+  if (min_memory_mb == 0)
+    return 0;
+    
+  /* Get current memory statistics */
+  get_memory_stats (&mem_percent, &free_mb);
+  
+  /* If we can't determine memory usage, allow the job to proceed */
+  if (mem_percent == 0)
+    return 0;
+    
+  DB (DB_JOBS, ("Available memory = %lu MB (minimum required = %lu MB)\n",
+                free_mb, min_memory_mb));
+                
+  return free_mb < min_memory_mb;
 }
 
 /* Start jobs that are waiting for the load to be lower.  */
