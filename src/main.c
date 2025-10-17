@@ -1446,6 +1446,10 @@ debug_write (const char *format, ...)
   ssize_t written;
   va_list args;
   int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
+
+  /* Only output debug info when --nomem is specified (disable_memory_display is true) */
+  if (!disable_memory_display)
+    return;
 #if DEBUG_MEMORY_MONITOR
   static int eagain_count = 0;
 #endif
