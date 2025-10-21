@@ -4003,8 +4003,8 @@ save_memory_profiles (void)
   FILE *f;
   unsigned int i;
 
-  fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
-  fflush (stderr);
+  //fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
+  //fflush (stderr);
 
   f = fopen (".make_memory_cache", "w");
   if (!f)
@@ -4020,15 +4020,15 @@ save_memory_profiles (void)
                memory_profiles[i].peak_memory_mb,
                (long)memory_profiles[i].last_used,
                memory_profiles[i].filename);
-      fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
+      /*fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
                memory_profiles[i].peak_memory_mb,
                (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);
+               memory_profiles[i].filename);*/
     }
 
   fclose (f);
-  fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
-  fflush (stderr);
+  //fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
+  //fflush (stderr);
 }
 
 unsigned long
@@ -4076,8 +4076,8 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
             }
           memory_profiles[i].last_used = now;
           memory_profiles_dirty = 1;  /* Mark for saving */
-          fprintf (stderr, "[MEMORY] Set dirty flag (update), profile_count=%u\n", memory_profile_count);
-          fflush (stderr);
+          //fprintf (stderr, "[MEMORY] Set dirty flag (update), profile_count=%u\n", memory_profile_count);
+          //fflush (stderr);
           return;
         }
     }
