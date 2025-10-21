@@ -1520,11 +1520,12 @@ memory_monitor_thread_func (void *arg)
   static unsigned int last_jobs_started_total = 0;
   static unsigned int last_jobs_ended_total = 0;
 
-  /* Map descendant PIDs to source files */
+  /* Map descendant PIDs to source files AND their individual peak memory */
 #define MAX_TRACKED_DESCENDANTS 1000
   static struct {
     pid_t pid;
     char *source_file;
+    unsigned long peak_kb;  /* This descendant's individual peak */
   } descendant_files[MAX_TRACKED_DESCENDANTS];
   static int descendant_count = 0;
   unsigned int jobs_started_since_last_trajectory;
@@ -1721,13 +1722,31 @@ memory_monitor_thread_func (void *arg)
                                 if (c->pid == check_pid)
                                   {
                                     /* Found a descendant! Track memory */
-                                    if (rss_kb > c->peak_memory_kb)
-                                      {
-                                        unsigned long old_peak = c->peak_memory_kb;
-                                        c->peak_memory_kb = rss_kb;
+                                    unsigned long descendant_old_peak = 0;
+                                    int descendant_idx = -1;
 
-                                        /* If this is the first time we see significant memory (>10MB), extract filename */
-                                        if (old_peak < 10240 && rss_kb >= 10240)
+                                    /* Find this descendant's individual peak */
+                                    for (int j = 0; j < descendant_count; j++)
+                                      {
+                                        if (descendant_files[j].pid == pid)
+                                          {
+                                            descendant_old_peak = descendant_files[j].peak_kb;
+                                            descendant_idx = j;
+                                            break;
+                                          }
+                                      }
+
+                                    debug_write ("[MEMORY] Found descendant PID %d of child %d, rss=%lu kB, desc_peak=%lu kB\n",
+                                                (int)pid, (int)c->pid, rss_kb, descendant_old_peak);
+
+                                    /* Update BOTH the child's overall peak AND this descendant's individual peak */
+                                    if (rss_kb > c->peak_memory_kb)
+                                      c->peak_memory_kb = rss_kb;
+
+                                    if (rss_kb > descendant_old_peak)
+                                      {
+                                        /* If this is the first time we see this descendant with significant memory (>10MB), extract filename */
+                                        if (descendant_old_peak < 10240 && rss_kb >= 10240)
                                           {
                                             char cmdline_path[512];
                                             FILE *cmdline_file;
@@ -1853,9 +1872,22 @@ memory_monitor_thread_func (void *arg)
                                                                   {
                                                                     descendant_files[descendant_count].pid = pid;
                                                                     descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
-                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s\n",
-                                                                                (int)pid, strip_ptr);
+                                                                    descendant_files[descendant_count].peak_kb = rss_kb;
+                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (initial peak: %lu kB)\n",
+                                                                                (int)pid, strip_ptr, rss_kb);
                                                                     descendant_count++;
+                                                                  }
+                                                                else
+                                                                  {
+                                                                    /* Already tracked, just update peak */
+                                                                    for (int k = 0; k < descendant_count; k++)
+                                                                      {
+                                                                        if (descendant_files[k].pid == pid)
+                                                                          {
+                                                                            descendant_files[k].peak_kb = rss_kb;
+                                                                            break;
+                                                                          }
+                                                                      }
                                                                   }
                                                               }
                                                           }
@@ -1863,24 +1895,18 @@ memory_monitor_thread_func (void *arg)
                                                   }
                                               }
                                           }
-                                        else if (rss_kb > 10240 && rss_kb > old_peak + 50000)  /* Debug only for significant increases >50MB */
+                                        else if (rss_kb > 10240 && rss_kb > descendant_old_peak + 50000)  /* Debug only for significant increases >50MB */
                                           {
                                             debug_write ("[MEMORY] Child %d descendant PID %d now at: %lu kB\n",
                                                         (int)c->pid, (int)pid, rss_kb);
                                           }
 
-                                        /* Update the recorded memory usage by looking up the source file for THIS descendant PID */
-                                        if (rss_kb >= 10240)
+                                        /* Update the descendant's individual peak and record memory usage */
+                                        if (descendant_idx >= 0)
                                           {
-                                            int j;
-                                            for (j = 0; j < descendant_count; j++)
-                                              {
-                                                if (descendant_files[j].pid == pid)
-                                                  {
-                                                    record_file_memory_usage (descendant_files[j].source_file, rss_kb / 1024);
-                                                    break;
-                                                  }
-                                              }
+                                            descendant_files[descendant_idx].peak_kb = rss_kb;
+                                            if (rss_kb >= 10240)
+                                              record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024);
                                           }
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
