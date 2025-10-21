@@ -1577,6 +1577,52 @@ memory_monitor_thread_func (void *arg)
                   clear_status_line ();
                   debug_write ("\n[SYSTEM DEGRADATION] delay=%ldms, free=%luMB, lowering thresholds to %u%%/%u%%\n",
                               delay_ms, free_mb_temp, effective_critical_percent, effective_high_percent);
+
+                  /* If memory is critically low during degradation, kill children and wait for recovery */
+                  if (free_mb_temp < 800 && job_slots_used > 0)
+                    {
+                      struct child *c;
+                      unsigned int killed_count = 0;
+
+                      clear_status_line ();
+                      debug_write ("\n[EMERGENCY KILL] System degraded with only %luMB free - killing %u child processes...\n",
+                                  free_mb_temp, job_slots_used);
+
+                      /* Kill all child processes */
+                      for (c = children; c != 0; c = c->next)
+                        {
+                          if (c->pid > 0)
+                            {
+                              kill (c->pid, SIGTERM);
+                              killed_count++;
+                            }
+                        }
+
+                      debug_write ("[EMERGENCY KILL] Sent SIGTERM to %u processes, waiting for them to exit...\n",
+                                  killed_count);
+
+                      /* Wait for all children to die */
+                      while (job_slots_used > 0)
+                        reap_children (1, 0);
+
+                      debug_write ("[EMERGENCY KILL] All children terminated\n");
+
+                      /* Now wait for memory to recover above 1024MB */
+                      get_memory_stats (&mem_percent_temp, &free_mb_temp);
+                      while (free_mb_temp <= 1024)
+                        {
+                          debug_write ("[EMERGENCY RECOVERY] Waiting for memory... currently %luMB free (need >1024MB)\n",
+                                      free_mb_temp);
+                          usleep (500000); /* Wait 500ms */
+                          get_memory_stats (&mem_percent_temp, &free_mb_temp);
+                        }
+
+                      debug_write ("[EMERGENCY RECOVERY] Memory recovered to %luMB - resuming with -j1\n",
+                                  free_mb_temp);
+
+                      /* Resume with just 1 job */
+                      master_job_slots = 1;
+                    }
                 }
             }
           else
