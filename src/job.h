@@ -63,6 +63,9 @@ struct child
     unsigned int  recursive:1;  /* Nonzero for recursive command ('+' etc.)  */
     unsigned int  jobslot:1;    /* Nonzero if it's reserved a job slot.  */
     unsigned int  dontcare:1;   /* Saved dontcare flag.  */
+
+    /* Memory tracking for this compilation */
+    unsigned long peak_memory_kb;   /* Peak RSS memory used by this process */
   };
 
 extern struct child *children;

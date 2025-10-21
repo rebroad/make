@@ -1655,6 +1655,38 @@ memory_monitor_thread_func (void *arg)
 
       get_memory_stats (&mem_percent, &free_mb);
 
+      /* Update peak memory for each active child by reading actual process RSS */
+      {
+        struct child *c;
+        for (c = children; c != 0; c = c->next)
+          {
+            if (c->pid > 0)
+              {
+                char stat_path[512];
+                FILE *stat_file;
+                char line[512];
+                unsigned long rss_kb = 0;
+
+                /* Read /proc/[pid]/status to get VmRSS */
+                snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)c->pid);
+                stat_file = fopen (stat_path, "r");
+                if (stat_file)
+                  {
+                    while (fgets (line, sizeof(line), stat_file))
+                      {
+                        if (sscanf (line, "VmRSS: %lu kB", &rss_kb) == 1)
+                          {
+                            if (rss_kb > c->peak_memory_kb)
+                              c->peak_memory_kb = rss_kb;
+                            break;
+                          }
+                      }
+                    fclose (stat_file);
+                  }
+              }
+          }
+      }
+
       /* Debug marker B */
 #if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
@@ -1681,7 +1713,7 @@ memory_monitor_thread_func (void *arg)
         }
 #endif
 
-      /* Check adjustments on EVERY iteration (300ms) for fast response */
+      /* Check adjustments on EVERY iteration (100ms) for fast response and accurate memory tracking */
 
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
@@ -1755,7 +1787,7 @@ memory_monitor_thread_func (void *arg)
                       last_job_adjustment = now;
 
                       /* Skip the rest of the adjustment logic */
-                      usleep (300000);
+                      usleep (100000);  /* 100ms for accurate memory tracking */
                       continue;
                     }
                 }
@@ -1806,7 +1838,7 @@ memory_monitor_thread_func (void *arg)
       /* Skip normal adjustment when paused - waiting for memory recovery */
       if (jobs_paused)
         {
-          usleep (300000);  /* Sleep and check again next iteration */
+          usleep (100000);  /* 100ms for accurate memory tracking */
           continue;
         }
 
@@ -1906,8 +1938,8 @@ memory_monitor_thread_func (void *arg)
         debug_write ("[E%d:sleep]", iteration_count);
 #endif
 
-      /* Sleep 300ms before next check */
-      usleep (300000);
+      /* Sleep 100ms before next check for accurate process memory tracking */
+      usleep (100000);
 
       /* Debug marker F - after sleep */
 #if DEBUG_MEMORY_MONITOR
