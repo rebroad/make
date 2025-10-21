@@ -1098,6 +1098,13 @@ reap_children (int block, int err)
         {
           DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
+
+          /* Record peak memory usage for this file */
+          if (c->file && c->file->name && c->peak_memory_kb > 0)
+            {
+              unsigned long memory_mb = c->peak_memory_kb / 1024;
+              record_file_memory_usage (c->file->name, memory_mb);
+            }
         }
 
       /* There is now another slot open.  */
@@ -1495,6 +1502,9 @@ start_job_command (struct child *child)
 #else
 
       jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
+
+      /* Initialize memory tracking for this compilation */
+      child->peak_memory_kb = 0;
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
