@@ -1104,6 +1104,11 @@ reap_children (int block, int err)
           fprintf (stderr, "[MEMORY] Child exited: pid=%d, peak_kb=%lu, has_cmdlines=%d\n",
                   (int)c->pid, c->peak_memory_kb, (c->command_lines != NULL));
           fflush (stderr);
+          if (c->peak_memory_kb > 0)
+            {
+              fprintf (stderr, "[MEMORY] *** FOUND NON-ZERO PEAK! *** This child had %lu kB peak memory!\n", c->peak_memory_kb);
+              fflush (stderr);
+            }
           if (c->peak_memory_kb > 0 && c->command_lines)
             {
               /* Extract source filename from command line (look for .cpp, .c, .cc files) */

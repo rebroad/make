@@ -65,7 +65,7 @@ struct child
     unsigned int  dontcare:1;   /* Saved dontcare flag.  */
 
     /* Memory tracking for this compilation */
-    unsigned long peak_memory_kb;   /* Peak RSS memory used by this process */
+    volatile unsigned long peak_memory_kb;   /* Peak RSS memory used by this process */
   };
 
 extern struct child *children;
