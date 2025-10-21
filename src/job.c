@@ -1574,6 +1574,89 @@ start_job_command (struct child *child)
       child->peak_memory_kb = 0;
       child->source_file = NULL;
 
+      /* Predictive memory check: extract source file and check if we have enough memory */
+      {
+        const char *predicted_source = NULL;
+        unsigned long required_mb = 0;
+        unsigned int mem_percent;
+        unsigned long free_mb;
+        int i;
+
+        /* Try to extract source file from command */
+        for (i = 0; argv[i] != NULL; i++)
+          {
+            const char *arg = argv[i];
+            const char *ptr = arg;
+
+            /* Look for .cpp/.cc/.c in the argument string */
+            while (*ptr)
+              {
+                if ((strncmp (ptr, ".cpp", 4) == 0 && (ptr[4] == '\0' || ptr[4] == ' ')) ||
+                    (strncmp (ptr, ".cc", 3) == 0 && (ptr[3] == '\0' || ptr[3] == ' ')) ||
+                    (strncmp (ptr, ".c", 2) == 0 && (ptr[2] == '\0' || ptr[2] == ' ')))
+                  {
+                    /* Found a source file, backtrack to get full path */
+                    const char *start = ptr;
+                    while (start > arg && start[-1] != ' ')
+                      start--;
+
+                    /* Check if this looks like a file path (contains /) */
+                    if (strchr (start, '/'))
+                      {
+                        char temp[1000];
+                        const char *end;
+                        size_t len;
+                        const char *final_path;
+
+                        end = ptr;
+                        while (*end && *end != ' ')
+                          end++;
+
+                        len = end - start;
+                        if (len < sizeof(temp))
+                          {
+                            memcpy (temp, start, len);
+                            temp[len] = '\0';
+
+                            /* Strip leading ../ */
+                            final_path = temp;
+                            while (strncmp (final_path, "../", 3) == 0)
+                              final_path += 3;
+
+                            predicted_source = final_path;
+                            break;
+                          }
+                      }
+                  }
+                ptr++;
+              }
+            if (predicted_source)
+              break;
+          }
+
+        /* If we found a source file, check memory requirements */
+        if (predicted_source)
+          {
+            required_mb = get_file_memory_requirement (predicted_source);
+            if (required_mb > 0)
+              {
+                get_memory_stats (&mem_percent, &free_mb);
+                fprintf (stderr, "[PREDICT] File %s needs %lu MB, have %lu MB free\n",
+                        predicted_source, required_mb, free_mb);
+                fflush (stderr);
+
+                /* If we don't have enough memory, delay this compilation */
+                if (required_mb > free_mb)
+                  {
+                    fprintf (stderr, "[PREDICT] INSUFFICIENT MEMORY for %s (need %lu MB, have %lu MB) - job deferred\n",
+                            predicted_source, required_mb, free_mb);
+                    fflush (stderr);
+                    /* TODO: Implement deferral mechanism - for now just warn */
+                  }
+              }
+          }
+      }
+
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
 
