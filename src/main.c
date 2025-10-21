@@ -1942,10 +1942,10 @@ next_proc:
       /* Save memory profiles if they've been updated */
       if (memory_profiles_dirty)
         {
-          debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
+          //debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
           save_memory_profiles ();
           memory_profiles_dirty = 0;
-          debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
+          //debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
         }
 
       /* Debug marker B */
