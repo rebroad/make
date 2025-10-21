@@ -1516,6 +1516,10 @@ memory_monitor_thread_func (void *arg)
   static int debug_sample_count = 0;
   static time_t last_approaching_msg = 0;
   static int iteration_count = 0;
+  static unsigned int last_jobs_started_total = 0;
+  static unsigned int last_jobs_ended_total = 0;
+  unsigned int jobs_started_since_last_trajectory;
+  unsigned int jobs_ended_since_last_trajectory;
   unsigned int old_slots;
   unsigned int desired_procs;
   unsigned int current_parallelism;
@@ -1575,7 +1579,7 @@ memory_monitor_thread_func (void *arg)
                   effective_high_percent = mem_percent_temp - 5;
 
                   clear_status_line ();
-                  debug_write ("\n[SYSTEM DEGRADATION] delay=%ldms, free=%luMB, lowering thresholds to %u%%/%u%%\n",
+                  debug_write ("[SYSTEM DEGRADATION] delay=%ldms, free=%luMB, lowering thresholds to %u%%/%u%%\n",
                               delay_ms, free_mb_temp, effective_critical_percent, effective_high_percent);
 
                   /* If memory is critically low during degradation, kill children and wait for recovery */
@@ -1585,7 +1589,7 @@ memory_monitor_thread_func (void *arg)
                       unsigned int killed_count = 0;
 
                       clear_status_line ();
-                      debug_write ("\n[EMERGENCY KILL] System degraded with only %luMB free - killing %u child processes...\n",
+                      debug_write ("[EMERGENCY KILL] System degraded with only %luMB free - killing %u child processes...\n",
                                   free_mb_temp, job_slots_used);
 
                       /* Kill all child processes */
@@ -1714,8 +1718,17 @@ memory_monitor_thread_func (void *arg)
 
               /* Debug trajectory calculation only when memory is concerning (non-blocking) */
               if (samples_collected >= 5 && debug_sample_count % 10 == 0 && mem_percent >= 75)
-                debug_write ("[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s\n",
-                            samples_collected, valid_samples, total_mb_change, total_time, mb_per_second);
+                {
+                  /* Compute job starts/ends since last report */
+                  jobs_started_since_last_trajectory = jobs_started_total - last_jobs_started_total;
+                  jobs_ended_since_last_trajectory = jobs_ended_total - last_jobs_ended_total;
+                  last_jobs_started_total = jobs_started_total;
+                  last_jobs_ended_total = jobs_ended_total;
+
+                  debug_write ("[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s started=%u ended=%u\n",
+                              samples_collected, valid_samples, total_mb_change, total_time, mb_per_second,
+                              jobs_started_since_last_trajectory, jobs_ended_since_last_trajectory);
+                }
 
               /* If memory is declining (mb_per_second < 0), project forward */
               if (mb_per_second < -50)  /* Dropping more than 50MB/s is concerning */

@@ -90,4 +90,6 @@ pid_t exec_command (char **argv, char **envp);
 void unblock_all_sigs (void);
 
 extern unsigned int job_slots_used;
+extern unsigned int jobs_started_total;
+extern unsigned int jobs_ended_total;
 extern unsigned int jobserver_tokens;

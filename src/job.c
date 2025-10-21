@@ -240,6 +240,10 @@ struct child *children = 0;
 
 unsigned int job_slots_used = 0;
 
+/* Total count of jobs started and ended (for trajectory monitoring) */
+unsigned int jobs_started_total = 0;
+unsigned int jobs_ended_total = 0;
+
 /* Nonzero if the 'good' standard input is in use.  */
 
 static int good_stdin_used = 0;
@@ -1087,7 +1091,11 @@ reap_children (int block, int err)
 
       /* There is now another slot open.  */
       if (job_slots_used > 0)
-        job_slots_used -= c->jobslot;
+        {
+          job_slots_used -= c->jobslot;
+          if (c->jobslot)
+            jobs_ended_total++;
+        }
 
       /* Remove the child from the chain and free it.  */
       if (lastc == 0)
@@ -1661,6 +1669,7 @@ start_waiting_job (struct child *c)
                         c->remote ? _(" (remote)") : ""));
           /* One more job slot is in use.  */
           ++job_slots_used;
+          jobs_started_total++;
           assert (c->jobslot == 0);
           c->jobslot = 1;
         }
@@ -2182,11 +2191,11 @@ load_too_high (void)
 }
 
 /* Determine if the available memory is too low to start a new job.
-   
+
    This function checks if the available system memory is below the
    minimum threshold set by --min-mem.  If so, it prevents new jobs
    from starting until memory becomes available.
-   
+
    Returns 1 if memory is too low (don't start new jobs), 0 otherwise.  */
 
 static int
@@ -2194,21 +2203,21 @@ memory_too_low (void)
 {
   unsigned int mem_percent;
   unsigned long free_mb;
-  
+
   /* If min_memory_mb is not set (default 0), don't limit based on memory */
   if (min_memory_mb == 0)
     return 0;
-    
+
   /* Get current memory statistics */
   get_memory_stats (&mem_percent, &free_mb);
-  
+
   /* If we can't determine memory usage, allow the job to proceed */
   if (mem_percent == 0)
     return 0;
-    
+
   DB (DB_JOBS, ("Available memory = %lu MB (minimum required = %lu MB)\n",
                 free_mb, min_memory_mb));
-                
+
   return free_mb < min_memory_mb;
 }
 
