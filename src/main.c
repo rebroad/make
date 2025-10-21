@@ -1736,8 +1736,8 @@ memory_monitor_thread_func (void *arg)
                                           }
                                       }
 
-                                    debug_write ("[MEMORY] Found descendant PID %d of child %d, rss=%lu kB, desc_peak=%lu kB\n",
-                                                (int)pid, (int)c->pid, rss_kb, descendant_old_peak);
+                                    /*debug_write ("[MEMORY] Found descendant PID %d of child %d, rss=%lu kB, desc_peak=%lu kB\n",
+                                                (int)pid, (int)c->pid, rss_kb, descendant_old_peak);*/
 
                                     /* Update BOTH the child's overall peak AND this descendant's individual peak */
                                     if (rss_kb > c->peak_memory_kb)
@@ -1758,8 +1758,8 @@ memory_monitor_thread_func (void *arg)
                                             size_t len;
                                             char source_filename[1000];
 
-                                            debug_write ("[MEMORY] Child %d first hit 100MB via descendant PID %d - reading descendant cmdline\n",
-                                                        (int)c->pid, (int)pid);
+                                            /*debug_write ("[MEMORY] Child %d first hit 100MB via descendant PID %d - reading descendant cmdline\n",
+                                                        (int)c->pid, (int)pid);*/
 
                                             /* Read the DESCENDANT's command line from /proc */
                                             snprintf (cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
@@ -1784,8 +1784,8 @@ memory_monitor_thread_func (void *arg)
                                                           fprintf (f, "Cmdline length=%ld\n%s\n", (long)cmdline_len, cmdline_buf);
                                                           fclose (f);
                                                         }
-                                                      debug_write ("[MEMORY] Descendant cmdline length=%ld (written to /tmp/make_cmdline.txt)\n",
-                                                                  (long)cmdline_len);
+                                                      /*debug_write ("[MEMORY] Descendant cmdline length=%ld (written to /tmp/make_cmdline.txt)\n",
+                                                                  (long)cmdline_len);*/
                                                     }
 
                                                     /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
