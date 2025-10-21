@@ -241,16 +241,17 @@ struct child *children = 0;
 unsigned int job_slots_used = 0;
 
 /* Total count of jobs started and ended (for trajectory monitoring) */
-unsigned int jobs_started_total = 0;
-unsigned int jobs_ended_total = 0;
+volatile unsigned int jobs_started_total = 0;
+volatile unsigned int jobs_ended_total = 0;
 
 /* Memory profiling per-file */
+volatile unsigned int memory_profiles_dirty = 0;  /* Flag indicating profiles need saving */
 #define MAX_MEMORY_PROFILES 10000
 struct file_memory_profile
 {
   char *filename;
   unsigned long peak_memory_mb;
-  unsigned int compile_count;
+  time_t last_used;  /* Unix timestamp of last compilation */
 };
 static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
 static unsigned int memory_profile_count = 0;
@@ -1141,7 +1142,6 @@ reap_children (int block, int err)
 
                                   memory_mb = c->peak_memory_kb / 1024;
                                   record_file_memory_usage (filename, memory_mb);
-                                  save_memory_profiles (); /* Save immediately in case of crash */
                                   break;
                                 }
                             }
@@ -3950,7 +3950,7 @@ load_memory_profiles (void)
   char line[4096];
   char filename[4000];
   unsigned long peak_mb;
-  unsigned int count;
+  long timestamp;
 
   f = fopen (".make_memory_cache", "r");
   if (!f)
@@ -3958,13 +3958,13 @@ load_memory_profiles (void)
 
   while (fgets (line, sizeof(line), f))
     {
-      if (sscanf (line, "%lu %u %[^\n]", &peak_mb, &count, filename) == 3)
+      if (sscanf (line, "%lu %ld %[^\n]", &peak_mb, &timestamp, filename) == 3)
         {
           if (memory_profile_count < MAX_MEMORY_PROFILES)
             {
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
-              memory_profiles[memory_profile_count].compile_count = count;
+              memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
               memory_profile_count++;
             }
         }
@@ -3986,9 +3986,9 @@ save_memory_profiles (void)
 
   for (i = 0; i < memory_profile_count; i++)
     {
-      fprintf (f, "%lu %u %s\n",
+      fprintf (f, "%lu %ld %s\n",
                memory_profiles[i].peak_memory_mb,
-               memory_profiles[i].compile_count,
+               (long)memory_profiles[i].last_used,
                memory_profiles[i].filename);
     }
 
@@ -4018,9 +4018,12 @@ void
 record_file_memory_usage (const char *filename, unsigned long memory_mb)
 {
   unsigned int i;
+  time_t now;
 
   if (!filename)
     return;
+
+  now = time (NULL);
 
   /* Look for existing profile */
   for (i = 0; i < memory_profile_count; i++)
@@ -4030,7 +4033,8 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
           /* Update if this is a new peak */
           if (memory_mb > memory_profiles[i].peak_memory_mb)
             memory_profiles[i].peak_memory_mb = memory_mb;
-          memory_profiles[i].compile_count++;
+          memory_profiles[i].last_used = now;
+          memory_profiles_dirty = 1;  /* Mark for saving */
           return;
         }
     }
@@ -4040,8 +4044,9 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
     {
       memory_profiles[memory_profile_count].filename = xstrdup (filename);
       memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-      memory_profiles[memory_profile_count].compile_count = 1;
+      memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
+      memory_profiles_dirty = 1;  /* Mark for saving */
     }
 }
 
