@@ -1748,39 +1748,89 @@ memory_monitor_thread_func (void *arg)
                                                         cmdline_buf[j] = ' ';
                                                     cmdline_buf[cmdline_len] = '\0';
 
-                                                    debug_write ("[MEMORY] Descendant cmdline: %.200s%s\n",
-                                                                cmdline_buf, (cmdline_len > 200 ? "..." : ""));
+                                                    {
+                                                      FILE *f = fopen ("/tmp/make_cmdline.txt", "w");
+                                                      if (f)
+                                                        {
+                                                          fprintf (f, "Cmdline length=%ld\n%s\n", (long)cmdline_len, cmdline_buf);
+                                                          fclose (f);
+                                                        }
+                                                      debug_write ("[MEMORY] Descendant cmdline length=%ld (written to /tmp/make_cmdline.txt)\n",
+                                                                  (long)cmdline_len);
+                                                    }
 
-                                                    /* Search for source file in the descendant's command line */
+                                                    /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
+                                                    end = NULL;
                                                     ptr = cmdline_buf;
                                                     while (*ptr)
                                                       {
-                                                        if ((strstr (ptr, ".cpp") || strstr (ptr, ".c ") || strstr (ptr, ".cc")) &&
-                                                            ptr > cmdline_buf && (ptr[-1] == ' ' || ptr[-1] == '/'))
+                                                        char *candidate_end = NULL;
+                                                        char *candidate_start;
+                                                        int has_slash;
+
+                                                        /* Check for file extensions */
+                                                        if (strncmp (ptr, ".cpp", 4) == 0)
+                                                          candidate_end = ptr + 3;
+                                                        else if (strncmp (ptr, ".cc", 3) == 0)
+                                                          candidate_end = ptr + 2;
+                                                        else if (strncmp (ptr, ".c", 2) == 0 && (ptr[2] == ' ' || ptr[2] == '\0'))
+                                                          candidate_end = ptr + 1;
+
+                                                        if (candidate_end)
                                                           {
-                                                            end = strstr (ptr, ".cpp");
-                                                            if (!end) end = strstr (ptr, ".cc");
-                                                            if (!end) end = strstr (ptr, ".c ");
-                                                            if (end)
+                                                            /* Backtrack to previous space */
+                                                            candidate_start = ptr;
+                                                            while (candidate_start > cmdline_buf && candidate_start[-1] != ' ')
+                                                              candidate_start--;
+
+                                                            /* Check if this token contains "/" (i.e., it's a filepath) */
+                                                            has_slash = 0;
+                                                            start = candidate_start;
+                                                            while (start <= candidate_end)
                                                               {
-                                                                start = ptr;
-                                                                while (start > cmdline_buf && start[-1] != ' ' && start[-1] != '=')
-                                                                  start--;
-
-                                                                len = (end - start) + 4;
-                                                                if (len < 1000)
+                                                                if (*start == '/')
                                                                   {
-                                                                    memcpy (source_filename, start, len);
-                                                                    source_filename[len] = '\0';
-
-                                                                    debug_write ("[MEMORY] EARLY RECORD: %s peaked at %lu kB (still compiling)\n",
-                                                                                source_filename, rss_kb);
-                                                                    record_file_memory_usage (source_filename, rss_kb / 1024);
-                                                                    goto found_filename;
+                                                                    has_slash = 1;
+                                                                    break;
                                                                   }
+                                                                start++;
                                                               }
+
+                                                            /* Only keep candidates with "/" */
+                                                            if (has_slash)
+                                                              end = candidate_end;
                                                           }
+
                                                         ptr++;
+                                                      }
+
+                                                    if (end)
+                                                      {
+                                                        /* Backtrack to find start of filepath */
+                                                        start = end;
+                                                        while (start > cmdline_buf && start[-1] != ' ')
+                                                          start--;
+
+                                                        len = (end - start) + 1;
+                                                        if (len < 1000 && len > 0)
+                                                          {
+                                                            char *strip_ptr;
+
+                                                            memcpy (source_filename, start, len);
+                                                            source_filename[len] = '\0';
+
+                                                            /* Strip leading "../" sequences */
+                                                            strip_ptr = source_filename;
+                                                            while (strncmp (strip_ptr, "../", 3) == 0)
+                                                              strip_ptr += 3;
+
+                                                            debug_write ("[MEMORY] After stripping ../: %s\n", strip_ptr);
+
+                                                            debug_write ("[MEMORY] EARLY RECORD: %s peaked at %lu kB (still compiling)\n",
+                                                                        strip_ptr, rss_kb);
+                                                            record_file_memory_usage (strip_ptr, rss_kb / 1024);
+                                                            goto found_filename;
+                                                          }
                                                       }
                                                   }
                                               }
