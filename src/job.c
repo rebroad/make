@@ -1099,11 +1099,56 @@ reap_children (int block, int err)
           DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
 
-          /* Record peak memory usage for this file */
-          if (c->file && c->file->name && c->peak_memory_kb > 0)
+          /* Record peak memory usage for the actual source file being compiled */
+          if (c->peak_memory_kb > 0 && c->command_lines)
             {
-              unsigned long memory_mb = c->peak_memory_kb / 1024;
-              record_file_memory_usage (c->file->name, memory_mb);
+              /* Extract source filename from command line (look for .cpp, .c, .cc files) */
+              unsigned int cmd_idx;
+              for (cmd_idx = 0; cmd_idx < c->command_line && c->command_lines[cmd_idx]; cmd_idx++)
+                {
+                  char *cmd = c->command_lines[cmd_idx];
+                  char *ptr = cmd;
+
+                  /* Search for source files in the command */
+                  while (*ptr)
+                    {
+                      if ((strstr (ptr, ".cpp") || strstr (ptr, ".c ") || strstr (ptr, ".cc")) &&
+                          ptr > cmd && (ptr[-1] == ' ' || ptr[-1] == '/'))
+                        {
+                          /* Found a source file - extract just the filename */
+                          char *end;
+                          char *start;
+                          size_t len;
+                          char filename[1000];
+                          unsigned long memory_mb;
+
+                          end = strstr (ptr, ".cpp");
+                          if (!end) end = strstr (ptr, ".cc");
+                          if (!end) end = strstr (ptr, ".c ");
+                          if (end)
+                            {
+                              /* Find start of filename (after last /) */
+                              start = ptr;
+                              while (start > cmd && start[-1] != ' ' && start[-1] != '=')
+                                start--;
+
+                              /* Extract and record */
+                              len = (end - start) + 4; /* include extension */
+                              if (len < 1000)
+                                {
+                                  memcpy (filename, start, len);
+                                  filename[len] = '\0';
+
+                                  memory_mb = c->peak_memory_kb / 1024;
+                                  record_file_memory_usage (filename, memory_mb);
+                                  save_memory_profiles (); /* Save immediately in case of crash */
+                                  break;
+                                }
+                            }
+                        }
+                      ptr++;
+                    }
+                }
             }
         }
 
