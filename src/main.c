@@ -1575,8 +1575,8 @@ memory_monitor_thread_func (void *arg)
                   effective_high_percent = mem_percent_temp - 5;
 
                   clear_status_line ();
-                  debug_write ("\n[SYSTEM DEGRADATION] delay=%ldms, lowering thresholds to %u%%/%u%%\n",
-                              delay_ms, effective_critical_percent, effective_high_percent);
+                  debug_write ("\n[SYSTEM DEGRADATION] delay=%ldms, free=%luMB, lowering thresholds to %u%%/%u%%\n",
+                              delay_ms, free_mb_temp, effective_critical_percent, effective_high_percent);
                 }
             }
           else
