@@ -35,6 +35,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <stdarg.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <ctype.h>
 
 /* Set to 1 to enable verbose memory monitor debugging (timing, iteration markers, etc.) */
 #define DEBUG_MEMORY_MONITOR 0
@@ -1655,33 +1656,70 @@ memory_monitor_thread_func (void *arg)
 
       get_memory_stats (&mem_percent, &free_mb);
 
-      /* Update peak memory for each active child by reading actual process RSS */
+      /* Update peak memory for each active child AND ALL DESCENDANTS by reading actual process RSS */
       {
         struct child *c;
+        DIR *proc_dir;
+        struct dirent *entry;
+
         for (c = children; c != 0; c = c->next)
           {
             if (c->pid > 0)
               {
-                char stat_path[512];
-                FILE *stat_file;
-                char line[512];
-                unsigned long rss_kb = 0;
-
-                /* Read /proc/[pid]/status to get VmRSS */
-                snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)c->pid);
-                stat_file = fopen (stat_path, "r");
-                if (stat_file)
+                /* Scan /proc to find all descendant processes of this child */
+                proc_dir = opendir ("/proc");
+                if (proc_dir)
                   {
-                    while (fgets (line, sizeof(line), stat_file))
+                    while ((entry = readdir (proc_dir)) != NULL)
                       {
-                        if (sscanf (line, "VmRSS: %lu kB", &rss_kb) == 1)
+                        char stat_path[512];
+                        FILE *stat_file;
+                        char line[512];
+                        unsigned long rss_kb = 0;
+                        pid_t pid, ppid;
+
+                        /* Skip non-numeric entries */
+                        if (!isdigit (entry->d_name[0]))
+                          continue;
+
+                        pid = atoi (entry->d_name);
+
+                        /* Read /proc/[pid]/status to get both PPid and VmRSS */
+                        snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)pid);
+                        stat_file = fopen (stat_path, "r");
+                        if (stat_file)
                           {
-                            if (rss_kb > c->peak_memory_kb)
-                              c->peak_memory_kb = rss_kb;
-                            break;
+                            ppid = 0;
+                            rss_kb = 0;
+
+                            while (fgets (line, sizeof(line), stat_file))
+                              {
+                                /* Try to parse PPid */
+                                sscanf (line, "PPid: %d", &ppid);
+
+                                /* Try to parse VmRSS */
+                                sscanf (line, "VmRSS: %lu kB", &rss_kb);
+
+                                /* Stop if we have both values (both will be > 0) */
+                                if (ppid > 0 && rss_kb > 0)
+                                  break;
+                              }
+                            fclose (stat_file);
+
+                            /* If this process is a descendant of our child, track its memory */
+                            if (ppid == c->pid && rss_kb > 0)
+                              {
+                                if (rss_kb > c->peak_memory_kb)
+                                  {
+                                    c->peak_memory_kb = rss_kb;
+                                    if (rss_kb > 10240)  /* Only debug for processes >10MB */
+                                      debug_write ("[MEMORY] Child %d descendant PID %d peak: %lu kB\n",
+                                                  (int)c->pid, (int)pid, rss_kb);
+                                  }
+                              }
                           }
                       }
-                    fclose (stat_file);
+                    closedir (proc_dir);
                   }
               }
           }
@@ -1690,8 +1728,10 @@ memory_monitor_thread_func (void *arg)
       /* Save memory profiles if they've been updated */
       if (memory_profiles_dirty)
         {
+          debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
           save_memory_profiles ();
           memory_profiles_dirty = 0;
+          debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
         }
 
       /* Debug marker B */

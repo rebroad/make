@@ -1101,14 +1101,24 @@ reap_children (int block, int err)
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
 
           /* Record peak memory usage for the actual source file being compiled */
+          fprintf (stderr, "[MEMORY] Child exited: pid=%d, peak_kb=%lu, has_cmdlines=%d\n",
+                  (int)c->pid, c->peak_memory_kb, (c->command_lines != NULL));
+          fflush (stderr);
           if (c->peak_memory_kb > 0 && c->command_lines)
             {
               /* Extract source filename from command line (look for .cpp, .c, .cc files) */
               unsigned int cmd_idx;
+              fprintf (stderr, "[MEMORY] Attempting filename extraction, command_line count=%u\n", c->command_line);
+              fflush (stderr);
               for (cmd_idx = 0; cmd_idx < c->command_line && c->command_lines[cmd_idx]; cmd_idx++)
                 {
                   char *cmd = c->command_lines[cmd_idx];
                   char *ptr = cmd;
+
+                  /* Debug: print first 200 chars of each command line */
+                  fprintf (stderr, "[MEMORY] cmdline[%u]: %.200s%s\n",
+                          cmd_idx, cmd, (strlen(cmd) > 200 ? "..." : ""));
+                  fflush (stderr);
 
                   /* Search for source files in the command */
                   while (*ptr)
@@ -1141,6 +1151,9 @@ reap_children (int block, int err)
                                   filename[len] = '\0';
 
                                   memory_mb = c->peak_memory_kb / 1024;
+                                  fprintf (stderr, "[MEMORY] Recording %s: peak_kb=%lu -> %luMB\n",
+                                          filename, c->peak_memory_kb, memory_mb);
+                                  fflush (stderr);
                                   record_file_memory_usage (filename, memory_mb);
                                   break;
                                 }
@@ -3980,9 +3993,16 @@ save_memory_profiles (void)
   FILE *f;
   unsigned int i;
 
+  fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
+  fflush (stderr);
+
   f = fopen (".make_memory_cache", "w");
   if (!f)
-    return;
+    {
+      fprintf (stderr, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
+      fflush (stderr);
+      return;
+    }
 
   for (i = 0; i < memory_profile_count; i++)
     {
@@ -3990,9 +4010,15 @@ save_memory_profiles (void)
                memory_profiles[i].peak_memory_mb,
                (long)memory_profiles[i].last_used,
                memory_profiles[i].filename);
+      fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
+               memory_profiles[i].peak_memory_mb,
+               (long)memory_profiles[i].last_used,
+               memory_profiles[i].filename);
     }
 
   fclose (f);
+  fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
+  fflush (stderr);
 }
 
 unsigned long
@@ -4032,9 +4058,16 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
         {
           /* Update if this is a new peak */
           if (memory_mb > memory_profiles[i].peak_memory_mb)
-            memory_profiles[i].peak_memory_mb = memory_mb;
+            {
+              fprintf (stderr, "[MEMORY] Updated peak for %s: %lu -> %luMB\n",
+                      filename, memory_profiles[i].peak_memory_mb, memory_mb);
+              fflush (stderr);
+              memory_profiles[i].peak_memory_mb = memory_mb;
+            }
           memory_profiles[i].last_used = now;
           memory_profiles_dirty = 1;  /* Mark for saving */
+          fprintf (stderr, "[MEMORY] Set dirty flag (update), profile_count=%u\n", memory_profile_count);
+          fflush (stderr);
           return;
         }
     }
@@ -4047,6 +4080,9 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
       memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
       memory_profiles_dirty = 1;  /* Mark for saving */
+      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u, dirty=1\n",
+              filename, memory_mb, memory_profile_count);
+      fflush (stderr);
     }
 }
 
