@@ -93,3 +93,9 @@ extern unsigned int job_slots_used;
 extern unsigned int jobs_started_total;
 extern unsigned int jobs_ended_total;
 extern unsigned int jobserver_tokens;
+
+/* Memory profiling per file */
+void load_memory_profiles (void);
+void save_memory_profiles (void);
+unsigned long get_file_memory_requirement (const char *filename);
+void record_file_memory_usage (const char *filename, unsigned long memory_mb);
