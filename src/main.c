@@ -1591,6 +1591,7 @@ memory_monitor_thread_func (void *arg)
                       clear_status_line ();
                       debug_write ("[EMERGENCY KILL] System degraded with only %luMB free - killing %u child processes...\n",
                                   free_mb_temp, job_slots_used);
+                      fflush (stderr);
 
                       /* Kill all child processes */
                       for (c = children; c != 0; c = c->next)
@@ -1604,12 +1605,14 @@ memory_monitor_thread_func (void *arg)
 
                       debug_write ("[EMERGENCY KILL] Sent SIGTERM to %u processes, waiting for them to exit...\n",
                                   killed_count);
+                      fflush (stderr);
 
                       /* Wait for all children to die */
                       while (job_slots_used > 0)
                         reap_children (1, 0);
 
-                      debug_write ("[EMERGENCY KILL] All children terminated\n");
+                      debug_write ("[EMERGENCY KILL] All children terminated - build will continue\n");
+                      fflush (stderr);
 
                       /* Now wait for memory to recover above 1024MB */
                       get_memory_stats (&mem_percent_temp, &free_mb_temp);
@@ -1623,9 +1626,14 @@ memory_monitor_thread_func (void *arg)
 
                       debug_write ("[EMERGENCY RECOVERY] Memory recovered to %luMB - resuming with -j1\n",
                                   free_mb_temp);
+                      fflush (stderr);
 
                       /* Resume with just 1 job */
                       master_job_slots = 1;
+                      job_slots = 1;
+
+                      /* Clear the paused flag to allow resumption */
+                      jobs_paused = 0;
                     }
                 }
             }
@@ -2385,6 +2393,9 @@ main (int argc, char **argv, char **envp)
   unsigned int restarts = 0;
   unsigned int syncing = 0;
   int argv_slots;  /* The jobslot info we got from our parent process.  */
+
+  /* Load memory profiles from previous builds */
+  load_memory_profiles ();
 #ifdef WINDOWS32
   const char *unix_path = NULL;
   const char *windows32_path = NULL;
@@ -5035,6 +5046,9 @@ die (int status)
       int err;
 
       dying = 1;
+
+      /* Save memory profiles for future builds */
+      save_memory_profiles ();
 
       if (print_version_flag)
         print_version ();

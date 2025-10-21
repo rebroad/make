@@ -244,6 +244,17 @@ unsigned int job_slots_used = 0;
 unsigned int jobs_started_total = 0;
 unsigned int jobs_ended_total = 0;
 
+/* Memory profiling per-file */
+#define MAX_MEMORY_PROFILES 10000
+struct file_memory_profile
+{
+  char *filename;
+  unsigned long peak_memory_mb;
+  unsigned int compile_count;
+};
+static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+static unsigned int memory_profile_count = 0;
+
 /* Nonzero if the 'good' standard input is in use.  */
 
 static int good_stdin_used = 0;
@@ -1669,7 +1680,6 @@ start_waiting_job (struct child *c)
                         c->remote ? _(" (remote)") : ""));
           /* One more job slot is in use.  */
           ++job_slots_used;
-          jobs_started_total++;
           assert (c->jobslot == 0);
           c->jobslot = 1;
         }
@@ -2382,6 +2392,9 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
 
 #if !defined(USE_POSIX_SPAWN)
 
+  /* Track actual process spawns for memory monitoring */
+  jobs_started_total++;
+
   {
     /* The child may clobber environ so remember ours and restore it.  */
     char **parent_env = environ;
@@ -2495,6 +2508,9 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
       r = errno;
       goto cleanup;
     }
+
+  /* Track actual process spawns for memory monitoring */
+  jobs_started_total++;
 
   /* Start the program.  */
   while ((r = posix_spawn (&pid, cmd, &fa, &attr, argv,
@@ -3868,6 +3884,111 @@ dup2 (int old, int new)
   return fd;
 }
 #endif /* !HAVE_DUP2 && !_AMIGA */
+
+/* Memory profiling functions */
+
+/* Load memory profiles from cache file */
+void
+load_memory_profiles (void)
+{
+  FILE *f;
+  char line[4096];
+  char filename[4000];
+  unsigned long peak_mb;
+  unsigned int count;
+
+  f = fopen (".make_memory_cache", "r");
+  if (!f)
+    return; /* No cache yet */
+
+  while (fgets (line, sizeof(line), f))
+    {
+      if (sscanf (line, "%lu %u %[^\n]", &peak_mb, &count, filename) == 3)
+        {
+          if (memory_profile_count < MAX_MEMORY_PROFILES)
+            {
+              memory_profiles[memory_profile_count].filename = xstrdup (filename);
+              memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
+              memory_profiles[memory_profile_count].compile_count = count;
+              memory_profile_count++;
+            }
+        }
+    }
+
+  fclose (f);
+}
+
+/* Save memory profiles to cache file */
+void
+save_memory_profiles (void)
+{
+  FILE *f;
+  unsigned int i;
+
+  f = fopen (".make_memory_cache", "w");
+  if (!f)
+    return;
+
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      fprintf (f, "%lu %u %s\n",
+               memory_profiles[i].peak_memory_mb,
+               memory_profiles[i].compile_count,
+               memory_profiles[i].filename);
+    }
+
+  fclose (f);
+}
+
+unsigned long
+get_file_memory_requirement (const char *filename)
+{
+  unsigned int i;
+
+  if (!filename)
+    return 0;
+
+  /* Look up the file in our profiles */
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filename) == 0)
+        return memory_profiles[i].peak_memory_mb;
+    }
+
+  /* No profile yet, return default estimate */
+  return 0;
+}
+
+void
+record_file_memory_usage (const char *filename, unsigned long memory_mb)
+{
+  unsigned int i;
+
+  if (!filename)
+    return;
+
+  /* Look for existing profile */
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filename) == 0)
+        {
+          /* Update if this is a new peak */
+          if (memory_mb > memory_profiles[i].peak_memory_mb)
+            memory_profiles[i].peak_memory_mb = memory_mb;
+          memory_profiles[i].compile_count++;
+          return;
+        }
+    }
+
+  /* Add new profile if we have space */
+  if (memory_profile_count < MAX_MEMORY_PROFILES)
+    {
+      memory_profiles[memory_profile_count].filename = xstrdup (filename);
+      memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
+      memory_profiles[memory_profile_count].compile_count = 1;
+      memory_profile_count++;
+    }
+}
 
 /* On VMS systems, include special VMS functions.  */
 
