@@ -1824,24 +1824,27 @@ memory_monitor_thread_func (void *arg)
                                                             while (strncmp (strip_ptr, "../", 3) == 0)
                                                               strip_ptr += 3;
 
-                                                            debug_write ("[MEMORY] After stripping ../: %s\n", strip_ptr);
-
-                                                            debug_write ("[MEMORY] EARLY RECORD: %s peaked at %lu kB (still compiling)\n",
-                                                                        strip_ptr, rss_kb);
-                                                            record_file_memory_usage (strip_ptr, rss_kb / 1024);
-                                                            goto found_filename;
+                                                            /* Store the filename in the child struct for continuous updates */
+                                                            if (!c->source_file)
+                                                              {
+                                                                c->source_file = xstrdup (strip_ptr);
+                                                                debug_write ("[MEMORY] Extracted source file for child %d: %s\n",
+                                                                            (int)c->pid, c->source_file);
+                                                              }
                                                           }
                                                       }
                                                   }
                                               }
-found_filename:
-                                            ;
                                           }
                                         else if (rss_kb > 102400 && rss_kb > old_peak + 50000)  /* Debug only for significant increases >50MB */
                                           {
                                             debug_write ("[MEMORY] Child %d descendant PID %d now at: %lu kB\n",
                                                         (int)c->pid, (int)pid, rss_kb);
                                           }
+
+                                        /* Update the recorded memory usage if we have a source file */
+                                        if (c->source_file && rss_kb >= 102400)
+                                          record_file_memory_usage (c->source_file, rss_kb / 1024);
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
                                   }

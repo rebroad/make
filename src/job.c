@@ -1242,6 +1242,10 @@ free_child (struct child *child)
   if (handling_fatal_signal) /* Don't bother free'ing if about to die.  */
     return;
 
+  /* Free memory tracking data */
+  if (child->source_file)
+    free (child->source_file);
+
   if (child->command_lines != 0)
     {
       unsigned int i;
@@ -1568,6 +1572,7 @@ start_job_command (struct child *child)
 
       /* Initialize memory tracking for this compilation */
       child->peak_memory_kb = 0;
+      child->source_file = NULL;
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
