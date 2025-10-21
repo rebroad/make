@@ -1567,8 +1567,8 @@ memory_monitor_thread_func (void *arg)
           delay_ms = (iteration_start.tv_sec - last_iteration.tv_sec) * 1000 +
                      (iteration_start.tv_usec - last_iteration.tv_usec) / 1000;
 
-          /* If we're delayed >500ms, system is already struggling! */
-          if (delay_ms > 500)
+          /* If we're delayed >120ms (20% over 100ms interval), system is already struggling! */
+          if (delay_ms > 120)
             {
               /* Dynamically lower thresholds - we're already in trouble! */
               get_memory_stats (&mem_percent_temp, &free_mb_temp);
@@ -1686,6 +1686,13 @@ memory_monitor_thread_func (void *arg)
               }
           }
       }
+
+      /* Save memory profiles if they've been updated */
+      if (memory_profiles_dirty)
+        {
+          save_memory_profiles ();
+          memory_profiles_dirty = 0;
+        }
 
       /* Debug marker B */
 #if DEBUG_MEMORY_MONITOR
@@ -1886,7 +1893,7 @@ memory_monitor_thread_func (void *arg)
               job_slots = desired_procs;
 
               clear_status_line ();
-              debug_write ("\n[ADJUSTED -j] %u -> %u (memory: %luMB, %u%%)\n",
+              debug_write ("[ADJUSTED -j] %u -> %u (memory: %luMB, %u%%)\n",
                           current_parallelism, desired_procs, free_mb, mem_percent);
               last_job_adjustment = now;
             }

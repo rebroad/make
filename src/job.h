@@ -93,11 +93,12 @@ pid_t exec_command (char **argv, char **envp);
 void unblock_all_sigs (void);
 
 extern unsigned int job_slots_used;
-extern unsigned int jobs_started_total;
-extern unsigned int jobs_ended_total;
+extern volatile unsigned int jobs_started_total;
+extern volatile unsigned int jobs_ended_total;
 extern unsigned int jobserver_tokens;
 
 /* Memory profiling per file */
+extern volatile unsigned int memory_profiles_dirty;  /* Set to 1 when profiles need saving */
 void load_memory_profiles (void);
 void save_memory_profiles (void);
 unsigned long get_file_memory_requirement (const char *filename);
