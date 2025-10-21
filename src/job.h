@@ -66,6 +66,7 @@ struct child
 
     /* Memory tracking for this compilation */
     volatile unsigned long peak_memory_kb;   /* Peak RSS memory used by this process */
+    char *source_file;                       /* Source file being compiled (for memory tracking) */
   };
 
 extern struct child *children;
