@@ -1593,10 +1593,10 @@ memory_monitor_thread_func (void *arg)
                                   free_mb_temp, job_slots_used);
                       fflush (stderr);
 
-                      /* Kill all child processes */
+                      /* Kill all NON-RECURSIVE child processes (don't kill sub-makes) */
                       for (c = children; c != 0; c = c->next)
                         {
-                          if (c->pid > 0)
+                          if (c->pid > 0 && !c->recursive)
                             {
                               kill (c->pid, SIGTERM);
                               killed_count++;
