@@ -1368,11 +1368,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       last_count_time = current_time;
     }
 
-  if (jobs_paused)
-    snprintf (status, sizeof(status), "%s%s %s %u%% (%luMB) -j%u ⏸PAUSED%s",
-              spinner, bar, white, mem_percent, free_mb, display_slots, reset);
-  else
-    snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
+  snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
               spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
               green, display_slots, reset, gray, cached_descendants, reset);
 
