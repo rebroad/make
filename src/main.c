@@ -1519,6 +1519,14 @@ memory_monitor_thread_func (void *arg)
   static int iteration_count = 0;
   static unsigned int last_jobs_started_total = 0;
   static unsigned int last_jobs_ended_total = 0;
+
+  /* Map descendant PIDs to source files */
+#define MAX_TRACKED_DESCENDANTS 1000
+  static struct {
+    pid_t pid;
+    char *source_file;
+  } descendant_files[MAX_TRACKED_DESCENDANTS];
+  static int descendant_count = 0;
   unsigned int jobs_started_since_last_trajectory;
   unsigned int jobs_ended_since_last_trajectory;
   unsigned int old_slots;
@@ -1681,6 +1689,9 @@ memory_monitor_thread_func (void *arg)
 
                 pid = atoi (entry->d_name);
 
+                /* Check if this PID is in our tracking list - if so, it still exists */
+                /* (we'll use this later to clean up dead PIDs) */
+
                 /* Read this process's status */
                 snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)pid);
                 stat_file = fopen (stat_path, "r");
@@ -1715,8 +1726,8 @@ memory_monitor_thread_func (void *arg)
                                         unsigned long old_peak = c->peak_memory_kb;
                                         c->peak_memory_kb = rss_kb;
 
-                                        /* If this is the first time we see significant memory (>100MB), record it NOW */
-                                        if (old_peak < 102400 && rss_kb >= 102400)
+                                        /* If this is the first time we see significant memory (>10MB), extract filename */
+                                        if (old_peak < 10240 && rss_kb >= 10240)
                                           {
                                             char cmdline_path[512];
                                             FILE *cmdline_file;
@@ -1742,8 +1753,7 @@ memory_monitor_thread_func (void *arg)
                                                 if (cmdline_len > 0)
                                                   {
                                                     /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-                                                    ssize_t j;
-                                                    for (j = 0; j < cmdline_len - 1; j++)
+                                                    for (ssize_t j = 0; j < cmdline_len - 1; j++)
                                                       if (cmdline_buf[j] == '\0')
                                                         cmdline_buf[j] = ' ';
                                                     cmdline_buf[cmdline_len] = '\0';
@@ -1824,27 +1834,54 @@ memory_monitor_thread_func (void *arg)
                                                             while (strncmp (strip_ptr, "../", 3) == 0)
                                                               strip_ptr += 3;
 
-                                                            /* Store the filename in the child struct for continuous updates */
-                                                            if (!c->source_file)
+                                                            /* Store the filename mapped to THIS descendant PID */
+                                                            if (descendant_count < MAX_TRACKED_DESCENDANTS)
                                                               {
-                                                                c->source_file = xstrdup (strip_ptr);
-                                                                debug_write ("[MEMORY] Extracted source file for child %d: %s\n",
-                                                                            (int)c->pid, c->source_file);
+                                                                int found = 0;
+
+                                                                /* Check if already tracked */
+                                                                for (int k = 0; k < descendant_count; k++)
+                                                                  {
+                                                                    if (descendant_files[k].pid == pid)
+                                                                      {
+                                                                        found = 1;
+                                                                        break;
+                                                                      }
+                                                                  }
+
+                                                                if (!found)
+                                                                  {
+                                                                    descendant_files[descendant_count].pid = pid;
+                                                                    descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
+                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s\n",
+                                                                                (int)pid, strip_ptr);
+                                                                    descendant_count++;
+                                                                  }
                                                               }
                                                           }
                                                       }
                                                   }
                                               }
                                           }
-                                        else if (rss_kb > 102400 && rss_kb > old_peak + 50000)  /* Debug only for significant increases >50MB */
+                                        else if (rss_kb > 10240 && rss_kb > old_peak + 50000)  /* Debug only for significant increases >50MB */
                                           {
                                             debug_write ("[MEMORY] Child %d descendant PID %d now at: %lu kB\n",
                                                         (int)c->pid, (int)pid, rss_kb);
                                           }
 
-                                        /* Update the recorded memory usage if we have a source file */
-                                        if (c->source_file && rss_kb >= 102400)
-                                          record_file_memory_usage (c->source_file, rss_kb / 1024);
+                                        /* Update the recorded memory usage by looking up the source file for THIS descendant PID */
+                                        if (rss_kb >= 10240)
+                                          {
+                                            int j;
+                                            for (j = 0; j < descendant_count; j++)
+                                              {
+                                                if (descendant_files[j].pid == pid)
+                                                  {
+                                                    record_file_memory_usage (descendant_files[j].source_file, rss_kb / 1024);
+                                                    break;
+                                                  }
+                                              }
+                                          }
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
                                   }
