@@ -1571,96 +1571,46 @@ start_job_command (struct child *child)
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       {
-        const char *predicted_source = NULL;
         unsigned long required_mb = 0;
         unsigned int mem_percent;
         unsigned long free_mb;
-        int i;
 
-        /* Debug: print argv to see what we're working with */
-        fprintf (stderr, "[PREDICT-DEBUG] BEFORE fork, argv has %d elements:\n",
-                (argv[1] == NULL ? 1 : (argv[2] == NULL ? 2 : 3)));
-        for (i = 0; argv[i] != NULL && i < 3; i++)
+        /* Check if this is an "echo Compiling ..." command */
+        if (argv[0] && argv[1] && argv[2] &&
+            strcmp (argv[0], "echo") == 0 &&
+            strcmp (argv[1], "Compiling") == 0)
           {
-            size_t len = strlen (argv[i]);
-            if (len > 200)
-              fprintf (stderr, "[PREDICT-DEBUG]   argv[%d] = %.200s... (length=%zu)\n", i, argv[i], len);
-            else
-              fprintf (stderr, "[PREDICT-DEBUG]   argv[%d] = %s\n", i, argv[i]);
-          }
-        fflush (stderr);
+            /* Extract filename from "Compiling src/foo/bar.cpp..." */
+            const char *filename = argv[2];
+            char *dot_pos;
 
-        /* Try to extract source file from command */
-        for (i = 0; argv[i] != NULL; i++)
-          {
-            const char *arg = argv[i];
-            const char *ptr = arg;
-
-            /* Look for .cpp/.cc/.c in the argument string */
-            while (*ptr)
+            /* Remove trailing "..." if present */
+            dot_pos = strstr (filename, "...");
+            if (dot_pos)
               {
-                if ((strncmp (ptr, ".cpp", 4) == 0 && (ptr[4] == '\0' || ptr[4] == ' ')) ||
-                    (strncmp (ptr, ".cc", 3) == 0 && (ptr[3] == '\0' || ptr[3] == ' ')) ||
-                    (strncmp (ptr, ".c", 2) == 0 && (ptr[2] == '\0' || ptr[2] == ' ')))
-                  {
-                    /* Found a source file, backtrack to get full path */
-                    const char *start = ptr;
-                    while (start > arg && start[-1] != ' ')
-                      start--;
-
-                    /* Check if this looks like a file path (contains /) */
-                    if (strchr (start, '/'))
-                      {
-                        char temp[1000];
-                        const char *end;
-                        size_t len;
-                        const char *final_path;
-
-                        end = ptr;
-                        while (*end && *end != ' ')
-                          end++;
-
-                        len = end - start;
-                        if (len < sizeof(temp))
-                          {
-                            memcpy (temp, start, len);
-                            temp[len] = '\0';
-
-                            /* Strip leading ../ */
-                            final_path = temp;
-                            while (strncmp (final_path, "../", 3) == 0)
-                              final_path += 3;
-
-                            predicted_source = final_path;
-                            break;
-                          }
-                      }
-                  }
-                ptr++;
+                size_t len = dot_pos - filename;
+                char *clean_filename = alloca (len + 1);
+                memcpy (clean_filename, filename, len);
+                clean_filename[len] = '\0';
+                filename = clean_filename;
               }
-            if (predicted_source)
-              break;
-          }
 
-        /* If we found a source file, check memory requirements */
-        if (predicted_source)
-          {
-            required_mb = get_file_memory_requirement (predicted_source);
+            /* Look up memory requirement */
+            required_mb = get_file_memory_requirement (filename);
             if (required_mb > 0)
               {
                 get_memory_stats (&mem_percent, &free_mb);
-                fprintf (stderr, "[PREDICT] File %s needs %lu MB, have %lu MB free\n",
-                        predicted_source, required_mb, free_mb);
-                fflush (stderr);
-
-                /* If we don't have enough memory, delay this compilation */
                 if (required_mb > free_mb)
                   {
-                    fprintf (stderr, "[PREDICT] INSUFFICIENT MEMORY for %s (need %lu MB, have %lu MB) - job deferred\n",
-                            predicted_source, required_mb, free_mb);
-                    fflush (stderr);
-                    /* TODO: Implement deferral mechanism - for now just warn */
+                    fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free - WAITING\n",
+                            filename, required_mb, free_mb);
                   }
+                else
+                  {
+                    fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free - OK\n",
+                            filename, required_mb, free_mb);
+                  }
+                fflush (stderr);
               }
           }
       }
