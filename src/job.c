@@ -1156,10 +1156,10 @@ reap_children (int block, int err)
                                   filename[len] = '\0';
 
                                   memory_mb = c->peak_memory_kb / 1024;
-                                  fprintf (stderr, "[MEMORY] Recording %s: peak_kb=%lu -> %luMB\n",
+                                  fprintf (stderr, "[MEMORY] Recording %s: peak_kb=%lu -> %luMB (from command_lines)\n",
                                           filename, c->peak_memory_kb, memory_mb);
                                   fflush (stderr);
-                                  record_file_memory_usage (filename, memory_mb);
+                                  record_file_memory_usage (filename, memory_mb, 1);  /* final=1, child exited */
                                   break;
                                 }
                             }
@@ -4098,8 +4098,11 @@ get_file_memory_requirement (const char *filename)
   return 0;
 }
 
+/* Record memory usage for a file
+   final=0: During compilation (only update if new_peak > old_peak)
+   final=1: On child exit (always update with measured value) */
 void
-record_file_memory_usage (const char *filename, unsigned long memory_mb)
+record_file_memory_usage (const char *filename, unsigned long memory_mb, int final)
 {
   unsigned int i;
   time_t now;
@@ -4114,18 +4117,16 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
     {
       if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filename) == 0)
         {
-          /* Update if this is a new peak */
-          if (memory_mb > memory_profiles[i].peak_memory_mb)
+          if (memory_mb > memory_profiles[i].peak_memory_mb ||
+              (final && memory_mb != memory_profiles[i].peak_memory_mb))
             {
-              fprintf (stderr, "[MEMORY] Updated peak for %s: %lu -> %luMB\n",
-                      filename, memory_profiles[i].peak_memory_mb, memory_mb);
+              fprintf (stderr, "[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
+                          final ? "final " : "", filename, memory_profiles[i].peak_memory_mb, memory_mb);
               fflush (stderr);
               memory_profiles[i].peak_memory_mb = memory_mb;
             }
           memory_profiles[i].last_used = now;
           memory_profiles_dirty = 1;  /* Mark for saving */
-          //fprintf (stderr, "[MEMORY] Set dirty flag (update), profile_count=%u\n", memory_profile_count);
-          //fflush (stderr);
           return;
         }
     }
@@ -4138,7 +4139,7 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb)
       memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
       memory_profiles_dirty = 1;  /* Mark for saving */
-      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u, dirty=1\n",
+      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
               filename, memory_mb, memory_profile_count);
       fflush (stderr);
     }
