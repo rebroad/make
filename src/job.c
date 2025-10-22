@@ -259,10 +259,11 @@ static unsigned int memory_profile_count = 0;
 /* Memory usage statistics for estimating unknown files */
 static struct {
   unsigned long min_mb_per_kb;    /* Minimum MB per KB of source file */
-  unsigned long avg_mb_per_kb;    /* Average MB per KB of source file */
+  unsigned long avg_mb_per_kb;    /* Average (mean) MB per KB of source file */
+  unsigned long median_mb_per_kb; /* Median MB per KB of source file */
   unsigned long max_mb_per_kb;    /* Maximum MB per KB of source file */
   int valid;                       /* Whether statistics are valid */
-} memory_stats = {0, 0, 0, 0};
+} memory_stats = {0, 0, 0, 0, 0};
 
 /* Forward declaration */
 static void calculate_memory_stats (void);
@@ -4069,6 +4070,17 @@ load_memory_profiles (void)
   calculate_memory_stats ();
 }
 
+/* Comparison function for qsort */
+static int
+compare_unsigned_long (const void *a, const void *b)
+{
+  unsigned long val_a = *(const unsigned long *)a;
+  unsigned long val_b = *(const unsigned long *)b;
+  if (val_a < val_b) return -1;
+  if (val_a > val_b) return 1;
+  return 0;
+}
+
 /* Calculate memory usage statistics from known profiles */
 static void
 calculate_memory_stats (void)
@@ -4078,6 +4090,12 @@ calculate_memory_stats (void)
   unsigned long min_val = ~0UL;
   unsigned long max_val = 0;
   unsigned int valid_count = 0;
+  unsigned long *ratios;
+
+  /* Allocate array for median calculation */
+  ratios = (unsigned long *)malloc (memory_profile_count * sizeof(unsigned long));
+  if (!ratios)
+    return;
 
   for (i = 0; i < memory_profile_count; i++)
     {
@@ -4093,6 +4111,7 @@ calculate_memory_stats (void)
           /* Calculate MB per KB ratio */
           mb_per_kb = memory_profiles[i].peak_memory_mb * 1000 / file_kb;
 
+          ratios[valid_count] = mb_per_kb;
           total_mb_per_kb += mb_per_kb;
           if (mb_per_kb < min_val) min_val = mb_per_kb;
           if (mb_per_kb > max_val) max_val = mb_per_kb;
@@ -4102,15 +4121,22 @@ calculate_memory_stats (void)
 
   if (valid_count > 0)
     {
+      /* Sort for median calculation */
+      qsort (ratios, valid_count, sizeof(unsigned long), compare_unsigned_long);
+
       memory_stats.min_mb_per_kb = min_val;
       memory_stats.avg_mb_per_kb = total_mb_per_kb / valid_count;
+      memory_stats.median_mb_per_kb = ratios[valid_count / 2];  /* Middle value */
       memory_stats.max_mb_per_kb = max_val;
       memory_stats.valid = 1;
 
-      fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu avg=%lu max=%lu (MB per 1000KB)\n",
-              valid_count, memory_stats.min_mb_per_kb, memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
+      fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu median=%lu avg=%lu max=%lu (MB per 1000KB)\n",
+              valid_count, memory_stats.min_mb_per_kb, memory_stats.median_mb_per_kb,
+              memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
       fflush (stderr);
     }
+
+  free (ratios);
 }
 
 /* Save memory profiles to cache file */
@@ -4172,11 +4198,11 @@ get_file_memory_requirement (const char *filename)
 
       if (file_kb == 0) file_kb = 1;
 
-      /* Use average ratio for estimation */
-      estimated_mb = (file_kb * memory_stats.avg_mb_per_kb) / 1000;
+      /* Use median ratio for estimation (more robust than mean) */
+      estimated_mb = (file_kb * memory_stats.median_mb_per_kb) / 1000;
 
-      fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu ratio = ~%luMB (no history)\n",
-              filename, file_kb, memory_stats.avg_mb_per_kb, estimated_mb);
+      fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu median ratio = ~%luMB (no history)\n",
+              filename, file_kb, memory_stats.median_mb_per_kb, estimated_mb);
       fflush (stderr);
 
       return estimated_mb;
