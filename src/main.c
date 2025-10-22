@@ -1499,7 +1499,6 @@ memory_monitor_thread_func (void *arg)
 #endif
   long mb_per_second;
   long projected_free_in_5s;
-  int i;
   long total_mb_change;
   long total_time;
   int valid_samples;
@@ -1906,7 +1905,7 @@ memory_monitor_thread_func (void *arg)
                                           {
                                             descendant_files[descendant_idx].peak_kb = rss_kb;
                                             if (rss_kb >= 10240)
-                                              record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024);
+                                              record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024, 0);
                                           }
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
@@ -1936,6 +1935,45 @@ next_proc:
                 ;  /* Label target */
               }
             closedir (proc_dir);
+          }
+      }
+
+      /* Check for exited descendants and record their final memory */
+      {
+        for (int i = 0; i < descendant_count; i++)
+          {
+            char stat_path[512];
+            FILE *stat_file;
+
+            /* Check if this PID still exists */
+            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)descendant_files[i].pid);
+            stat_file = fopen (stat_path, "r");
+            if (!stat_file)
+              {
+                /* Process exited - record final memory */
+                if (descendant_files[i].peak_kb > 10240 && descendant_files[i].source_file)
+                  {
+                    debug_write ("[MEMORY] Descendant PID %d exited, final peak for %s: %luMB\n",
+                                (int)descendant_files[i].pid,
+                                descendant_files[i].source_file,
+                                descendant_files[i].peak_kb / 1024);
+                    record_file_memory_usage (descendant_files[i].source_file,
+                                            descendant_files[i].peak_kb / 1024,
+                                            1);  /* final=1 */
+                  }
+
+                /* Remove this entry by shifting remaining entries */
+                free (descendant_files[i].source_file);
+                if (i < descendant_count - 1)
+                  memmove (&descendant_files[i], &descendant_files[i + 1],
+                          (descendant_count - i - 1) * sizeof(descendant_files[0]));
+                descendant_count--;
+                i--;  /* Check this index again since we shifted */
+              }
+            else
+              {
+                fclose (stat_file);
+              }
           }
       }
 
@@ -1996,7 +2034,7 @@ next_proc:
           newest_idx = (sample_index - 1 + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
 
           /* Compare each sample with the newest to get rate */
-          for (i = 0; i < samples_collected; i++)
+          for (int i = 0; i < samples_collected; i++)
             {
               idx = (sample_index - 1 - i + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
               if (idx == newest_idx && i == 0)

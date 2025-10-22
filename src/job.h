@@ -103,4 +103,4 @@ extern volatile unsigned int memory_profiles_dirty;  /* Set to 1 when profiles n
 void load_memory_profiles (void);
 void save_memory_profiles (void);
 unsigned long get_file_memory_requirement (const char *filename);
-void record_file_memory_usage (const char *filename, unsigned long memory_mb);
+void record_file_memory_usage (const char *filename, unsigned long memory_mb, int final);
