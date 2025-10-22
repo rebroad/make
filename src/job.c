@@ -1100,7 +1100,10 @@ reap_children (int block, int err)
           DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
 
-          /* Record peak memory usage for the actual source file being compiled */
+          /* Note: Memory tracking is now done in main.c via descendant process tracking.
+             This old command_lines-based extraction is kept for reference but not used. */
+#if 0
+          /* OLD CODE: Extract source filename from command line (look for .cpp, .c, .cc files) */
           fprintf (stderr, "[MEMORY] Child exited: pid=%d, peak_kb=%lu, has_cmdlines=%d\n",
                   (int)c->pid, c->peak_memory_kb, (c->command_lines != NULL));
           fflush (stderr);
@@ -1111,7 +1114,6 @@ reap_children (int block, int err)
             }
           if (c->peak_memory_kb > 0 && c->command_lines)
             {
-              /* Extract source filename from command line (look for .cpp, .c, .cc files) */
               unsigned int cmd_idx;
               fprintf (stderr, "[MEMORY] Attempting filename extraction, command_line count=%u\n", c->command_line);
               fflush (stderr);
@@ -1168,6 +1170,7 @@ reap_children (int block, int err)
                     }
                 }
             }
+#endif /* 0 - Old memory tracking code */
         }
 
       /* There is now another slot open.  */
