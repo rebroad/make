@@ -256,6 +256,17 @@ struct file_memory_profile
 static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
 static unsigned int memory_profile_count = 0;
 
+/* Memory usage statistics for estimating unknown files */
+static struct {
+  unsigned long min_mb_per_kb;    /* Minimum MB per KB of source file */
+  unsigned long avg_mb_per_kb;    /* Average MB per KB of source file */
+  unsigned long max_mb_per_kb;    /* Maximum MB per KB of source file */
+  int valid;                       /* Whether statistics are valid */
+} memory_stats = {0, 0, 0, 0};
+
+/* Forward declaration */
+static void calculate_memory_stats (void);
+
 /* Nonzero if the 'good' standard input is in use.  */
 
 static int good_stdin_used = 0;
@@ -1600,9 +1611,10 @@ start_job_command (struct child *child)
 
             /* Look up memory requirement */
             required_mb = get_file_memory_requirement (filename);
+            get_memory_stats (&mem_percent, &free_mb);
+
             if (required_mb > 0)
               {
-                get_memory_stats (&mem_percent, &free_mb);
                 if (required_mb > free_mb)
                   {
                     fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free - WAITING\n",
@@ -1613,6 +1625,13 @@ start_job_command (struct child *child)
                     fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free - OK\n",
                             filename, required_mb, free_mb);
                   }
+                fflush (stderr);
+              }
+            else
+              {
+                /* No data available */
+                fprintf (stderr, "[PREDICT] %s: no data yet, %luMB free\n",
+                        filename, free_mb);
                 fflush (stderr);
               }
           }
@@ -4045,6 +4064,53 @@ load_memory_profiles (void)
     }
 
   fclose (f);
+
+  /* Calculate statistics for estimating unknown files */
+  calculate_memory_stats ();
+}
+
+/* Calculate memory usage statistics from known profiles */
+static void
+calculate_memory_stats (void)
+{
+  unsigned int i;
+  unsigned long total_mb_per_kb = 0;
+  unsigned long min_val = ~0UL;
+  unsigned long max_val = 0;
+  unsigned int valid_count = 0;
+
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      struct stat st;
+      unsigned long mb_per_kb;
+
+      /* Get file size */
+      if (stat (memory_profiles[i].filename, &st) == 0 && st.st_size > 0)
+        {
+          unsigned long file_kb = st.st_size / 1024;
+          if (file_kb == 0) file_kb = 1;  /* Avoid division by zero */
+
+          /* Calculate MB per KB ratio */
+          mb_per_kb = memory_profiles[i].peak_memory_mb * 1000 / file_kb;
+
+          total_mb_per_kb += mb_per_kb;
+          if (mb_per_kb < min_val) min_val = mb_per_kb;
+          if (mb_per_kb > max_val) max_val = mb_per_kb;
+          valid_count++;
+        }
+    }
+
+  if (valid_count > 0)
+    {
+      memory_stats.min_mb_per_kb = min_val;
+      memory_stats.avg_mb_per_kb = total_mb_per_kb / valid_count;
+      memory_stats.max_mb_per_kb = max_val;
+      memory_stats.valid = 1;
+
+      fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu avg=%lu max=%lu (MB per 1000KB)\n",
+              valid_count, memory_stats.min_mb_per_kb, memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
+      fflush (stderr);
+    }
 }
 
 /* Save memory profiles to cache file */
@@ -4086,6 +4152,7 @@ unsigned long
 get_file_memory_requirement (const char *filename)
 {
   unsigned int i;
+  struct stat st;
 
   if (!filename)
     return 0;
@@ -4097,7 +4164,25 @@ get_file_memory_requirement (const char *filename)
         return memory_profiles[i].peak_memory_mb;
     }
 
-  /* No profile yet, return default estimate */
+  /* No profile yet - estimate based on file size and statistics */
+  if (memory_stats.valid && stat (filename, &st) == 0 && st.st_size > 0)
+    {
+      unsigned long file_kb = st.st_size / 1024;
+      unsigned long estimated_mb;
+
+      if (file_kb == 0) file_kb = 1;
+
+      /* Use average ratio for estimation */
+      estimated_mb = (file_kb * memory_stats.avg_mb_per_kb) / 1000;
+
+      fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu ratio = ~%luMB (no history)\n",
+              filename, file_kb, memory_stats.avg_mb_per_kb, estimated_mb);
+      fflush (stderr);
+
+      return estimated_mb;
+    }
+
+  /* No statistics yet, return 0 */
   return 0;
 }
 
@@ -4145,6 +4230,10 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb, int fin
       fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
               filename, memory_mb, memory_profile_count);
       fflush (stderr);
+
+      /* New file added, recalculate statistics */
+      if (final)
+        calculate_memory_stats ();
     }
 }
 
