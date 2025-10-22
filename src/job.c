@@ -1568,19 +1568,27 @@ start_job_command (struct child *child)
 
 #else
 
-      jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
-
-      /* Initialize memory tracking for this compilation */
-      child->peak_memory_kb = 0;
-      child->source_file = NULL;
-
       /* Predictive memory check: extract source file and check if we have enough memory */
+      /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       {
         const char *predicted_source = NULL;
         unsigned long required_mb = 0;
         unsigned int mem_percent;
         unsigned long free_mb;
         int i;
+
+        /* Debug: print argv to see what we're working with */
+        fprintf (stderr, "[PREDICT-DEBUG] BEFORE fork, argv has %d elements:\n",
+                (argv[1] == NULL ? 1 : (argv[2] == NULL ? 2 : 3)));
+        for (i = 0; argv[i] != NULL && i < 3; i++)
+          {
+            size_t len = strlen (argv[i]);
+            if (len > 200)
+              fprintf (stderr, "[PREDICT-DEBUG]   argv[%d] = %.200s... (length=%zu)\n", i, argv[i], len);
+            else
+              fprintf (stderr, "[PREDICT-DEBUG]   argv[%d] = %s\n", i, argv[i]);
+          }
+        fflush (stderr);
 
         /* Try to extract source file from command */
         for (i = 0; argv[i] != NULL; i++)
@@ -1656,6 +1664,13 @@ start_job_command (struct child *child)
               }
           }
       }
+
+      /* Now actually fork the child */
+      jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
+
+      /* Initialize memory tracking for this compilation */
+      child->peak_memory_kb = 0;
+      child->source_file = NULL;
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
