@@ -1553,8 +1553,8 @@ memory_monitor_thread_func (void *arg)
   static struct {
     pid_t pid;
     char *source_file;
-    unsigned long peak_kb;       /* This descendant's peak from history */
-    unsigned long current_kb;    /* This descendant's current actual usage */
+    unsigned long peak_mb;       /* This descendant's predicted peak from history (MB) */
+    unsigned long current_mb;    /* This descendant's current actual usage (MB) */
   } descendant_files[MAX_TRACKED_DESCENDANTS];
   static int descendant_count = 0;
 
@@ -1569,13 +1569,13 @@ memory_monitor_thread_func (void *arg)
 
     for (i = 0; i < descendant_count; i++)
       {
-        total_predicted += descendant_files[i].peak_kb;
-        total_current += descendant_files[i].current_kb;
+        total_predicted += descendant_files[i].peak_mb;
+        total_current += descendant_files[i].current_mb;
       }
 
-    /* Return how much more memory we expect to be used */
+    /* Return how much more memory we expect to be used (in KB for internal use) */
     if (total_predicted > total_current)
-      return total_predicted - total_current;
+      return (total_predicted - total_current) * 1024;
     return 0;
   }
 
@@ -1784,7 +1784,7 @@ memory_monitor_thread_func (void *arg)
                                       {
                                         if (descendant_files[j].pid == pid)
                                           {
-                                            descendant_old_peak = descendant_files[j].peak_kb;
+                                            descendant_old_peak = descendant_files[j].peak_mb * 1024;  /* Convert to KB for comparison */
                                             descendant_idx = j;
                                             break;
                                           }
@@ -1928,11 +1928,11 @@ memory_monitor_thread_func (void *arg)
 
                                                                     descendant_files[descendant_count].pid = pid;
                                                                     descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
-                                                                    descendant_files[descendant_count].current_kb = rss_kb;
+                                                                    descendant_files[descendant_count].current_mb = rss_kb / 1024;
 
                                                                     /* Get predicted peak from history */
                                                                     predicted_peak_mb = get_file_memory_requirement (strip_ptr);
-                                                                    descendant_files[descendant_count].peak_kb = predicted_peak_mb * 1024;
+                                                                    descendant_files[descendant_count].peak_mb = predicted_peak_mb;
 
                                                                     debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %lu kB, predicted peak: %lu MB)\n",
                                                                                 (int)pid, strip_ptr, rss_kb, predicted_peak_mb);
@@ -1954,7 +1954,7 @@ memory_monitor_thread_func (void *arg)
                                                                       {
                                                                         if (descendant_files[k].pid == pid)
                                                                           {
-                                                                            descendant_files[k].current_kb = rss_kb;
+                                                                            descendant_files[k].current_mb = rss_kb / 1024;
                                                                             break;
                                                                           }
                                                                       }
@@ -1974,7 +1974,7 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            descendant_files[descendant_idx].current_kb = rss_kb;
+                                            descendant_files[descendant_idx].current_mb = rss_kb / 1024;
                                             if (rss_kb >= 10240)
                                               record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024, 0);
                                           }
@@ -2022,14 +2022,14 @@ next_proc:
             if (!stat_file)
               {
                 /* Process exited - record final memory */
-                if (descendant_files[i].peak_kb > 10240 && descendant_files[i].source_file)
+                if (descendant_files[i].current_mb > 10 && descendant_files[i].source_file)
                   {
                     debug_write ("[MEMORY] Descendant PID %d exited, final peak for %s: %luMB\n",
                                 (int)descendant_files[i].pid,
                                 descendant_files[i].source_file,
-                                descendant_files[i].peak_kb / 1024);
+                                descendant_files[i].current_mb);
                     record_file_memory_usage (descendant_files[i].source_file,
-                                            descendant_files[i].peak_kb / 1024,
+                                            descendant_files[i].current_mb,
                                             1);  /* final=1 */
                   }
 
