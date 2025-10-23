@@ -308,11 +308,11 @@ signal_all_descendant_makes (int sig)
   /* Track all our descendants */
 #define MAX_TRACKED_PIDS 1000
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
-  int descendant_count = 0;
+  int source_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[descendant_count++] = my_pid;
+  descendant_pids[source_count++] = my_pid;
 
   /* Walk /proc multiple times to find all descendants */
   for (i = 0; i < 5; i++)
@@ -338,7 +338,7 @@ signal_all_descendant_makes (int sig)
           if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
             {
               found = 0;
-              for (j = 0; j < descendant_count; j++)
+              for (j = 0; j < source_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -350,7 +350,7 @@ signal_all_descendant_makes (int sig)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < descendant_count; j++)
+                  for (j = 0; j < source_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -359,9 +359,9 @@ signal_all_descendant_makes (int sig)
                         }
                     }
 
-                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_PIDS)
                     {
-                      descendant_pids[descendant_count++] = check_pid;
+                      descendant_pids[source_count++] = check_pid;
                     }
                 }
             }
@@ -373,7 +373,7 @@ signal_all_descendant_makes (int sig)
     }
 
   /* Now signal only descendant make processes (not ourselves, not gcc) */
-  for (i = 0; i < descendant_count; i++)
+  for (i = 0; i < source_count; i++)
     {
       if (descendant_pids[i] == my_pid)
         continue;  /* Don't signal ourselves */
@@ -420,11 +420,11 @@ kill_compilation_jobs (int sig)
   /* Track all our descendants */
 #define MAX_TRACKED_PIDS 1000
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
-  int descendant_count = 0;
+  int source_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[descendant_count++] = my_pid;
+  descendant_pids[source_count++] = my_pid;
 
   /* Walk /proc multiple times to find all descendants */
   for (i = 0; i < 5; i++)
@@ -450,7 +450,7 @@ kill_compilation_jobs (int sig)
           if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
             {
               found = 0;
-              for (j = 0; j < descendant_count; j++)
+              for (j = 0; j < source_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -462,7 +462,7 @@ kill_compilation_jobs (int sig)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < descendant_count; j++)
+                  for (j = 0; j < source_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -471,9 +471,9 @@ kill_compilation_jobs (int sig)
                         }
                     }
 
-                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_PIDS)
                     {
-                      descendant_pids[descendant_count++] = check_pid;
+                      descendant_pids[source_count++] = check_pid;
                     }
                 }
             }
@@ -485,7 +485,7 @@ kill_compilation_jobs (int sig)
     }
 
   /* Now kill only compilation jobs (gcc, g++, ld, etc - NOT make!) */
-  for (i = 0; i < descendant_count; i++)
+  for (i = 0; i < source_count; i++)
     {
       if (descendant_pids[i] == my_pid)
         continue;  /* Don't kill ourselves */
@@ -531,11 +531,11 @@ count_all_descendants (void)
   /* Simple array to track PIDs we've identified as descendants */
 #define MAX_TRACKED_PIDS 1000
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
-  int descendant_count = 0;
+  int source_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[descendant_count++] = my_pid;
+  descendant_pids[source_count++] = my_pid;
 
   /* Walk /proc multiple times to catch all levels of descendants */
   for (i = 0; i < 5; i++)  /* Up to 5 levels deep should be enough */
@@ -565,7 +565,7 @@ count_all_descendants (void)
             {
               /* Check if PPID is in our descendant list */
               found = 0;
-              for (j = 0; j < descendant_count; j++)
+              for (j = 0; j < source_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -578,7 +578,7 @@ count_all_descendants (void)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < descendant_count; j++)
+                  for (j = 0; j < source_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -587,9 +587,9 @@ count_all_descendants (void)
                         }
                     }
 
-                  if (!found && descendant_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_PIDS)
                     {
-                      descendant_pids[descendant_count++] = check_pid;
+                      descendant_pids[source_count++] = check_pid;
                       count++;
                     }
                 }
@@ -1197,18 +1197,18 @@ debug_signal_handler (int sig UNUSED)
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
-  volatile int descendant_count;
+  volatile int source_count;
   volatile int memory_profiles_dirty;  /* Shared dirty flag for cross-process signaling */
   struct {
     pid_t pid;
     char file_hash[41];     /* SHA1 hex string (40 chars + null) */
     unsigned long peak_mb;
     unsigned long current_mb;
-  } descendant_files[MAX_TRACKED_DESCENDANTS];
-  pthread_mutex_t descendant_mutex;
+  } source_files[MAX_TRACKED_SOURCES];
+  pthread_mutex_t source_mutex;
 };
 
-#define MAX_TRACKED_DESCENDANTS 1000
+#define MAX_TRACKED_SOURCES 1000
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
@@ -1321,12 +1321,12 @@ init_shared_memory (void)
   if (created)
     {
       shared_data->reserved_memory_mb = 0;
-      shared_data->descendant_count = 0;
+      shared_data->source_count = 0;
       shared_data->memory_profiles_dirty = 0;
       pthread_mutexattr_t mutex_attr;
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-      pthread_mutex_init (&shared_data->descendant_mutex, &mutex_attr);
+      pthread_mutex_init (&shared_data->source_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
     }
 
@@ -1370,7 +1370,7 @@ get_imminent_memory_mb (void)
   unsigned long total_current = 0;
   unsigned long result = 0;
   int i;
-  int local_descendant_count;
+  int local_source_count;
 
   /* Initialize shared memory if not already done */
   if (shared_data == NULL)
@@ -1379,10 +1379,10 @@ get_imminent_memory_mb (void)
         return 0; /* Fallback to no imminent memory if shared memory fails */
     }
 
-  /* Thread-safe access to shared descendant data */
-  pthread_mutex_lock (&shared_data->descendant_mutex);
-  local_descendant_count = shared_data->descendant_count;
-  pthread_mutex_unlock (&shared_data->descendant_mutex);
+  /* Thread-safe access to shared source data */
+  pthread_mutex_lock (&shared_data->source_mutex);
+  local_source_count = shared_data->source_count;
+  pthread_mutex_unlock (&shared_data->source_mutex);
 
   /* Calculate imminent memory on-demand in a single loop */
   /* reserved_memory_mb = sum of peak memory for all active processes
@@ -1392,23 +1392,23 @@ get_imminent_memory_mb (void)
   fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   fprintf (stderr, "  Reserved memory (active processes): %luMB\n", shared_data->reserved_memory_mb);
 
-  if (local_descendant_count > 0 || shared_data->reserved_memory_mb > 0)
+  if (local_source_count > 0 || shared_data->reserved_memory_mb > 0)
     {
 
-      if (local_descendant_count > 0)
+      if (local_source_count > 0)
         {
-          fprintf (stderr, "  Tracked children (%d):\n", local_descendant_count);
+          fprintf (stderr, "  Tracked source files (%d):\n", local_source_count);
 
-          /* Thread-safe access to descendant data for calculation and debug output */
-          pthread_mutex_lock (&shared_data->descendant_mutex);
-          for (i = 0; i < local_descendant_count; i++)
+          /* Thread-safe access to source data for calculation and debug output */
+          pthread_mutex_lock (&shared_data->source_mutex);
+          for (i = 0; i < local_source_count; i++)
             {
-              total_current += shared_data->descendant_files[i].current_mb;
+              total_current += shared_data->source_files[i].current_mb;
               fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB\n",
-                      i, shared_data->descendant_files[i].file_hash,
-                      shared_data->descendant_files[i].current_mb, shared_data->descendant_files[i].peak_mb);
+                      i, shared_data->source_files[i].file_hash,
+                      shared_data->source_files[i].current_mb, shared_data->source_files[i].peak_mb);
             }
-          pthread_mutex_unlock (&shared_data->descendant_mutex);
+          pthread_mutex_unlock (&shared_data->source_mutex);
         }
 
       fprintf (stderr, "  Calculation: reserved=%luMB - current=%luMB = imminent=%luMB\n",
@@ -1978,16 +1978,16 @@ memory_monitor_thread_func (void *arg)
                               {
                                 if (c->pid == check_pid)
                                   {
-                                    /* Found a descendant! Track memory */
+                                    /* Found a source file compilation! Track memory */
                                     unsigned long descendant_old_peak = 0;
                                     int descendant_idx = -1;
 
-                                    /* Find this descendant's individual peak */
-                                    for (int j = 0; j < shared_data->descendant_count; j++)
+                                    /* Find this source file's individual peak */
+                                    for (int j = 0; j < shared_data->source_count; j++)
                                       {
-                                        if (shared_data->descendant_files[j].pid == pid)
+                                        if (shared_data->source_files[j].pid == pid)
                                           {
-                                            descendant_old_peak = shared_data->descendant_files[j].peak_mb * 1024;  /* Convert to KB for comparison */
+                                            descendant_old_peak = shared_data->source_files[j].peak_mb * 1024;  /* Convert to KB for comparison */
                                             descendant_idx = j;
                                             break;
                                           }
@@ -2111,14 +2111,14 @@ memory_monitor_thread_func (void *arg)
                                                               strip_ptr += 3;
 
                                                             /* Store the filename mapped to THIS descendant PID */
-                                                            if (shared_data->descendant_count < MAX_TRACKED_DESCENDANTS)
+                                                            if (shared_data->source_count < MAX_TRACKED_DESCENDANTS)
                                                               {
                                                                 int found = 0;
 
                                                                 /* Check if already tracked */
-                                                                for (int k = 0; k < shared_data->descendant_count; k++)
+                                                                for (int k = 0; k < shared_data->source_count; k++)
                                                                   {
-                                                                    if (shared_data->descendant_files[k].pid == pid)
+                                                                    if (shared_data->source_files[k].pid == pid)
                                                                       {
                                                                         found = 1;
                                                                         break;
@@ -2130,40 +2130,40 @@ memory_monitor_thread_func (void *arg)
                                                                     unsigned long predicted_peak_mb;
 
                                                                     /* Thread-safe access to shared descendant data */
-                                                                    pthread_mutex_lock (&shared_data->descendant_mutex);
-                                                                    if (shared_data->descendant_count < MAX_TRACKED_DESCENDANTS)
+                                                                    pthread_mutex_lock (&shared_data->source_mutex);
+                                                                    if (shared_data->source_count < MAX_TRACKED_DESCENDANTS)
                                                                       {
-                                                                        shared_data->descendant_files[shared_data->descendant_count].pid = pid;
-                                                                        generate_file_hash (strip_ptr, shared_data->descendant_files[shared_data->descendant_count].file_hash);
-                                                                        shared_data->descendant_files[shared_data->descendant_count].current_mb = rss_kb / 1024;
+                                                                        shared_data->source_files[shared_data->source_count].pid = pid;
+                                                                        generate_file_hash (strip_ptr, shared_data->source_files[shared_data->source_count].file_hash);
+                                                                        shared_data->source_files[shared_data->source_count].current_mb = rss_kb / 1024;
 
                                                                         /* Add hash→filename mapping (main process only) */
-                                                                        add_hash_filename_mapping (shared_data->descendant_files[shared_data->descendant_count].file_hash, strip_ptr);
+                                                                        add_hash_filename_mapping (shared_data->source_files[shared_data->source_count].file_hash, strip_ptr);
 
                                                                         /* Get predicted peak from history */
                                                                         predicted_peak_mb = get_file_memory_requirement (strip_ptr);
-                                                                        shared_data->descendant_files[shared_data->descendant_count].peak_mb = predicted_peak_mb;
+                                                                        shared_data->source_files[shared_data->source_count].peak_mb = predicted_peak_mb;
 
-                                                                        debug_write ("[MEMORY] Tracking descendant PID %d -> %s (hash: %s, current: %luMB, predicted peak: %luMB)\n",
-                                                                                    (int)pid, strip_ptr, shared_data->descendant_files[shared_data->descendant_count].file_hash, rss_kb / 1024, predicted_peak_mb);
+                                                                        debug_write ("[MEMORY] Tracking source file PID %d -> %s (hash: %s, current: %luMB, predicted peak: %luMB)\n",
+                                                                                    (int)pid, strip_ptr, shared_data->source_files[shared_data->source_count].file_hash, rss_kb / 1024, predicted_peak_mb);
 
-                                                                        shared_data->descendant_count++;
+                                                                        shared_data->source_count++;
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->descendant_mutex);
+                                                                    pthread_mutex_unlock (&shared_data->source_mutex);
                                                                   }
                                                                 else
                                                                   {
                                                                     /* Already tracked, just update current */
-                                                                    pthread_mutex_lock (&shared_data->descendant_mutex);
-                                                                    for (int k = 0; k < shared_data->descendant_count; k++)
+                                                                    pthread_mutex_lock (&shared_data->source_mutex);
+                                                                    for (int k = 0; k < shared_data->source_count; k++)
                                                                       {
-                                                                        if (shared_data->descendant_files[k].pid == pid)
+                                                                        if (shared_data->source_files[k].pid == pid)
                                                                           {
-                                                                            shared_data->descendant_files[k].current_mb = rss_kb / 1024;
+                                                                            shared_data->source_files[k].current_mb = rss_kb / 1024;
                                                                             break;
                                                                           }
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->descendant_mutex);
+                                                                    pthread_mutex_unlock (&shared_data->source_mutex);
                                                                   }
                                                               }
                                                           }
@@ -2180,11 +2180,11 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            pthread_mutex_lock (&descendant_mutex);
-                                            descendant_files[descendant_idx].current_mb = rss_kb / 1024;
-                                            pthread_mutex_unlock (&descendant_mutex);
+                                            pthread_mutex_lock (&source_mutex);
+                                            source_files[descendant_idx].current_mb = rss_kb / 1024;
+                                            pthread_mutex_unlock (&source_mutex);
                                             if (rss_kb >= 10240)
-                                              record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024, 0);
+                                              record_file_memory_usage (source_files[descendant_idx].source_file, rss_kb / 1024, 0);
                                           }
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
@@ -2219,44 +2219,44 @@ next_proc:
 
       /* Check for exited descendants and record their final memory */
       {
-        for (int i = 0; i < shared_data->descendant_count; i++)
+        for (int i = 0; i < shared_data->source_count; i++)
           {
             char stat_path[512];
             FILE *stat_file;
 
             /* Check if this PID still exists */
-            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)shared_data->descendant_files[i].pid);
+            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)shared_data->source_files[i].pid);
             stat_file = fopen (stat_path, "r");
             if (!stat_file)
               {
                 /* Process exited - record final memory and release reservation */
-                if (shared_data->descendant_files[i].current_mb > 10 && shared_data->descendant_files[i].file_hash[0])
+                if (shared_data->source_files[i].current_mb > 10 && shared_data->source_files[i].file_hash[0])
                   {
-                    debug_write ("[MEMORY] Descendant PID %d exited, final peak for hash %s: %luMB\n",
-                                (int)shared_data->descendant_files[i].pid,
-                                shared_data->descendant_files[i].file_hash,
-                                shared_data->descendant_files[i].current_mb);
+                    debug_write ("[MEMORY] Compilation PID %d exited, final peak for hash %s: %luMB\n",
+                                (int)shared_data->source_files[i].pid,
+                                shared_data->source_files[i].file_hash,
+                                shared_data->source_files[i].current_mb);
 
                     /* Release the reserved memory now that process has exited */
-                    if (shared_data->descendant_files[i].peak_mb > 0)
+                    if (shared_data->source_files[i].peak_mb > 0)
                       {
-                        release_reserved_memory_mb (shared_data->descendant_files[i].peak_mb);
+                        release_reserved_memory_mb (shared_data->source_files[i].peak_mb);
                         debug_write ("[MEMORY] Released %luMB reservation for hash %s (process exited)\n",
-                                    shared_data->descendant_files[i].peak_mb, shared_data->descendant_files[i].file_hash);
+                                    shared_data->source_files[i].peak_mb, shared_data->source_files[i].file_hash);
                       }
                     /* Get filename from hash for disk operations */
-                    const char *filename = get_filename_from_hash (shared_data->descendant_files[i].file_hash);
+                    const char *filename = get_filename_from_hash (shared_data->source_files[i].file_hash);
                     if (filename)
                       {
-                        record_file_memory_usage (filename, shared_data->descendant_files[i].current_mb, 1);  /* final=1 */
+                        record_file_memory_usage (filename, shared_data->source_files[i].current_mb, 1);  /* final=1 */
                       }
                   }
 
                 /* Remove this entry by shifting remaining entries */
-                if (i < shared_data->descendant_count - 1)
-                  memmove (&shared_data->descendant_files[i], &shared_data->descendant_files[i + 1],
-                          (shared_data->descendant_count - i - 1) * sizeof(shared_data->descendant_files[0]));
-                shared_data->descendant_count--;
+                if (i < shared_data->source_count - 1)
+                  memmove (&shared_data->source_files[i], &shared_data->source_files[i + 1],
+                          (shared_data->source_count - i - 1) * sizeof(shared_data->source_files[0]));
+                shared_data->source_count--;
                 i--;  /* Check this index again since we shifted */
               }
             else
