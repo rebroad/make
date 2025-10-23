@@ -1224,7 +1224,7 @@ get_imminent_memory_mb (void)
      We need to subtract current usage to get imminent (remaining) memory */
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
-  fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT:\n");
+  fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_memory_mb);
 
   if (local_descendant_count > 0 || reserved_memory_mb > 0)
@@ -2832,8 +2832,7 @@ main (int argc, char **argv, char **envp)
   unsigned int syncing = 0;
   int argv_slots;  /* The jobslot info we got from our parent process.  */
 
-  /* Load memory profiles from previous builds */
-  load_memory_profiles ();
+  /* Memory profiles will be loaded lazily when needed for PREDICT decisions */
 #ifdef WINDOWS32
   const char *unix_path = NULL;
   const char *windows32_path = NULL;

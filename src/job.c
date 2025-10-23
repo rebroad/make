@@ -266,7 +266,7 @@ static struct {
 } memory_stats = {0, 0, 0, 0, 0};
 
 /* Forward declaration */
-static void calculate_memory_stats (void);
+static void calculate_memory_stats (const char *caller_file, int caller_line);
 
 /* Nonzero if the 'good' standard input is in use.  */
 
@@ -4089,10 +4089,11 @@ dup2 (int old, int new)
 #endif /* !HAVE_DUP2 && !_AMIGA */
 
 /* Memory profiling functions */
+static int memory_profiles_loaded = 0;
 
 /* Load memory profiles from cache file */
 void
-load_memory_profiles (void)
+load_memory_profiles (const char *caller_file, int caller_line)
 {
   FILE *f;
   char line[4096];
@@ -4100,9 +4101,21 @@ load_memory_profiles (void)
   unsigned long peak_mb;
   long timestamp;
 
+  fprintf (stderr, "[DEBUG] load_memory_profiles() called from %s:%d (PID=%d)\n", caller_file, caller_line, getpid());
+
+  /* Check if already loaded */
+  if (memory_profiles_loaded)
+    {
+      fprintf (stderr, "[DEBUG] Memory profiles already loaded, skipping\n");
+      return;
+    }
+
   f = fopen (".make_memory_cache", "r");
   if (!f)
-    return; /* No cache yet */
+    {
+      memory_profiles_loaded = 1; /* Mark as loaded even if no cache */
+      return; /* No cache yet */
+    }
 
   while (fgets (line, sizeof(line), f))
     {
@@ -4121,7 +4134,10 @@ load_memory_profiles (void)
   fclose (f);
 
   /* Calculate statistics for estimating unknown files */
-  calculate_memory_stats ();
+  calculate_memory_stats (__FILE__, __LINE__);
+
+  /* Mark as loaded */
+  memory_profiles_loaded = 1;
 }
 
 /* Comparison function for qsort */
@@ -4137,7 +4153,7 @@ compare_unsigned_long (const void *a, const void *b)
 
 /* Calculate memory usage statistics from known profiles */
 static void
-calculate_memory_stats (void)
+calculate_memory_stats (const char *caller_file, int caller_line)
 {
   unsigned int i;
   unsigned long total_mb_per_kb = 0;
@@ -4145,6 +4161,8 @@ calculate_memory_stats (void)
   unsigned long max_val = 0;
   unsigned int valid_count = 0;
   unsigned long *ratios;
+
+  fprintf (stderr, "[DEBUG] calculate_memory_stats() called from %s:%d (PID=%d)\n", caller_file, caller_line, getpid());
 
   /* Allocate array for median calculation */
   ratios = (unsigned long *)malloc (memory_profile_count * sizeof(unsigned long));
@@ -4236,6 +4254,12 @@ get_file_memory_requirement (const char *filename)
 
   if (!filename)
     return 0;
+
+  /* Lazy loading: load memory profiles if not already loaded */
+  if (!memory_profiles_loaded)
+    {
+      load_memory_profiles (__FILE__, __LINE__);
+    }
 
   /* Look up the file in our profiles */
   for (i = 0; i < memory_profile_count; i++)
@@ -4414,7 +4438,7 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb, int fin
 
       /* New file added, recalculate statistics */
       if (final)
-        calculate_memory_stats ();
+        calculate_memory_stats (__FILE__, __LINE__);
     }
 }
 
