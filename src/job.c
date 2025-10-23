@@ -1626,29 +1626,60 @@ start_job_command (struct child *child)
 
             /* Look up memory requirement */
             required_mb = get_file_memory_requirement (filename);
-            get_memory_stats (&mem_percent, &free_mb);
 
             if (required_mb > 0)
               {
-                unsigned long imminent_mb = get_imminent_memory_mb ();
-                unsigned long effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
+                int waited = 0;
 
-                if (required_mb > effective_free)
+                /* Wait loop: check if we have enough memory, accounting for imminent usage */
+                while (1)
                   {
-                    fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
-                            filename, required_mb, effective_free, imminent_mb);
+                    unsigned long imminent_mb;
+                    unsigned long effective_free;
+
+                    get_memory_stats (&mem_percent, &free_mb);
+                    imminent_mb = get_imminent_memory_mb ();
+                    effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
+
+                    if (required_mb <= effective_free)
+                      {
+                        /* We have enough memory! Reserve it and proceed */
+                        reserve_memory_mb (required_mb);
+
+                        if (waited)
+                          {
+                            fprintf (stderr, "[PREDICT] %s: memory available after %ds, proceeding\n",
+                                    filename, waited / 10);
+                            fflush (stderr);
+                          }
+                        else
+                          {
+                            fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
+                                    filename, required_mb, effective_free, imminent_mb);
+                            fflush (stderr);
+                          }
+                        break;
+                      }
+
+                    /* Not enough memory, wait */
+                    if (waited == 0)
+                      {
+                        fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
+                                filename, required_mb, effective_free, imminent_mb);
+                        fflush (stderr);
+                      }
+
+                    usleep (100000);  /* Sleep 100ms */
+                    waited++;
                   }
-                else
-                  {
-                    fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
-                            filename, required_mb, effective_free, imminent_mb);
-                  }
-                fflush (stderr);
               }
             else
               {
-                /* No data available */
-                unsigned long imminent_mb = get_imminent_memory_mb ();
+                /* No data available, just report current state */
+                unsigned long imminent_mb;
+
+                get_memory_stats (&mem_percent, &free_mb);
+                imminent_mb = get_imminent_memory_mb ();
                 fprintf (stderr, "[PREDICT] %s: no data yet, %luMB free (%luMB imminent)\n",
                         filename, free_mb, imminent_mb);
                 fflush (stderr);
@@ -1665,6 +1696,11 @@ start_job_command (struct child *child)
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
+
+      /* Note: Reserved memory will be released by the monitor thread once
+         the descendant compiler process is detected and added to tracking.
+         This avoids race conditions where multiple compilations reserve
+         the same memory space. */
 
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
