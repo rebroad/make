@@ -4139,7 +4139,6 @@ compare_unsigned_long (const void *a, const void *b)
 static void
 calculate_memory_stats (void)
 {
-  static unsigned long last_avg = 0;
   unsigned int i;
   unsigned long total_mb_per_kb = 0;
   unsigned long min_val = ~0UL;
@@ -4179,22 +4178,16 @@ calculate_memory_stats (void)
       /* Sort for median calculation */
       qsort (ratios, valid_count, sizeof(unsigned long), compare_unsigned_long);
 
-      /* Only update if statistics changed */
       memory_stats.min_mb_per_kb = min_val;
       memory_stats.avg_mb_per_kb = total_mb_per_kb / valid_count;
       memory_stats.median_mb_per_kb = ratios[valid_count / 2];  /* Middle value */
       memory_stats.max_mb_per_kb = max_val;
       memory_stats.valid = 1;
 
-      /* Only print if stats changed (avoid spam from recursive makes) */
-      if (last_avg != memory_stats.avg_mb_per_kb)
-        {
-          fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu median=%lu avg=%lu max=%lu (MB per 1000KB)\n",
-                  valid_count, memory_stats.min_mb_per_kb, memory_stats.median_mb_per_kb,
-                  memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
-          fflush (stderr);
-          last_avg = memory_stats.avg_mb_per_kb;
-        }
+      fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu median=%lu avg=%lu max=%lu (MB per 1000KB)\n",
+              valid_count, memory_stats.min_mb_per_kb, memory_stats.median_mb_per_kb,
+              memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
+      fflush (stderr);
     }
 
   free (ratios);
