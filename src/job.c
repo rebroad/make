@@ -503,7 +503,14 @@ extern sigset_t fatal_signal_set;
 static void
 block_sigs ()
 {
-  sigprocmask (SIG_BLOCK, &fatal_signal_set, (sigset_t *) 0);
+  sigset_t block_set = fatal_signal_set;
+
+  /* Don't block SIGTSTP (Ctrl+Z) - allow job control to work */
+#ifdef SIGTSTP
+  sigdelset (&block_set, SIGTSTP);
+#endif
+
+  sigprocmask (SIG_BLOCK, &block_set, (sigset_t *) 0);
 }
 
 static void
@@ -527,7 +534,14 @@ extern int fatal_signal_mask;
 static void
 block_sigs ()
 {
-  sigblock (fatal_signal_mask);
+  int mask = fatal_signal_mask;
+
+  /* Don't block SIGTSTP (Ctrl+Z) - allow job control to work */
+#ifdef SIGTSTP
+  mask &= ~sigmask (SIGTSTP);
+#endif
+
+  sigblock (mask);
 }
 
 static void
