@@ -1638,10 +1638,11 @@ start_job_command (struct child *child)
                     unsigned long effective_free;
 
                     get_memory_stats (&mem_percent, &free_mb);
-                    imminent_mb = get_imminent_memory_mb ();
+                    /* Check imminent memory including this job's requirement */
+                    imminent_mb = get_imminent_memory_mb () + required_mb;
                     effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
-                    if (required_mb <= effective_free)
+                    if (effective_free > 0)
                       {
                         /* We have enough memory! Reserve it and proceed */
                         reserve_memory_mb (required_mb);

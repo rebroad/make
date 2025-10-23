@@ -1202,44 +1202,55 @@ static struct {
 } descendant_files[MAX_TRACKED_DESCENDANTS];
 static int descendant_count = 0;
 
+/* Thread safety for shared descendant data */
+static pthread_mutex_t descendant_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /* Get imminent memory usage (called from job.c before forking) */
 unsigned long
 get_imminent_memory_mb (void)
 {
-  unsigned long total_predicted = 0;
   unsigned long total_current = 0;
-  unsigned long imminent_mb;
-  unsigned long result;
+  unsigned long result = 0;
   int i;
+  int local_descendant_count;
 
-  /* Calculate imminent memory on-demand */
-  for (i = 0; i < descendant_count; i++)
-    {
-      total_predicted += descendant_files[i].peak_mb;
-      total_current += descendant_files[i].current_mb;
-    }
+  /* Thread-safe access to shared descendant data */
+  pthread_mutex_lock (&descendant_mutex);
+  local_descendant_count = descendant_count;
+  pthread_mutex_unlock (&descendant_mutex);
 
-  imminent_mb = total_predicted > total_current ? total_predicted - total_current : 0;
-  result = imminent_mb + reserved_memory_mb;
+  /* Calculate imminent memory on-demand in a single loop */
+  /* reserved_memory_mb = sum of peak memory for all active processes
+     We need to subtract current usage to get imminent (remaining) memory */
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
-  if (descendant_count > 0)
+  if (local_descendant_count > 0 || reserved_memory_mb > 0)
     {
       fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT:\n");
-      fprintf (stderr, "  Current children (%d tracked):\n", descendant_count);
+      fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_memory_mb);
 
-      for (i = 0; i < descendant_count; i++)
+      if (local_descendant_count > 0)
         {
-          unsigned long imminent = descendant_files[i].peak_mb > descendant_files[i].current_mb ?
-                                   descendant_files[i].peak_mb - descendant_files[i].current_mb : 0;
-          fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB, imminent=%luMB\n",
-                  i, descendant_files[i].source_file ? descendant_files[i].source_file : "unknown",
-                  descendant_files[i].current_mb, descendant_files[i].peak_mb, imminent);
+          fprintf (stderr, "  Tracked children (%d):\n", local_descendant_count);
+
+          /* Thread-safe access to descendant data for calculation and debug output */
+          pthread_mutex_lock (&descendant_mutex);
+          for (i = 0; i < local_descendant_count; i++)
+            {
+              total_current += descendant_files[i].current_mb;
+              fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB\n",
+                      i, descendant_files[i].source_file ? descendant_files[i].source_file : "unknown",
+                      descendant_files[i].current_mb, descendant_files[i].peak_mb);
+            }
+          pthread_mutex_unlock (&descendant_mutex);
         }
 
-      fprintf (stderr, "  Total: predicted=%luMB, current=%luMB, imminent=%luMB, reserved=%luMB, result=%luMB\n",
-              total_predicted, total_current, imminent_mb, reserved_memory_mb, result);
+      fprintf (stderr, "  Calculation: reserved=%luMB - current=%luMB = imminent=%luMB\n",
+              reserved_memory_mb, total_current, result);
     }
+
+  /* Imminent = reserved peak memory - current usage */
+  result = reserved_memory_mb > total_current ? reserved_memory_mb - total_current : 0;
 
   return result;
 }
@@ -1938,30 +1949,29 @@ memory_monitor_thread_func (void *arg)
                                                                   {
                                                                     unsigned long predicted_peak_mb;
 
-                                                                    descendant_files[descendant_count].pid = pid;
-                                                                    descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
-                                                                    descendant_files[descendant_count].current_mb = rss_kb / 1024;
-
-                                                                    /* Get predicted peak from history */
-                                                                    predicted_peak_mb = get_file_memory_requirement (strip_ptr);
-                                                                    descendant_files[descendant_count].peak_mb = predicted_peak_mb;
-
-                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %luMB, predicted peak: %luMB)\n",
-                                                                                (int)pid, strip_ptr, rss_kb / 1024, predicted_peak_mb);
-
-                                                                    /* Release reservation now that we're tracking this process */
-                                                                    if (predicted_peak_mb > 0)
+                                                                    /* Thread-safe access to shared descendant data */
+                                                                    pthread_mutex_lock (&descendant_mutex);
+                                                                    if (descendant_count < MAX_TRACKED_DESCENDANTS)
                                                                       {
-                                                                        release_reserved_memory_mb (predicted_peak_mb);
-                                                                        debug_write ("[MEMORY] Released %luMB reservation for %s (now tracking)\n",
-                                                                                    predicted_peak_mb, strip_ptr);
-                                                                      }
+                                                                        descendant_files[descendant_count].pid = pid;
+                                                                        descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
+                                                                        descendant_files[descendant_count].current_mb = rss_kb / 1024;
 
-                                                                    descendant_count++;
+                                                                        /* Get predicted peak from history */
+                                                                        predicted_peak_mb = get_file_memory_requirement (strip_ptr);
+                                                                        descendant_files[descendant_count].peak_mb = predicted_peak_mb;
+
+                                                                        debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %luMB, predicted peak: %luMB)\n",
+                                                                                    (int)pid, strip_ptr, rss_kb / 1024, predicted_peak_mb);
+
+                                                                        descendant_count++;
+                                                                      }
+                                                                    pthread_mutex_unlock (&descendant_mutex);
                                                                   }
                                                                 else
                                                                   {
                                                                     /* Already tracked, just update current */
+                                                                    pthread_mutex_lock (&descendant_mutex);
                                                                     for (int k = 0; k < descendant_count; k++)
                                                                       {
                                                                         if (descendant_files[k].pid == pid)
@@ -1970,6 +1980,7 @@ memory_monitor_thread_func (void *arg)
                                                                             break;
                                                                           }
                                                                       }
+                                                                    pthread_mutex_unlock (&descendant_mutex);
                                                                   }
                                                               }
                                                           }
@@ -1986,7 +1997,9 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
+                                            pthread_mutex_lock (&descendant_mutex);
                                             descendant_files[descendant_idx].current_mb = rss_kb / 1024;
+                                            pthread_mutex_unlock (&descendant_mutex);
                                             if (rss_kb >= 10240)
                                               record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024, 0);
                                           }
@@ -2033,13 +2046,21 @@ next_proc:
             stat_file = fopen (stat_path, "r");
             if (!stat_file)
               {
-                /* Process exited - record final memory */
+                /* Process exited - record final memory and release reservation */
                 if (descendant_files[i].current_mb > 10 && descendant_files[i].source_file)
                   {
                     debug_write ("[MEMORY] Descendant PID %d exited, final peak for %s: %luMB\n",
                                 (int)descendant_files[i].pid,
                                 descendant_files[i].source_file,
                                 descendant_files[i].current_mb);
+
+                    /* Release the reserved memory now that process has exited */
+                    if (descendant_files[i].peak_mb > 0)
+                      {
+                        release_reserved_memory_mb (descendant_files[i].peak_mb);
+                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited)\n",
+                                    descendant_files[i].peak_mb, descendant_files[i].source_file);
+                      }
                     record_file_memory_usage (descendant_files[i].source_file,
                                             descendant_files[i].current_mb,
                                             1);  /* final=1 */
