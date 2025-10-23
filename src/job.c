@@ -245,7 +245,6 @@ volatile unsigned int jobs_started_total = 0;
 volatile unsigned int jobs_ended_total = 0;
 
 /* Memory profiling per-file */
-volatile unsigned int memory_profiles_dirty = 0;  /* Flag indicating profiles need saving */
 #define MAX_MEMORY_PROFILES 10000
 struct file_memory_profile
 {
@@ -4419,7 +4418,7 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb, int fin
               memory_profiles[i].peak_memory_mb = memory_mb;
             }
           memory_profiles[i].last_used = now;
-          memory_profiles_dirty = 1;  /* Mark for saving */
+          set_shared_memory_profiles_dirty ();  /* Signal main process to save */
           return;
         }
     }
@@ -4431,7 +4430,7 @@ record_file_memory_usage (const char *filename, unsigned long memory_mb, int fin
       memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
       memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
-      memory_profiles_dirty = 1;  /* Mark for saving */
+      set_shared_memory_profiles_dirty ();  /* Signal main process to save */
       fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
               filename, memory_mb, memory_profile_count);
       fflush (stderr);

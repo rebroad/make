@@ -22,6 +22,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <openssl/sha.h>
 #include "variable.h"
 #include "job.h"
 #include "commands.h"
@@ -1197,9 +1198,10 @@ debug_signal_handler (int sig UNUSED)
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
   volatile int descendant_count;
+  volatile int memory_profiles_dirty;  /* Shared dirty flag for cross-process signaling */
   struct {
     pid_t pid;
-    char source_file[512];  /* Fixed size to avoid pointer issues - TODO - must it be fixed size? Maybe use a pointer instead? */
+    char file_hash[41];     /* SHA1 hex string (40 chars + null) */
     unsigned long peak_mb;
     unsigned long current_mb;
   } descendant_files[MAX_TRACKED_DESCENDANTS];
@@ -1210,6 +1212,73 @@ struct shared_memory_data {
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
+
+/* Hash to filename mapping (main process only) */
+struct hash_filename_map {
+  char hash[41];
+  char *filename;
+};
+static struct hash_filename_map *hash_to_filename = NULL;
+static int hash_map_size = 0;
+static int hash_map_capacity = 0;
+
+/* Generate SHA1 hash of filename for efficient lookup */
+static void
+generate_file_hash (const char *filename, char *hash_output)
+{
+  unsigned char hash[SHA_DIGEST_LENGTH];
+  SHA1 ((unsigned char *)filename, strlen (filename), hash);
+
+  /* Convert to hex string */
+  for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
+    {
+      sprintf (hash_output + (i * 2), "%02x", hash[i]);
+    }
+  hash_output[40] = '\0';  /* Null terminate */
+}
+
+/* Add hash→filename mapping (main process only) */
+static void
+add_hash_filename_mapping (const char *hash, const char *filename)
+{
+  /* Expand array if needed */
+  if (hash_map_size >= hash_map_capacity)
+    {
+      hash_map_capacity = hash_map_capacity ? hash_map_capacity * 2 : 16;
+      hash_to_filename = xrealloc (hash_to_filename,
+                                   hash_map_capacity * sizeof (struct hash_filename_map));
+    }
+
+  /* Add new mapping */
+  strcpy (hash_to_filename[hash_map_size].hash, hash);
+  hash_to_filename[hash_map_size].filename = xstrdup (filename);
+  hash_map_size++;
+}
+
+/* Get filename from hash (main process only) */
+static const char *
+get_filename_from_hash (const char *hash)
+{
+  for (int i = 0; i < hash_map_size; i++)
+    {
+      if (strcmp (hash_to_filename[i].hash, hash) == 0)
+        return hash_to_filename[i].filename;
+    }
+  return NULL;  /* Hash not found */
+}
+
+/* Set shared dirty flag (called from any process) */
+void
+set_shared_memory_profiles_dirty (void)
+{
+  if (shared_data == NULL)
+    {
+      if (init_shared_memory () != 0)
+        return; /* Fallback if shared memory fails */
+    }
+
+  shared_data->memory_profiles_dirty = 1;
+}
 
 /* Initialize shared memory for inter-process communication */
 static int
@@ -1253,6 +1322,7 @@ init_shared_memory (void)
     {
       shared_data->reserved_memory_mb = 0;
       shared_data->descendant_count = 0;
+      shared_data->memory_profiles_dirty = 0;
       pthread_mutexattr_t mutex_attr;
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
@@ -1277,6 +1347,19 @@ cleanup_shared_memory (void)
     {
       close (shared_memory_fd);
       shared_memory_fd = -1;
+    }
+
+  /* Cleanup hash→filename mapping */
+  if (hash_to_filename)
+    {
+      for (int i = 0; i < hash_map_size; i++)
+        {
+          free (hash_to_filename[i].filename);
+        }
+      free (hash_to_filename);
+      hash_to_filename = NULL;
+      hash_map_size = 0;
+      hash_map_capacity = 0;
     }
 }
 
@@ -1322,7 +1405,7 @@ get_imminent_memory_mb (void)
             {
               total_current += shared_data->descendant_files[i].current_mb;
               fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB\n",
-                      i, shared_data->descendant_files[i].source_file,
+                      i, shared_data->descendant_files[i].file_hash,
                       shared_data->descendant_files[i].current_mb, shared_data->descendant_files[i].peak_mb);
             }
           pthread_mutex_unlock (&shared_data->descendant_mutex);
@@ -2051,16 +2134,18 @@ memory_monitor_thread_func (void *arg)
                                                                     if (shared_data->descendant_count < MAX_TRACKED_DESCENDANTS)
                                                                       {
                                                                         shared_data->descendant_files[shared_data->descendant_count].pid = pid;
-                                                                        strncpy (shared_data->descendant_files[shared_data->descendant_count].source_file, strip_ptr, 511);
-                                                                        shared_data->descendant_files[shared_data->descendant_count].source_file[511] = '\0';
+                                                                        generate_file_hash (strip_ptr, shared_data->descendant_files[shared_data->descendant_count].file_hash);
                                                                         shared_data->descendant_files[shared_data->descendant_count].current_mb = rss_kb / 1024;
+
+                                                                        /* Add hash→filename mapping (main process only) */
+                                                                        add_hash_filename_mapping (shared_data->descendant_files[shared_data->descendant_count].file_hash, strip_ptr);
 
                                                                         /* Get predicted peak from history */
                                                                         predicted_peak_mb = get_file_memory_requirement (strip_ptr);
                                                                         shared_data->descendant_files[shared_data->descendant_count].peak_mb = predicted_peak_mb;
 
-                                                                        debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %luMB, predicted peak: %luMB)\n",
-                                                                                    (int)pid, strip_ptr, rss_kb / 1024, predicted_peak_mb);
+                                                                        debug_write ("[MEMORY] Tracking descendant PID %d -> %s (hash: %s, current: %luMB, predicted peak: %luMB)\n",
+                                                                                    (int)pid, strip_ptr, shared_data->descendant_files[shared_data->descendant_count].file_hash, rss_kb / 1024, predicted_peak_mb);
 
                                                                         shared_data->descendant_count++;
                                                                       }
@@ -2145,23 +2230,26 @@ next_proc:
             if (!stat_file)
               {
                 /* Process exited - record final memory and release reservation */
-                if (shared_data->descendant_files[i].current_mb > 10 && shared_data->descendant_files[i].source_file[0])
+                if (shared_data->descendant_files[i].current_mb > 10 && shared_data->descendant_files[i].file_hash[0])
                   {
-                    debug_write ("[MEMORY] Descendant PID %d exited, final peak for %s: %luMB\n",
+                    debug_write ("[MEMORY] Descendant PID %d exited, final peak for hash %s: %luMB\n",
                                 (int)shared_data->descendant_files[i].pid,
-                                shared_data->descendant_files[i].source_file,
+                                shared_data->descendant_files[i].file_hash,
                                 shared_data->descendant_files[i].current_mb);
 
                     /* Release the reserved memory now that process has exited */
                     if (shared_data->descendant_files[i].peak_mb > 0)
                       {
                         release_reserved_memory_mb (shared_data->descendant_files[i].peak_mb);
-                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited)\n",
-                                    shared_data->descendant_files[i].peak_mb, shared_data->descendant_files[i].source_file);
+                        debug_write ("[MEMORY] Released %luMB reservation for hash %s (process exited)\n",
+                                    shared_data->descendant_files[i].peak_mb, shared_data->descendant_files[i].file_hash);
                       }
-                    record_file_memory_usage (shared_data->descendant_files[i].source_file,
-                                            shared_data->descendant_files[i].current_mb,
-                                            1);  /* final=1 */
+                    /* Get filename from hash for disk operations */
+                    const char *filename = get_filename_from_hash (shared_data->descendant_files[i].file_hash);
+                    if (filename)
+                      {
+                        record_file_memory_usage (filename, shared_data->descendant_files[i].current_mb, 1);  /* final=1 */
+                      }
                   }
 
                 /* Remove this entry by shifting remaining entries */
@@ -2178,13 +2266,13 @@ next_proc:
           }
       }
 
-      /* Save memory profiles if they've been updated */
-      if (memory_profiles_dirty)
+      /* Save memory profiles if they've been updated (check shared dirty flag) */
+      if (shared_data && shared_data->memory_profiles_dirty)
         {
-          //debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
+          debug_write ("[MEMORY] Shared dirty flag detected, saving profiles...\n");
           save_memory_profiles ();
-          memory_profiles_dirty = 0;
-          //debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
+          shared_data->memory_profiles_dirty = 0;
+          //debug_write ("[MEMORY] Profiles saved, shared dirty flag cleared\n");
         }
 
       /* Debug marker B */

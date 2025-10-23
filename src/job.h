@@ -99,8 +99,8 @@ extern volatile unsigned int jobs_ended_total;
 extern unsigned int jobserver_tokens;
 
 /* Memory profiling per file */
-extern volatile unsigned int memory_profiles_dirty;  /* Set to 1 when profiles need saving */
 void load_memory_profiles (const char *caller_file, int caller_line);
 void save_memory_profiles (void);
 unsigned long get_file_memory_requirement (const char *filename);
 void record_file_memory_usage (const char *filename, unsigned long memory_mb, int final);
+void set_shared_memory_profiles_dirty (void);
