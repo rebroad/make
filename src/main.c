@@ -1224,10 +1224,11 @@ get_imminent_memory_mb (void)
      We need to subtract current usage to get imminent (remaining) memory */
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
+  fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT:\n");
+  fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_memory_mb);
+
   if (local_descendant_count > 0 || reserved_memory_mb > 0)
     {
-      fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT:\n");
-      fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_memory_mb);
 
       if (local_descendant_count > 0)
         {
@@ -1251,6 +1252,8 @@ get_imminent_memory_mb (void)
 
   /* Imminent = reserved peak memory - current usage */
   result = reserved_memory_mb > total_current ? reserved_memory_mb - total_current : 0;
+
+  fprintf (stderr, "  Final result: %luMB\n", result);
 
   return result;
 }
