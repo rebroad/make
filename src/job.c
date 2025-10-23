@@ -1630,23 +1630,27 @@ start_job_command (struct child *child)
 
             if (required_mb > 0)
               {
-                if (required_mb > free_mb)
+                unsigned long imminent_mb = get_imminent_memory_mb ();
+                unsigned long effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
+
+                if (required_mb > effective_free)
                   {
-                    fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free - WAITING\n",
-                            filename, required_mb, free_mb);
+                    fprintf (stderr, "[PREDICT] %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
+                            filename, required_mb, effective_free, imminent_mb);
                   }
                 else
                   {
-                    fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free - OK\n",
-                            filename, required_mb, free_mb);
+                    fprintf (stderr, "[PREDICT] %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
+                            filename, required_mb, effective_free, imminent_mb);
                   }
                 fflush (stderr);
               }
             else
               {
                 /* No data available */
-                fprintf (stderr, "[PREDICT] %s: no data yet, %luMB free\n",
-                        filename, free_mb);
+                unsigned long imminent_mb = get_imminent_memory_mb ();
+                fprintf (stderr, "[PREDICT] %s: no data yet, %luMB free (%luMB imminent)\n",
+                        filename, free_mb, imminent_mb);
                 fflush (stderr);
               }
           }
@@ -4204,21 +4208,122 @@ get_file_memory_requirement (const char *filename)
         return memory_profiles[i].peak_memory_mb;
     }
 
-  /* No profile yet - estimate based on file size and statistics */
-  if (memory_stats.valid && stat (filename, &st) == 0 && st.st_size > 0)
+  /* No profile yet - try heuristics and statistical estimation */
+  if (stat (filename, &st) == 0 && st.st_size > 0)
     {
       unsigned long file_kb = st.st_size / 1024;
-      unsigned long estimated_mb;
+      unsigned long estimated_mb = 0;
+      FILE *src;
+      char buffer[8192];
+      int template_count = 0;
+      int sol_count = 0;
+      int line_count = 0;
+      size_t bytes_read;
+      const char *base = strrchr (filename, '/');
+      base = base ? base + 1 : filename;
 
       if (file_kb == 0) file_kb = 1;
 
-      /* Use median ratio for estimation (more robust than mean) */
-      estimated_mb = (file_kb * memory_stats.median_mb_per_kb) / 1000;
+      /* Heuristic 1: Auto-generated M68K CPU cores (massive files) */
+      if (strstr (base, "m68") && strstr (base, "-s") && (strstr (base, "df") || strstr (base, "dp") || strstr (base, "if") || strstr (base, "ip")))
+        {
+          /* These are huge auto-generated files, ~200K lines, ~200-500 bytes per MB */
+          estimated_mb = file_kb / 4;  /* Very rough: 4KB source → 1MB compiled */
+          fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC m68k-autogen ~%luMB\n", filename, estimated_mb);
+          fflush (stderr);
+          return estimated_mb;
+        }
 
-      fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu median ratio = ~%luMB (no history)\n",
-              filename, file_kb, memory_stats.median_mb_per_kb, estimated_mb);
+      /* Heuristic 2: Sample the file for template/sol:: patterns (for .cpp/.cc files) */
+      src = fopen (filename, "r");
+      if (src)
+        {
+          while ((bytes_read = fread (buffer, 1, sizeof(buffer) - 1, src)) > 0)
+            {
+              char *p;
+              buffer[bytes_read] = '\0';
+
+              /* Count templates */
+              p = buffer;
+              while ((p = strstr (p, "template")) != NULL)
+                {
+                  template_count++;
+                  p += 8;
+                }
+
+              /* Count sol:: (Lua bindings) */
+              p = buffer;
+              while ((p = strstr (p, "sol::")) != NULL)
+                {
+                  sol_count++;
+                  p += 5;
+                }
+
+              /* Count lines (approx) */
+              p = buffer;
+              while (*p)
+                {
+                  if (*p == '\n') line_count++;
+                  p++;
+                }
+            }
+          fclose (src);
+
+          /* Heuristic 3: Many explicit template instantiations in tiny file → HUGE memory */
+          if (line_count < 200 && template_count > 80)
+            {
+              /* Like emumem_hed*.cpp: ~120 lines, 104 templates → 1.4GB */
+              estimated_mb = template_count * 13;  /* ~13MB per template instantiation */
+              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC template-explosion (%d tmpls) ~%luMB\n",
+                      filename, template_count, estimated_mb);
+              fflush (stderr);
+              return estimated_mb;
+            }
+
+          /* Heuristic 4: Heavy Sol2 usage → high memory */
+          if (sol_count > 50)
+            {
+              /* luaengine.cpp: 423 sol:: → 3414MB, ~8MB per sol:: */
+              estimated_mb = sol_count * 8;
+              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC sol2-heavy (%d sol::) ~%luMB\n",
+                      filename, sol_count, estimated_mb);
+              fflush (stderr);
+              return estimated_mb;
+            }
+
+          /* Heuristic 5: Moderate template usage → above average */
+          if (template_count > 20)
+            {
+              /* Bump estimate by 50% for template-heavy code */
+              if (memory_stats.valid)
+                estimated_mb = (file_kb * memory_stats.median_mb_per_kb * 3) / 2000;
+              else
+                estimated_mb = file_kb / 3;  /* Rough guess */
+
+              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC template-moderate (%d tmpls) ~%luMB\n",
+                      filename, template_count, estimated_mb);
+              fflush (stderr);
+              return estimated_mb;
+            }
+        }
+
+      /* Fall back to statistical estimation if we have stats */
+      if (memory_stats.valid)
+        {
+          estimated_mb = (file_kb * memory_stats.median_mb_per_kb) / 1000;
+
+          fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu median ratio = ~%luMB (stats)\n",
+                  filename, file_kb, memory_stats.median_mb_per_kb, estimated_mb);
+          fflush (stderr);
+
+          return estimated_mb;
+        }
+
+      /* No stats yet - very conservative guess */
+      estimated_mb = file_kb / 10;
+      fprintf (stderr, "[MEMORY] Estimating %s: %luKB → ~%luMB (wild guess)\n",
+              filename, file_kb, estimated_mb);
       fflush (stderr);
-
       return estimated_mb;
     }
 

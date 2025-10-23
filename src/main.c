@@ -1189,6 +1189,16 @@ debug_signal_handler (int sig UNUSED)
 #endif
 
 /* Memory monitoring for auto-adjust-jobs feature */
+/* Global variable for imminent memory (updated by monitor thread) */
+static volatile unsigned long imminent_memory_mb = 0;
+
+/* Get imminent memory usage (called from job.c before forking) */
+unsigned long
+get_imminent_memory_mb (void)
+{
+  return imminent_memory_mb;
+}
+
 void
 get_memory_stats (unsigned int *percent, unsigned long *free_mb)
 {
@@ -1524,9 +1534,32 @@ memory_monitor_thread_func (void *arg)
   static struct {
     pid_t pid;
     char *source_file;
-    unsigned long peak_kb;  /* This descendant's individual peak */
+    unsigned long peak_kb;       /* This descendant's peak from history */
+    unsigned long current_kb;    /* This descendant's current actual usage */
   } descendant_files[MAX_TRACKED_DESCENDANTS];
   static int descendant_count = 0;
+
+  /* Calculate imminent memory usage: predicted peaks - current usage
+     This is called from the memory monitor thread */
+  unsigned long
+  get_imminent_memory_kb_internal (void)
+  {
+    unsigned long total_predicted = 0;
+    unsigned long total_current = 0;
+    int i;
+
+    for (i = 0; i < descendant_count; i++)
+      {
+        total_predicted += descendant_files[i].peak_kb;
+        total_current += descendant_files[i].current_kb;
+      }
+
+    /* Return how much more memory we expect to be used */
+    if (total_predicted > total_current)
+      return total_predicted - total_current;
+    return 0;
+  }
+
   unsigned int jobs_started_since_last_trajectory;
   unsigned int jobs_ended_since_last_trajectory;
   unsigned int old_slots;
@@ -1663,6 +1696,9 @@ memory_monitor_thread_func (void *arg)
 #endif
 
       get_memory_stats (&mem_percent, &free_mb);
+
+      /* Update imminent memory estimate for predictive scheduling */
+      imminent_memory_mb = get_imminent_memory_kb_internal () / 1024;
 
       /* Update peak memory by finding ALL descendants (walk UP from each process to find our children) */
       {
@@ -1869,21 +1905,28 @@ memory_monitor_thread_func (void *arg)
 
                                                                 if (!found)
                                                                   {
+                                                                    unsigned long predicted_peak_mb;
+
                                                                     descendant_files[descendant_count].pid = pid;
                                                                     descendant_files[descendant_count].source_file = xstrdup (strip_ptr);
-                                                                    descendant_files[descendant_count].peak_kb = rss_kb;
-                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (initial peak: %lu kB)\n",
-                                                                                (int)pid, strip_ptr, rss_kb);
+                                                                    descendant_files[descendant_count].current_kb = rss_kb;
+
+                                                                    /* Get predicted peak from history */
+                                                                    predicted_peak_mb = get_file_memory_requirement (strip_ptr);
+                                                                    descendant_files[descendant_count].peak_kb = predicted_peak_mb * 1024;
+
+                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %lu kB, predicted peak: %lu MB)\n",
+                                                                                (int)pid, strip_ptr, rss_kb, predicted_peak_mb);
                                                                     descendant_count++;
                                                                   }
                                                                 else
                                                                   {
-                                                                    /* Already tracked, just update peak */
+                                                                    /* Already tracked, just update current */
                                                                     for (int k = 0; k < descendant_count; k++)
                                                                       {
                                                                         if (descendant_files[k].pid == pid)
                                                                           {
-                                                                            descendant_files[k].peak_kb = rss_kb;
+                                                                            descendant_files[k].current_kb = rss_kb;
                                                                             break;
                                                                           }
                                                                       }
@@ -1900,10 +1943,10 @@ memory_monitor_thread_func (void *arg)
                                                         (int)c->pid, (int)pid, rss_kb);
                                           }
 
-                                        /* Update the descendant's individual peak and record memory usage */
+                                        /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            descendant_files[descendant_idx].peak_kb = rss_kb;
+                                            descendant_files[descendant_idx].current_kb = rss_kb;
                                             if (rss_kb >= 10240)
                                               record_file_memory_usage (descendant_files[descendant_idx].source_file, rss_kb / 1024, 0);
                                           }

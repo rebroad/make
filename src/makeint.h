@@ -765,6 +765,7 @@ extern unsigned int job_slots;
 extern double max_load_average;
 extern unsigned long min_memory_mb;
 extern void get_memory_stats (unsigned int *percent, unsigned long *free_mb);
+extern unsigned long get_imminent_memory_mb (void);
 
 extern const char *program;
 
