@@ -1934,8 +1934,8 @@ memory_monitor_thread_func (void *arg)
                                                                     predicted_peak_mb = get_file_memory_requirement (strip_ptr);
                                                                     descendant_files[descendant_count].peak_mb = predicted_peak_mb;
 
-                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %lu kB, predicted peak: %lu MB)\n",
-                                                                                (int)pid, strip_ptr, rss_kb, predicted_peak_mb);
+                                                                    debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %luMB, predicted peak: %luMB)\n",
+                                                                                (int)pid, strip_ptr, rss_kb / 1024, predicted_peak_mb);
 
                                                                     /* Release reservation now that we're tracking this process */
                                                                     if (predicted_peak_mb > 0)
@@ -1967,8 +1967,8 @@ memory_monitor_thread_func (void *arg)
                                           }
                                         else if (rss_kb > 10240 && rss_kb > descendant_old_peak + 50000)  /* Debug only for significant increases >50MB */
                                           {
-                                            debug_write ("[MEMORY] Child %d descendant PID %d now at: %lu kB\n",
-                                                        (int)c->pid, (int)pid, rss_kb);
+                                            debug_write ("[MEMORY] Child %d descendant PID %d now at: %luMB\n",
+                                                        (int)c->pid, (int)pid, rss_kb / 1024);
                                           }
 
                                         /* Update the descendant's current usage and record if it's a new peak */
