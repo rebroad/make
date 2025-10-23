@@ -1191,12 +1191,31 @@ debug_signal_handler (int sig UNUSED)
 /* Memory monitoring for auto-adjust-jobs feature */
 /* Global variable for imminent memory (updated by monitor thread) */
 static volatile unsigned long imminent_memory_mb = 0;
+/* Reserved memory for processes about to start (added before fork, removed after tracking starts) */
+static volatile unsigned long reserved_memory_mb = 0;
 
 /* Get imminent memory usage (called from job.c before forking) */
 unsigned long
 get_imminent_memory_mb (void)
 {
-  return imminent_memory_mb;
+  return imminent_memory_mb + reserved_memory_mb;
+}
+
+/* Reserve memory for a process about to start */
+void
+reserve_memory_mb (unsigned long mb)
+{
+  reserved_memory_mb += mb;
+}
+
+/* Release reserved memory once process is being tracked */
+void
+release_reserved_memory_mb (unsigned long mb)
+{
+  if (reserved_memory_mb >= mb)
+    reserved_memory_mb -= mb;
+  else
+    reserved_memory_mb = 0;
 }
 
 void
@@ -1917,6 +1936,15 @@ memory_monitor_thread_func (void *arg)
 
                                                                     debug_write ("[MEMORY] Tracking descendant PID %d -> %s (current: %lu kB, predicted peak: %lu MB)\n",
                                                                                 (int)pid, strip_ptr, rss_kb, predicted_peak_mb);
+
+                                                                    /* Release reservation now that we're tracking this process */
+                                                                    if (predicted_peak_mb > 0)
+                                                                      {
+                                                                        release_reserved_memory_mb (predicted_peak_mb);
+                                                                        debug_write ("[MEMORY] Released %luMB reservation for %s (now tracking)\n",
+                                                                                    predicted_peak_mb, strip_ptr);
+                                                                      }
+
                                                                     descendant_count++;
                                                                   }
                                                                 else
