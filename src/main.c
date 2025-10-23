@@ -1189,16 +1189,59 @@ debug_signal_handler (int sig UNUSED)
 #endif
 
 /* Memory monitoring for auto-adjust-jobs feature */
-/* Global variable for imminent memory (updated by monitor thread) */
-static volatile unsigned long imminent_memory_mb = 0;
 /* Reserved memory for processes about to start (added before fork, removed after tracking starts) */
 static volatile unsigned long reserved_memory_mb = 0;
+
+/* Map descendant PIDs to source files AND their individual peak memory */
+#define MAX_TRACKED_DESCENDANTS 1000
+static struct {
+  pid_t pid;
+  char *source_file;
+  unsigned long peak_mb;       /* This descendant's predicted peak from history (MB) */
+  unsigned long current_mb;    /* This descendant's current actual usage (MB) */
+} descendant_files[MAX_TRACKED_DESCENDANTS];
+static int descendant_count = 0;
 
 /* Get imminent memory usage (called from job.c before forking) */
 unsigned long
 get_imminent_memory_mb (void)
 {
-  return imminent_memory_mb + reserved_memory_mb;
+  unsigned long total_predicted = 0;
+  unsigned long total_current = 0;
+  unsigned long imminent_mb;
+  unsigned long result;
+  int i;
+
+  /* Calculate imminent memory on-demand */
+  for (i = 0; i < descendant_count; i++)
+    {
+      total_predicted += descendant_files[i].peak_mb;
+      total_current += descendant_files[i].current_mb;
+    }
+
+  imminent_mb = total_predicted > total_current ? total_predicted - total_current : 0;
+  result = imminent_mb + reserved_memory_mb;
+
+  /* Debug: Show imminent calculation details when called for PREDICT decisions */
+  if (descendant_count > 0)
+    {
+      fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT:\n");
+      fprintf (stderr, "  Current children (%d tracked):\n", descendant_count);
+
+      for (i = 0; i < descendant_count; i++)
+        {
+          unsigned long imminent = descendant_files[i].peak_mb > descendant_files[i].current_mb ?
+                                   descendant_files[i].peak_mb - descendant_files[i].current_mb : 0;
+          fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB, imminent=%luMB\n",
+                  i, descendant_files[i].source_file ? descendant_files[i].source_file : "unknown",
+                  descendant_files[i].current_mb, descendant_files[i].peak_mb, imminent);
+        }
+
+      fprintf (stderr, "  Total: predicted=%luMB, current=%luMB, imminent=%luMB\n",
+              total_predicted, total_current, imminent_mb);
+    }
+
+  return result;
 }
 
 /* Reserve memory for a process about to start */
@@ -1548,36 +1591,6 @@ memory_monitor_thread_func (void *arg)
   static unsigned int last_jobs_started_total = 0;
   static unsigned int last_jobs_ended_total = 0;
 
-  /* Map descendant PIDs to source files AND their individual peak memory */
-#define MAX_TRACKED_DESCENDANTS 1000
-  static struct {
-    pid_t pid;
-    char *source_file;
-    unsigned long peak_mb;       /* This descendant's predicted peak from history (MB) */
-    unsigned long current_mb;    /* This descendant's current actual usage (MB) */
-  } descendant_files[MAX_TRACKED_DESCENDANTS];
-  static int descendant_count = 0;
-
-  /* Calculate imminent memory usage: predicted peaks - current usage
-     This is called from the memory monitor thread */
-  unsigned long
-  get_imminent_memory_kb_internal (void)
-  {
-    unsigned long total_predicted = 0;
-    unsigned long total_current = 0;
-    int i;
-
-    for (i = 0; i < descendant_count; i++)
-      {
-        total_predicted += descendant_files[i].peak_mb;
-        total_current += descendant_files[i].current_mb;
-      }
-
-    /* Return how much more memory we expect to be used (in KB for internal use) */
-    if (total_predicted > total_current)
-      return (total_predicted - total_current) * 1024;
-    return 0;
-  }
 
   unsigned int jobs_started_since_last_trajectory;
   unsigned int jobs_ended_since_last_trajectory;
@@ -1716,8 +1729,7 @@ memory_monitor_thread_func (void *arg)
 
       get_memory_stats (&mem_percent, &free_mb);
 
-      /* Update imminent memory estimate for predictive scheduling */
-      imminent_memory_mb = get_imminent_memory_kb_internal () / 1024;
+      /* Imminent memory is now calculated on-demand in get_imminent_memory_mb() */
 
       /* Update peak memory by finding ALL descendants (walk UP from each process to find our children) */
       {
