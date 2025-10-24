@@ -271,10 +271,6 @@ static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
 static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
-/* Note: We used to hold jobserver tokens here, but that deadlocked the build.
- * Now we just adjust job_slots directly for both jobserver and direct modes. */
-
-
 
 /* Count all descendant processes (recursive - includes grandchildren!) */
 static unsigned int
