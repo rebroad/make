@@ -1194,6 +1194,9 @@ debug_signal_handler (int sig UNUSED)
 #endif
 
 /* Memory monitoring for auto-adjust-jobs feature */
+#define MAX_TRACKED_SOURCES 1000
+#define MAX_TRACKED_DESCENDANTS 1000
+
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
@@ -1207,11 +1210,12 @@ struct shared_memory_data {
   } source_files[MAX_TRACKED_SOURCES];
   pthread_mutex_t source_mutex;
 };
-
-#define MAX_TRACKED_SOURCES 1000
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
+
+/* Forward declarations */
+static int init_shared_memory (void);
 
 /* Hash to filename mapping (main process only) */
 struct hash_filename_map {
@@ -1224,10 +1228,10 @@ static int hash_map_capacity = 0;
 
 /* Generate SHA1 hash of filename for efficient lookup */
 static void
-generate_file_hash (const char *filename, char *hash_output)
+generate_file_hash (const char *filepath, char *hash_output)
 {
   unsigned char hash[SHA_DIGEST_LENGTH];
-  SHA1 ((unsigned char *)filename, strlen (filename), hash);
+  SHA1 ((unsigned char *)filepath, strlen (filepath), hash);
 
   /* Convert to hex string */
   for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
@@ -1239,7 +1243,7 @@ generate_file_hash (const char *filename, char *hash_output)
 
 /* Add hash→filename mapping (main process only) */
 static void
-add_hash_filename_mapping (const char *hash, const char *filename)
+add_hash_filename_mapping (const char *hash, const char *filepath)
 {
   /* Expand array if needed */
   if (hash_map_size >= hash_map_capacity)
@@ -1251,7 +1255,7 @@ add_hash_filename_mapping (const char *hash, const char *filename)
 
   /* Add new mapping */
   strcpy (hash_to_filename[hash_map_size].hash, hash);
-  hash_to_filename[hash_map_size].filename = xstrdup (filename);
+  hash_to_filename[hash_map_size].filename = xstrdup (filepath);
   hash_map_size++;
 }
 
@@ -1285,6 +1289,8 @@ static int
 init_shared_memory (void)
 {
   int created = 0;
+  struct stat st;
+  pthread_mutexattr_t mutex_attr;
 
   /* Create or open shared memory object */
   shared_memory_fd = shm_open (SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
@@ -1295,7 +1301,6 @@ init_shared_memory (void)
     }
 
   /* Check if we need to set the size (first process) */
-  struct stat st;
   if (fstat (shared_memory_fd, &st) == -1 || st.st_size == 0)
     {
       if (ftruncate (shared_memory_fd, sizeof (struct shared_memory_data)) == -1)
@@ -1323,7 +1328,6 @@ init_shared_memory (void)
       shared_data->reserved_memory_mb = 0;
       shared_data->source_count = 0;
       shared_data->memory_profiles_dirty = 0;
-      pthread_mutexattr_t mutex_attr;
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->source_mutex, &mutex_attr);
@@ -2180,11 +2184,15 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            pthread_mutex_lock (&source_mutex);
-                                            source_files[descendant_idx].current_mb = rss_kb / 1024;
-                                            pthread_mutex_unlock (&source_mutex);
+                                            pthread_mutex_lock (&shared_data->source_mutex);
+                                            shared_data->source_files[descendant_idx].current_mb = rss_kb / 1024;
+                                            pthread_mutex_unlock (&shared_data->source_mutex);
                                             if (rss_kb >= 10240)
-                                              record_file_memory_usage (source_files[descendant_idx].source_file, rss_kb / 1024, 0);
+                                              {
+                                                const char *filepath = get_filename_from_hash (shared_data->source_files[descendant_idx].file_hash);
+                                                if (filepath)
+                                                  record_file_memory_usage (filepath, rss_kb / 1024, 0);
+                                              }
                                           }
                                       }
                                     goto next_proc;  /* Found match, stop checking this process */
@@ -2245,11 +2253,13 @@ next_proc:
                                     shared_data->source_files[i].peak_mb, shared_data->source_files[i].file_hash);
                       }
                     /* Get filename from hash for disk operations */
-                    const char *filename = get_filename_from_hash (shared_data->source_files[i].file_hash);
-                    if (filename)
-                      {
-                        record_file_memory_usage (filename, shared_data->source_files[i].current_mb, 1);  /* final=1 */
-                      }
+                    {
+                      const char *filepath = get_filename_from_hash (shared_data->source_files[i].file_hash);
+                      if (filepath)
+                        {
+                          record_file_memory_usage (filepath, shared_data->source_files[i].current_mb, 1);  /* final=1 */
+                        }
+                    }
                   }
 
                 /* Remove this entry by shifting remaining entries */
