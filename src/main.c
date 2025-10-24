@@ -240,7 +240,7 @@ struct rlimit stack_limit;
 unsigned int job_slots;
 
 #define INVALID_JOB_SLOTS (-1)
-static unsigned int master_job_slots = 0;
+unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
 static const int default_job_slots = INVALID_JOB_SLOTS;
@@ -1459,9 +1459,11 @@ get_memory_stats (unsigned int *percent)
   return 0;
 }
 
-/* Reserve memory for a process about to start */
+/* Reserve or release memory for a process
+   Positive value: reserve memory
+   Negative value: release memory */
 void
-reserve_memory_mb (unsigned long mb)
+reserve_memory_mb (long mb)
 {
   if (shared_data == NULL)
     {
@@ -1470,25 +1472,20 @@ reserve_memory_mb (unsigned long mb)
     }
 
   pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-  shared_data->reserved_memory_mb += mb;
-  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-}
-
-/* Release reserved memory once process is being tracked */
-void
-release_reserved_memory_mb (unsigned long mb)
-{
-  if (shared_data == NULL)
+  if (mb > 0)
     {
-      if (init_shared_memory () != 0)
-        return; /* Fallback if shared memory fails */
+      /* Reserve memory */
+      shared_data->reserved_memory_mb += mb;
     }
-
-  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-  if (shared_data->reserved_memory_mb >= mb)
-    shared_data->reserved_memory_mb -= mb;
-  else
-    shared_data->reserved_memory_mb = 0;
+  else if (mb < 0)
+    {
+      /* Release memory (ensure we don't go below zero) */
+      unsigned long release_mb = (unsigned long)(-mb);
+      if (shared_data->reserved_memory_mb >= release_mb)
+        shared_data->reserved_memory_mb -= release_mb;
+      else
+        shared_data->reserved_memory_mb = 0;
+    }
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 }
 
@@ -2112,7 +2109,7 @@ next_proc:
                     /* Release the reserved memory now that process has exited */
                     if (main_monitoring_data.compilations[i].peak_mb > 0)
                       {
-                        release_reserved_memory_mb (main_monitoring_data.compilations[i].peak_mb);
+                        reserve_memory_mb (-(long)main_monitoring_data.compilations[i].peak_mb);
                         debug_write ("[MEMORY] Released %luMB reservation for %s (process exited)\n",
                                     main_monitoring_data.compilations[i].peak_mb, main_monitoring_data.compilations[i].filename);
                       }
