@@ -129,7 +129,7 @@ static void decode_env_switches (const char *envar, size_t len,
 static char *quote_for_env (char *out, const char *in);
 static void initialize_global_hash_tables (void);
 
-
+
 /* True if C is a switch value that corresponds to a short option.  */
 
 #define short_option(c) ((c) <= CHAR_MAX)
@@ -240,6 +240,7 @@ struct rlimit stack_limit;
 unsigned int job_slots;
 
 #define INVALID_JOB_SLOTS (-1)
+static unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
 static const int default_job_slots = INVALID_JOB_SLOTS;
@@ -678,7 +679,7 @@ unsigned long command_count = 1;
 
 static int stdin_offset = -1;
 
-
+
 /* The usage output.  We write it this way to make life easier for the
    translators, especially those trying to translate to right-to-left
    languages like Hebrew.  */
@@ -765,10 +766,6 @@ static const char *const usage[] =
                               Consider FILE to be infinitely new.\n"),
     N_("\
   --warn-undefined-variables  Warn when an undefined variable is referenced.\n"),
-    N_("\
-  --auto-adjust-jobs          Enable automatic job adjustment based on memory.\n"),
-    N_("\
-  --no-auto-adjust-jobs       Disable automatic job adjustment.\n"),
     N_("\
   --nomem                     Disable memory status display.\n"),
     NULL
@@ -909,7 +906,7 @@ struct command_variable
     struct variable *variable;
   };
 static struct command_variable *command_variables;
-
+
 /* The name we were invoked with.  */
 
 const char *program;
@@ -984,7 +981,7 @@ unsigned short stopchar_map[UCHAR_MAX + 1] = {0};
 
 struct output make_sync;
 
-
+
 /* Mask of signals that are being caught with fatal_error_signal.  */
 
 #if defined(POSIX)
@@ -5341,11 +5338,10 @@ die (int status)
 
       dying = 1;
 
-      /* Save memory profiles for future builds */
-      save_memory_profiles ();
-
-      /* Cleanup shared memory */
-      cleanup_shared_memory ();
+      if (makelevel == 0) {
+        save_memory_profiles ();
+        cleanup_shared_memory ();
+      }
 
       if (print_version_flag)
         print_version ();

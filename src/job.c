@@ -239,11 +239,6 @@ struct child *children = 0;
 
 unsigned int job_slots_used = 0;
 
-/* Memory profiling per-file */
-#define MAX_MEMORY_PROFILES 10000
-static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
-static unsigned int memory_profile_count = 0;
-
 /* Memory usage statistics for estimating unknown files */
 static struct {
   unsigned long avg_mb_per_kb;    /* Average (mean) MB per KB of source file */
@@ -3997,7 +3992,6 @@ calculate_memory_stats (const char *caller_file, int caller_line)
 {
   unsigned int i;
   unsigned long total_mb_per_kb = 0;
-  unsigned long min_val = ~0UL;
   unsigned long max_val = 0;
   unsigned int valid_count = 0;
   unsigned long *ratios;
@@ -4025,7 +4019,6 @@ calculate_memory_stats (const char *caller_file, int caller_line)
 
           ratios[valid_count] = mb_per_kb;
           total_mb_per_kb += mb_per_kb;
-          if (mb_per_kb < min_val) min_val = mb_per_kb;
           if (mb_per_kb > max_val) max_val = mb_per_kb;
           valid_count++;
         }
@@ -4036,7 +4029,6 @@ calculate_memory_stats (const char *caller_file, int caller_line)
       /* Sort for median calculation */
       qsort (ratios, valid_count, sizeof(unsigned long), compare_unsigned_long);
 
-      memory_stats.min_mb_per_kb = min_val;
       memory_stats.avg_mb_per_kb = total_mb_per_kb / valid_count;
       memory_stats.conservative_mb_per_kb = ratios[(valid_count * 3) / 4];  /* Conservative: 75th percentile */
       memory_stats.max_mb_per_kb = max_val;
