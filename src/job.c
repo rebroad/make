@@ -228,7 +228,6 @@ pid2str (pid_t pid)
 static void free_child (struct child *);
 static void start_job_command (struct child *child);
 static int load_too_high (void);
-static int memory_too_low (void);
 static int job_next_command (struct child *);
 static int start_waiting_job (struct child *);
 
@@ -239,10 +238,6 @@ struct child *children = 0;
 /* Number of children currently running.  */
 
 unsigned int job_slots_used = 0;
-
-/* Total count of jobs started and ended (for trajectory monitoring) */
-volatile unsigned int jobs_started_total = 0;
-volatile unsigned int jobs_ended_total = 0;
 
 /* Memory profiling per-file */
 #define MAX_MEMORY_PROFILES 10000
@@ -1203,7 +1198,9 @@ reap_children (int block, int err)
         {
           job_slots_used -= c->jobslot;
           if (c->jobslot)
-            jobs_ended_total++;
+            {
+              /* Job slot released */
+            }
         }
 
       /* Remove the child from the chain and free it.  */
@@ -1854,7 +1851,7 @@ start_waiting_job (struct child *c)
      is too high, make this one wait.  */
   if (!c->remote
       && job_slots_used > 0
-      && (load_too_high() || memory_too_low()
+      && (load_too_high()
 #ifdef WINDOWS32
           || process_table_full ()
 #endif
@@ -2410,28 +2407,6 @@ load_too_high (void)
 
    Returns 1 if memory is too low (don't start new jobs), 0 otherwise.  */
 
-static int
-memory_too_low (void)
-{
-  unsigned int mem_percent;
-  unsigned long free_mb;
-
-  /* If min_memory_mb is not set (default 0), don't limit based on memory */
-  if (min_memory_mb == 0)
-    return 0;
-
-  /* Get current memory statistics */
-  get_memory_stats (&mem_percent, &free_mb);
-
-  /* If we can't determine memory usage, allow the job to proceed */
-  if (mem_percent == 0)
-    return 0;
-
-  DB (DB_JOBS, ("Available memory = %lu MB (minimum required = %lu MB)\n",
-                free_mb, min_memory_mb));
-
-  return free_mb < min_memory_mb;
-}
 
 /* Start jobs that are waiting for the load to be lower.  */
 
@@ -2595,7 +2570,6 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
 #if !defined(USE_POSIX_SPAWN)
 
   /* Track actual process spawns for memory monitoring */
-  jobs_started_total++;
 
   {
     /* The child may clobber environ so remember ours and restore it.  */
@@ -2712,7 +2686,6 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
     }
 
   /* Track actual process spawns for memory monitoring */
-  jobs_started_total++;
 
   /* Start the program.  */
   while ((r = posix_spawn (&pid, cmd, &fa, &attr, argv,

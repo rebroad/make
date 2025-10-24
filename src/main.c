@@ -44,6 +44,9 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 /* Set to 1 to enable verbose memory monitor debugging (timing, iteration markers, etc.) */
 #define DEBUG_MEMORY_MONITOR 0
+
+/* Memory monitoring for auto-adjust-jobs feature */
+#define MAX_TRACKED_COMPILATIONS 100    /* Max concurrent compilations to track */
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -237,7 +240,6 @@ struct rlimit stack_limit;
 unsigned int job_slots;
 
 #define INVALID_JOB_SLOTS (-1)
-static unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
 static const int default_job_slots = INVALID_JOB_SLOTS;
@@ -278,7 +280,6 @@ static unsigned int memory_high_percent = 82;
 static unsigned int memory_comfortable_percent = 70;
 unsigned long min_memory_mb = 1024;  /* Minimum memory threshold (MB) */
 static int jobs_paused = 0;  /* Are we currently paused due to memory? */
-static time_t last_job_adjustment = 0;
 static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
@@ -306,8 +307,7 @@ signal_all_descendant_makes (int sig)
   char cmdline[256];
 
   /* Track all our descendants */
-#define MAX_TRACKED_PIDS 100
-  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
   int source_count = 0;
   int found;
 
@@ -359,7 +359,7 @@ signal_all_descendant_makes (int sig)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
                     {
                       descendant_pids[source_count++] = check_pid;
                     }
@@ -418,8 +418,7 @@ kill_compilation_jobs (int sig)
   char cmdline[256];
 
   /* Track all our descendants */
-#define MAX_TRACKED_PIDS 100
-  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
   int source_count = 0;
   int found;
 
@@ -471,7 +470,7 @@ kill_compilation_jobs (int sig)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
                     {
                       descendant_pids[source_count++] = check_pid;
                     }
@@ -529,8 +528,7 @@ count_all_descendants (void)
   int j;
 
   /* Simple array to track PIDs we've identified as descendants */
-#define MAX_TRACKED_PIDS 100
-  static pid_t descendant_pids[MAX_TRACKED_PIDS];
+  static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
   int source_count = 0;
   int found;
 
@@ -587,7 +585,7 @@ count_all_descendants (void)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_PIDS)
+                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
                     {
                       descendant_pids[source_count++] = check_pid;
                       count++;
@@ -614,7 +612,7 @@ init_memory_monitoring_env (void)
   /* Check if enabled via environment (default: ON) */
   if (auto_adjust_jobs_flag == -1)
     {
-      env = getenv ("MAKE_AUTO_ADJUST_JOBS");
+      env = getenv ("MAKE_MEMORY_AWARE");
       if (env)
         auto_adjust_jobs_flag = (strcmp (env, "0") != 0 && strcmp (env, "no") != 0 && strcmp (env, "false") != 0);
       else
@@ -900,8 +898,8 @@ static struct command_switch switches[] =
     { TEMP_STDIN_OPT, filename, &makefiles, 0, 0, 0, 0, 0, 0, "temp-stdin", 0 },
     { CHAR_MAX+11, string, &shuffle_mode, 1, 1, 0, 0, "random", 0, "shuffle", 0 },
     { CHAR_MAX+12, string, &jobserver_style, 1, 0, 0, 0, 0, 0, "jobserver-style", 0 },
-    { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "auto-adjust-jobs", 0 },
-    { CHAR_MAX+14, flag_off, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "no-auto-adjust-jobs", 0 },
+    { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
+    { CHAR_MAX+14, flag_off, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
     { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
     { CHAR_MAX+16, positive_int, &min_memory_mb, 1, 1, 0, 0, 0, 0, "min-mem", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
@@ -1193,9 +1191,6 @@ debug_signal_handler (int sig UNUSED)
 }
 #endif
 
-/* Memory monitoring for auto-adjust-jobs feature */
-#define MAX_TRACKED_SOURCES 1000    /* Max unique source files to track */
-
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
@@ -1206,7 +1201,7 @@ struct shared_memory_data {
     char file_hash[41];     /* SHA1 hex string (40 chars + null) */
     unsigned long peak_mb;
     unsigned long current_mb;
-  } source_files[MAX_TRACKED_SOURCES];
+  } source_files[MAX_TRACKED_COMPILATIONS];
   pthread_mutex_t source_mutex;
 };
 static struct shared_memory_data *shared_data = NULL;
@@ -1603,8 +1598,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
   if (job_slots > 0)
     display_slots = job_slots;
-  else if (master_job_slots > 0)
-    display_slots = master_job_slots;
   else
     display_slots = 0;  /* Not running jobs */
 
@@ -1763,34 +1756,13 @@ memory_monitor_thread_func (void *arg)
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
 #endif
-  long mb_per_second;
-  long projected_free_in_5s;
-  long total_mb_change;
-  long total_time;
-  int valid_samples;
-  time_t time_diff;
-  long mb_diff;
-  int idx;
-  int newest_idx;
 
   /* Sliding window for smoothed rate calculation (last 10 samples = 3 seconds) */
 #define MEMORY_SAMPLE_WINDOW 10
-  static unsigned long memory_samples[MEMORY_SAMPLE_WINDOW];
-  static time_t memory_sample_times[MEMORY_SAMPLE_WINDOW];
-  static int sample_index = 0;
-  static int samples_collected = 0;
-  static int debug_sample_count = 0;
   static time_t last_approaching_msg = 0;
   static int iteration_count = 0;
-  static unsigned int last_jobs_started_total = 0;
-  static unsigned int last_jobs_ended_total = 0;
 
 
-  unsigned int jobs_started_since_last_trajectory;
-  unsigned int jobs_ended_since_last_trajectory;
-  unsigned int old_slots;
-  unsigned int desired_procs;
-  unsigned int current_parallelism;
 
   (void)arg;
   monitor_start_time = time (NULL);
@@ -1897,7 +1869,6 @@ memory_monitor_thread_func (void *arg)
                       fflush (stderr);
 
                       /* Resume with just 1 job */
-                      master_job_slots = 1;
                       job_slots = 1;
 
                       /* Clear the paused flag to allow resumption */
@@ -2114,7 +2085,7 @@ memory_monitor_thread_func (void *arg)
                                                               strip_ptr += 3;
 
                                                             /* Store the filename mapped to THIS descendant PID */
-                                                            if (shared_data->source_count < MAX_TRACKED_SOURCES)
+                                                             if (shared_data->source_count < MAX_TRACKED_COMPILATIONS)
                                                               {
                                                                 int found = 0;
 
@@ -2134,7 +2105,7 @@ memory_monitor_thread_func (void *arg)
 
                                                                     /* Thread-safe access to shared descendant data */
                                                                     pthread_mutex_lock (&shared_data->source_mutex);
-                                                                    if (shared_data->source_count < MAX_TRACKED_SOURCES)
+                                                                    if (shared_data->source_count < MAX_TRACKED_COMPILATIONS)
                                                                       {
                                                                         shared_data->source_files[shared_data->source_count].pid = pid;
                                                                         generate_file_hash (strip_ptr, shared_data->source_files[shared_data->source_count].file_hash);
@@ -2304,8 +2275,8 @@ next_proc:
 #if DEBUG_MEMORY_MONITOR
       if (now - last_debug >= 5)
         {
-          debug_write ("[DEBUG @ %lus] job_slots=%u job_slots_used=%u master_job_slots=%u mem=%u%% free=%luMB\n",
-                      (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, master_job_slots, mem_percent, free_mb);
+          debug_write ("[DEBUG @ %lus] job_slots=%u job_slots_used=%u mem=%u%% free=%luMB\n",
+                      (unsigned long)(now - monitor_start_time), job_slots, job_slots_used, mem_percent, free_mb);
           last_debug = now;
         }
 #endif
@@ -2315,83 +2286,7 @@ next_proc:
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
 
-      /* SLIDING WINDOW TRAJECTORY PREDICTION: Add current sample to window */
-      memory_samples[sample_index] = free_mb;
-      memory_sample_times[sample_index] = now;
-      sample_index = (sample_index + 1) % MEMORY_SAMPLE_WINDOW;
-      if (samples_collected < MEMORY_SAMPLE_WINDOW)
-        samples_collected++;
-      debug_sample_count++;
 
-      /* Calculate smoothed rate of memory decline (average over all samples) */
-      if (samples_collected >= 3)  /* Need at least 3 samples for trend */
-        {
-          total_mb_change = 0;
-          total_time = 0;
-          valid_samples = 0;
-          newest_idx = (sample_index - 1 + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
-
-          /* Compare each sample with the newest to get rate */
-          for (int i = 0; i < samples_collected; i++)
-            {
-              idx = (sample_index - 1 - i + MEMORY_SAMPLE_WINDOW) % MEMORY_SAMPLE_WINDOW;
-              if (idx == newest_idx && i == 0)
-                continue;  /* Skip the newest sample comparing with itself */
-
-              time_diff = now - memory_sample_times[idx];
-              if (time_diff > 0 && time_diff <= 5)  /* Only use samples from last 5 seconds */
-                {
-                  mb_diff = (long)free_mb - (long)memory_samples[idx];
-                  total_mb_change += mb_diff;
-                  total_time += time_diff;
-                  valid_samples++;
-                }
-            }
-
-          /* Calculate average rate (negative = declining) */
-          if (valid_samples > 0 && total_time > 0)
-            {
-              mb_per_second = total_mb_change / total_time;
-
-              /* Debug trajectory calculation only when memory is concerning (non-blocking) */
-              if (samples_collected >= 5 && debug_sample_count % 10 == 0 && mem_percent >= 75)
-                {
-                  /* Compute job starts/ends since last report */
-                  jobs_started_since_last_trajectory = jobs_started_total - last_jobs_started_total;
-                  jobs_ended_since_last_trajectory = jobs_ended_total - last_jobs_ended_total;
-                  last_jobs_started_total = jobs_started_total;
-                  last_jobs_ended_total = jobs_ended_total;
-
-                  debug_write ("[TRAJECTORY] samples=%d valid=%d total_change=%ldMB total_time=%lds rate=%ldMB/s started=%u ended=%u\n",
-                              samples_collected, valid_samples, total_mb_change, total_time, mb_per_second,
-                              jobs_started_since_last_trajectory, jobs_ended_since_last_trajectory);
-                }
-
-              /* If memory is declining (mb_per_second < 0), project forward */
-              if (mb_per_second < -50)  /* Dropping more than 50MB/s is concerning */
-                {
-                  projected_free_in_5s = (long)free_mb + (mb_per_second * 5);
-
-                  /* If we're projected to hit <1.5GB in 5 seconds, AGGRESSIVELY reduce -j NOW! */
-                  if (projected_free_in_5s < 1500 && job_slots > 1)
-                    {
-                      clear_status_line ();
-                      debug_write ("[EMERGENCY] Memory dropping %ldMB/s, projected %ldMB in 5s - reducing to -j1!\n",
-                                  -mb_per_second, projected_free_in_5s);
-
-                      /* Emergency drop to -j1 immediately! */
-                      job_slots = 1;
-                      last_job_adjustment = now;
-
-                      /* Skip the rest of the adjustment logic */
-                      usleep (100000);  /* 100ms for accurate memory tracking */
-                      continue;
-                    }
-                }
-            }
-        }
-
-      /* Debug marker D - after trajectory, before emergency */
 #if DEBUG_MEMORY_MONITOR
       if (iteration_count % 10 == 1)
         debug_write ("[D%d]", iteration_count);
@@ -2402,8 +2297,8 @@ next_proc:
         {
           if (now - last_approaching_msg >= 1)
             {
-              debug_write ("[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d master_job_slots=%u\n",
-                          free_mb, min_memory_mb, jobs_paused, master_job_slots);
+              debug_write ("[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d\n",
+                          free_mb, min_memory_mb, jobs_paused);
               last_approaching_msg = now;
             }
         }
@@ -2418,7 +2313,6 @@ next_proc:
                           free_mb);
               jobs_paused = 1;
               job_slots = 0;  /* Stop spawning new jobs immediately */
-              last_job_adjustment = now;
             }
         }
       /* RECOVERY: Memory has recovered from emergency - RESUME build */
@@ -2429,7 +2323,6 @@ next_proc:
           jobs_paused = 0;
           /* Start with -j1, will gradually increase as memory allows */
           job_slots = 1;
-          last_job_adjustment = now;
         }
 
       /* Skip normal adjustment when paused - waiting for memory recovery */
@@ -2439,91 +2332,7 @@ next_proc:
           continue;
         }
 
-      /* CRITICAL: Monitor thread CANNOT use jobserver (it's for main thread only!)
-       * Instead, we adjust job_slots directly - make will see this and adjust its behavior */
-
-      /* Use job_slots if set, otherwise use master_job_slots */
-      current_parallelism = (job_slots > 0) ? job_slots : master_job_slots;
-      if (current_parallelism == 0)
-        current_parallelism = 1;  /* Fallback */
-
-      desired_procs = current_parallelism;
-
-      if (master_job_slots > 0 && job_slots == 0)
-        {
-          /* In jobserver mode, we adjust by modifying job_slots
-           * The main make process will see this and adjust accordingly */
-          current_parallelism = master_job_slots;
-          desired_procs = master_job_slots;
-
-          /* Critical: drop to 40% */
-          if (mem_percent >= effective_critical_percent && current_parallelism > 1)
-            {
-              desired_procs = (current_parallelism * 4) / 10;
-              if (desired_procs < 1)
-                desired_procs = 1;
-            }
-          /* High: drop to 70% */
-          else if (mem_percent >= effective_high_percent && current_parallelism > 1)
-            {
-              desired_procs = (current_parallelism * 7) / 10;
-              if (desired_procs < 2)
-                desired_procs = 2;
-            }
-          /* Comfortable: can increase */
-          else if (mem_percent < memory_comfortable_percent && current_parallelism < master_job_slots)
-            {
-              desired_procs = current_parallelism + 1;
-            }
-
-          /* DON'T use jobserver from monitor thread - just set job_slots!
-           * Main thread will see the change and adjust its spawning behavior */
-          if (desired_procs != current_parallelism && now - last_job_adjustment >= 1)
-            {
-              job_slots = desired_procs;
-
-              clear_status_line ();
-              debug_write ("[ADJUSTED -j] %u -> %u (memory: %luMB, %u%%)\n",
-                          current_parallelism, desired_procs, free_mb, mem_percent);
-              last_job_adjustment = now;
-            }
-        }
-      else if (job_slots > 0)
-        {
-          /* DIRECT MODE: job_slots already set, adjust it */
-          old_slots = job_slots;
-
-          /* Critical: drop quickly */
-          if (mem_percent >= effective_critical_percent && job_slots > 1)
-            {
-              job_slots = (job_slots * 4) / 10;
-              if (job_slots < 1)
-                job_slots = 1;
-              last_job_adjustment = now;
-            }
-          /* High: gentle decrease */
-          else if (mem_percent >= effective_high_percent && job_slots > 1)
-            {
-              job_slots = (job_slots * 7) / 10;
-              if (job_slots < 2)
-                job_slots = 2;
-              last_job_adjustment = now;
-            }
-          /* Comfortable: can increase */
-          else if (mem_percent < memory_comfortable_percent &&
-                   job_slots < master_job_slots && master_job_slots > 0)
-            {
-              job_slots++;
-              last_job_adjustment = now;
-            }
-
-          if (old_slots != job_slots)
-            {
-              clear_status_line ();
-              debug_write ("[AUTO-ADJUST -j] %u -> %u (memory: %luMB free, %u%%)\n",
-                          old_slots, job_slots, free_mb, mem_percent);
-            }
-        }
+      /* Job pausing logic - we don't adjust -j, just pause/resume jobs based on memory */
 
       /* Debug: Show we reached end of loop iteration */
 #if DEBUG_MEMORY_MONITOR
@@ -3725,7 +3534,7 @@ main (int argc, char **argv, char **envp)
   if (auto_adjust_jobs_flag && makelevel == 0 && job_slots > 0)
     {
       char msg[256];
-      sprintf (msg, _("Memory-aware job adjustment enabled (starting with -j%u)"), job_slots);
+      sprintf (msg, _("Memory-aware job pausing enabled (starting with -j%u)"), job_slots);
       OS (message, 0, "%s", msg);
 
       /* Start the background monitoring thread */
@@ -4092,7 +3901,6 @@ main (int argc, char **argv, char **envp)
       if (jobserver_auth)
         {
           /* We're using the jobserver so set job_slots to 0.  */
-          master_job_slots = job_slots;
           job_slots = 0;
         }
     }
@@ -5654,15 +5462,15 @@ clean_jobserver (int status)
 
   /* Sanity: If we're the master, were all the tokens written back?  */
 
-  if (master_job_slots)
+  if (jobserver_auth)
     {
       /* We didn't write one for ourself, so start at 1.  */
       unsigned int tokens = 1 + jobserver_acquire_all ();
 
-      if (tokens != master_job_slots)
+      if (tokens != job_slots)
         ONN (error, NILF,
              "INTERNAL: Exiting with %u jobserver tokens available; should be %u!",
-             tokens, master_job_slots);
+             tokens, job_slots);
 
       reset_jobserver ();
     }

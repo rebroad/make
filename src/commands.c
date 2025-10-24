@@ -538,26 +538,32 @@ fatal_error_signal (int sig)
   jobserver_clear ();
 
   /* A termination signal won't be sent to the entire
-     process group, but it means we want to kill the children.
-     EXPLICITLY kill ALL children - don't rely on automatic signal propagation! */
+     process group, but it means we want to kill the children.  */
+
+  if (sig == SIGTERM)
+    {
+      struct child *c;
+      for (c = children; c != 0; c = c->next)
+        if (!c->remote && c->pid > 0)
+          (void) kill (c->pid, SIGTERM);
+    }
+
+  /* If we got a signal that means the user
+     wanted to kill make, remove pending targets.  */
 
   if (sig == SIGTERM || sig == SIGINT
 #ifdef SIGHUP
-      || sig == SIGHUP
+    || sig == SIGHUP
 #endif
 #ifdef SIGQUIT
-      || sig == SIGQUIT
+    || sig == SIGQUIT
 #endif
-     )
+    )
     {
       struct child *c;
-      
-      /* Kill local children first */
-      for (c = children; c != 0; c = c->next)
-        if (!c->remote && c->pid > 0)
-          (void) kill (c->pid, sig);
-      
-      /* Also kill remote children */
+
+      /* Remote children won't automatically get signals sent
+         to the process group, so we must send them.  */
       for (c = children; c != 0; c = c->next)
         if (c->remote && c->pid > 0)
           (void) remote_kill (c->pid, sig);
