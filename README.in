@@ -24,6 +24,18 @@ If you get errors from your system's 'make' when building GNU Make, try using
 'build.sh' instead.
 
 
+Building GNU Make
+=================
+
+Quick Start:
+- **Released packages**: `./configure && make && make install`
+- **Git/development builds**: `./bootstrap && ./configure && make && make install`
+
+For detailed build instructions, prerequisites, troubleshooting, and advanced options, see **BUILD.md**.
+
+See INSTALL for more detailed information about configure options.
+
+
 GNU Make is free software.  See the file COPYING for copying conditions.
 GNU Make is copyright by the Free Software Foundation.  Copyright notices
 condense sequential years into a range; e.g. "1987-1994" means all years

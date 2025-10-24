@@ -47,6 +47,15 @@ may remove or edit it.
 you want to change it or regenerate 'configure' using a newer version of
 'autoconf'.
 
+   If you are building from Git or have modified configure.ac, you may need
+to regenerate the autotools files first:
+
+   For Git builds, use the bootstrap script:
+     ./bootstrap
+
+   For other cases, use autoreconf:
+     autoreconf -fiv
+
    The simplest way to compile this package is:
 
   1. 'cd' to the directory containing the package's source code and type

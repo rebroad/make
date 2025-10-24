@@ -136,6 +136,13 @@ And/or just re-generate auto-generatable files with:
 
 (Running ./bootstrap does both in one step.)
 
+**Important:** The bootstrap script is the recommended way to regenerate autotools files for Git builds. It handles all the necessary steps including pulling gnulib dependencies and running autoconf/automake in the correct order.
+
+**Alternative:** If you prefer to use autotools directly:
+```bash
+autoreconf -fiv
+```
+
 At this point you have successfully brought your Git copy of the GNU
 make source directory up to the point where it can be treated
 more-or-less like the official package you would get from ftp.gnu.org.
