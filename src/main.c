@@ -275,11 +275,6 @@ double default_load_average = -1.0;
 static int auto_adjust_jobs_flag = -1;  /* -1 = not set, will check env */
 static int disable_memory_display = 0;  /* Disable memory status display */
 static unsigned int memory_check_interval = 3;  /* seconds */
-static unsigned int memory_critical_percent = 88;
-static unsigned int memory_high_percent = 82;
-static unsigned int memory_comfortable_percent = 70;
-unsigned long min_memory_mb = 1024;  /* Minimum memory threshold (MB) */
-static int jobs_paused = 0;  /* Are we currently paused due to memory? */
 static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
@@ -308,11 +303,11 @@ signal_all_descendant_makes (int sig)
 
   /* Track all our descendants */
   static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
-  int source_count = 0;
+  int compile_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[source_count++] = my_pid;
+  descendant_pids[compile_count++] = my_pid;
 
   /* Walk /proc multiple times to find all descendants */
   for (i = 0; i < 5; i++)
@@ -338,7 +333,7 @@ signal_all_descendant_makes (int sig)
           if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
             {
               found = 0;
-              for (j = 0; j < source_count; j++)
+              for (j = 0; j < compile_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -350,7 +345,7 @@ signal_all_descendant_makes (int sig)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < source_count; j++)
+                  for (j = 0; j < compile_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -359,9 +354,9 @@ signal_all_descendant_makes (int sig)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
+                  if (!found && compile_count < MAX_TRACKED_COMPILATIONS)
                     {
-                      descendant_pids[source_count++] = check_pid;
+                      descendant_pids[compile_count++] = check_pid;
                     }
                 }
             }
@@ -373,7 +368,7 @@ signal_all_descendant_makes (int sig)
     }
 
   /* Now signal only descendant make processes (not ourselves, not gcc) */
-  for (i = 0; i < source_count; i++)
+  for (i = 0; i < compile_count; i++)
     {
       if (descendant_pids[i] == my_pid)
         continue;  /* Don't signal ourselves */
@@ -419,11 +414,11 @@ kill_compilation_jobs (int sig)
 
   /* Track all our descendants */
   static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
-  int source_count = 0;
+  int compile_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[source_count++] = my_pid;
+  descendant_pids[compile_count++] = my_pid;
 
   /* Walk /proc multiple times to find all descendants */
   for (i = 0; i < 5; i++)
@@ -449,7 +444,7 @@ kill_compilation_jobs (int sig)
           if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
             {
               found = 0;
-              for (j = 0; j < source_count; j++)
+              for (j = 0; j < compile_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -461,7 +456,7 @@ kill_compilation_jobs (int sig)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < source_count; j++)
+                  for (j = 0; j < compile_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -470,9 +465,9 @@ kill_compilation_jobs (int sig)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
+                  if (!found && compile_count < MAX_TRACKED_COMPILATIONS)
                     {
-                      descendant_pids[source_count++] = check_pid;
+                      descendant_pids[compile_count++] = check_pid;
                     }
                 }
             }
@@ -484,7 +479,7 @@ kill_compilation_jobs (int sig)
     }
 
   /* Now kill only compilation jobs (gcc, g++, ld, etc - NOT make!) */
-  for (i = 0; i < source_count; i++)
+  for (i = 0; i < compile_count; i++)
     {
       if (descendant_pids[i] == my_pid)
         continue;  /* Don't kill ourselves */
@@ -529,11 +524,11 @@ count_all_descendants (void)
 
   /* Simple array to track PIDs we've identified as descendants */
   static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
-  int source_count = 0;
+  int compile_count = 0;
   int found;
 
   my_pid = getpid ();
-  descendant_pids[source_count++] = my_pid;
+  descendant_pids[compile_count++] = my_pid;
 
   /* Walk /proc multiple times to catch all levels of descendants */
   for (i = 0; i < 5; i++)  /* Up to 5 levels deep should be enough */
@@ -563,7 +558,7 @@ count_all_descendants (void)
             {
               /* Check if PPID is in our descendant list */
               found = 0;
-              for (j = 0; j < source_count; j++)
+              for (j = 0; j < compile_count; j++)
                 {
                   if (ppid == descendant_pids[j])
                     {
@@ -576,7 +571,7 @@ count_all_descendants (void)
               if (found)
                 {
                   found = 0;
-                  for (j = 0; j < source_count; j++)
+                  for (j = 0; j < compile_count; j++)
                     {
                       if (check_pid == descendant_pids[j])
                         {
@@ -585,9 +580,9 @@ count_all_descendants (void)
                         }
                     }
 
-                  if (!found && source_count < MAX_TRACKED_COMPILATIONS)
+                  if (!found && compile_count < MAX_TRACKED_COMPILATIONS)
                     {
-                      descendant_pids[source_count++] = check_pid;
+                      descendant_pids[compile_count++] = check_pid;
                       count++;
                     }
                 }
@@ -619,22 +614,6 @@ init_memory_monitoring_env (void)
         auto_adjust_jobs_flag = 1;  /* Default: ON */
     }
 
-  /* Memory thresholds from environment */
-  env = getenv ("MAKE_MEMORY_CRITICAL");
-  if (env)
-    memory_critical_percent = (unsigned int)atoi (env);
-
-  env = getenv ("MAKE_MEMORY_HIGH");
-  if (env)
-    memory_high_percent = (unsigned int)atoi (env);
-
-  env = getenv ("MAKE_MEMORY_COMFORTABLE");
-  if (env)
-    memory_comfortable_percent = (unsigned int)atoi (env);
-
-  env = getenv ("MAKE_MEMORY_EMERGENCY_MB");
-  if (env)
-    min_memory_mb = (unsigned long)atoi (env);
 
   env = getenv ("MAKE_MEMORY_CHECK_INTERVAL");
   if (env)
@@ -742,8 +721,6 @@ static const char *const usage[] =
     N_("\
   -l [N], --load-average[=N], --max-load[=N]\n\
                               Don't start multiple jobs unless load is below N.\n"),
-    N_("\
-  --min-mem=N                 Set minimum memory threshold to N MB (default: 1024).\n"),
     N_("\
   -L, --check-symlink-times   Use the latest mtime between symlinks and target.\n"),
     N_("\
@@ -901,7 +878,6 @@ static struct command_switch switches[] =
     { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
     { CHAR_MAX+14, flag_off, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
     { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
-    { CHAR_MAX+16, positive_int, &min_memory_mb, 1, 1, 0, 0, 0, 0, "min-mem", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
@@ -1194,15 +1170,15 @@ debug_signal_handler (int sig UNUSED)
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
-  volatile int source_count;
+  volatile int compile_count;
   volatile int memory_profiles_dirty;  /* Shared dirty flag for cross-process signaling */
   struct {
     pid_t pid;
     char file_hash[41];     /* SHA1 hex string (40 chars + null) */
     unsigned long peak_mb;
     unsigned long current_mb;
-  } source_files[MAX_TRACKED_COMPILATIONS];
-  pthread_mutex_t source_mutex;
+  } compilations[MAX_TRACKED_COMPILATIONS];
+  pthread_mutex_t compile_mutex;
 };
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
@@ -1320,11 +1296,11 @@ init_shared_memory (void)
   if (created)
     {
       shared_data->reserved_memory_mb = 0;
-      shared_data->source_count = 0;
+      shared_data->compile_count = 0;
       shared_data->memory_profiles_dirty = 0;
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-      pthread_mutex_init (&shared_data->source_mutex, &mutex_attr);
+      pthread_mutex_init (&shared_data->compile_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
     }
 
@@ -1368,7 +1344,7 @@ get_imminent_memory_mb (void)
   unsigned long total_current = 0;
   unsigned long result = 0;
   int i;
-  int local_source_count;
+  int local_compile_count;
 
   /* Initialize shared memory if not already done */
   if (shared_data == NULL)
@@ -1377,10 +1353,10 @@ get_imminent_memory_mb (void)
         return 0; /* Fallback to no imminent memory if shared memory fails */
     }
 
-  /* Thread-safe access to shared source data */
-  pthread_mutex_lock (&shared_data->source_mutex);
-  local_source_count = shared_data->source_count;
-  pthread_mutex_unlock (&shared_data->source_mutex);
+  /* Thread-safe access to shared compilation data */
+  pthread_mutex_lock (&shared_data->compile_mutex);
+  local_compile_count = shared_data->compile_count;
+  pthread_mutex_unlock (&shared_data->compile_mutex);
 
   /* Calculate imminent memory on-demand in a single loop */
   /* reserved_memory_mb = sum of peak memory for all active processes
@@ -1390,23 +1366,23 @@ get_imminent_memory_mb (void)
   fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   fprintf (stderr, "  Reserved memory (active processes): %luMB\n", shared_data->reserved_memory_mb);
 
-  if (local_source_count > 0 || shared_data->reserved_memory_mb > 0)
+  if (local_compile_count > 0 || shared_data->reserved_memory_mb > 0)
     {
 
-      if (local_source_count > 0)
+      if (local_compile_count > 0)
         {
-          fprintf (stderr, "  Tracked source files (%d):\n", local_source_count);
+          fprintf (stderr, "  Tracked compilations (%d):\n", local_compile_count);
 
-          /* Thread-safe access to source data for calculation and debug output */
-          pthread_mutex_lock (&shared_data->source_mutex);
-          for (i = 0; i < local_source_count; i++)
+          /* Thread-safe access to compilation data for calculation and debug output */
+          pthread_mutex_lock (&shared_data->compile_mutex);
+          for (i = 0; i < local_compile_count; i++)
             {
-              total_current += shared_data->source_files[i].current_mb;
+              total_current += shared_data->compilations[i].current_mb;
               fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB\n",
-                      i, shared_data->source_files[i].file_hash,
-                      shared_data->source_files[i].current_mb, shared_data->source_files[i].peak_mb);
+                      i, shared_data->compilations[i].file_hash,
+                      shared_data->compilations[i].current_mb, shared_data->compilations[i].peak_mb);
             }
-          pthread_mutex_unlock (&shared_data->source_mutex);
+          pthread_mutex_unlock (&shared_data->compile_mutex);
         }
 
       fprintf (stderr, "  Calculation: reserved=%luMB - current=%luMB = imminent=%luMB\n",
@@ -1501,8 +1477,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   struct timeval now;
   long elapsed_ms;
   const char *green = "\033[1;32m";
-  const char *yellow = "\033[1;33m";
-  const char *red = "\033[1;31m";
   const char *gray = "\033[0;90m";
   const char *white = "\033[1;37m";
   const char *reset = "\033[0m";
@@ -1567,12 +1541,8 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   spinner = spinners[spinner_state % 10];
   spinner_state++;
 
-  /* Determine color based on memory pressure */
+  /* Use green color for memory bar */
   bar_color = green;
-  if (mem_percent >= memory_critical_percent)
-    bar_color = red;
-  else if (mem_percent >= memory_high_percent)
-    bar_color = yellow;
 
   /* Build memory bar (20 chars) - use safe string building */
   filled = (mem_percent * bar_len) / 100;
@@ -1601,8 +1571,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   else
     display_slots = 0;  /* Not running jobs */
 
-  if (jobs_paused)
-    display_slots = 0;  /* Paused */
 
   /* Build the status string - show total descendant count */
   /* Measure how long counting actually takes */
@@ -1743,23 +1711,15 @@ debug_write (const char *format, ...)
 static void *
 memory_monitor_thread_func (void *arg)
 {
-  struct timeval last_iteration = {0, 0};
-  unsigned int effective_critical_percent = memory_critical_percent;
-  unsigned int effective_high_percent = memory_high_percent;
   struct timeval iteration_start;
-  long delay_ms;
-  unsigned int mem_percent_temp;
-  unsigned long free_mb_temp;
   unsigned int mem_percent;
   unsigned long free_mb;
-  time_t now;
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
 #endif
 
   /* Sliding window for smoothed rate calculation (last 10 samples = 3 seconds) */
 #define MEMORY_SAMPLE_WINDOW 10
-  static time_t last_approaching_msg = 0;
   static int iteration_count = 0;
 
 
@@ -1801,90 +1761,7 @@ memory_monitor_thread_func (void *arg)
 
       gettimeofday (&iteration_start, NULL);
 
-      /* Detect if we're being delayed (system degradation!) */
-      if (last_iteration.tv_sec > 0)
-        {
-          delay_ms = (iteration_start.tv_sec - last_iteration.tv_sec) * 1000 +
-                     (iteration_start.tv_usec - last_iteration.tv_usec) / 1000;
 
-          /* If we're delayed >120ms (20% over 100ms interval), system is already struggling! */
-          if (delay_ms > 200)
-            {
-              /* Dynamically lower thresholds - we're already in trouble! */
-              get_memory_stats (&mem_percent_temp, &free_mb_temp);
-
-              if (mem_percent_temp > 70)
-                {
-                  effective_critical_percent = mem_percent_temp - 2;
-                  effective_high_percent = mem_percent_temp - 5;
-
-                  clear_status_line ();
-                  debug_write ("[SYSTEM DEGRADATION] delay=%ldms, free=%luMB, lowering thresholds to %u%%/%u%%\n",
-                              delay_ms, free_mb_temp, effective_critical_percent, effective_high_percent);
-
-                  /* If memory is critically low during degradation, kill children and wait for recovery */
-                  if (free_mb_temp < 800 && job_slots_used > 0)
-                    {
-                      struct child *c;
-                      unsigned int killed_count = 0;
-
-                      clear_status_line ();
-                      debug_write ("[EMERGENCY KILL] System degraded with only %luMB free - killing %u child processes...\n",
-                                  free_mb_temp, job_slots_used);
-                      fflush (stderr);
-
-                      /* Kill all NON-RECURSIVE child processes (don't kill sub-makes) */
-                      for (c = children; c != 0; c = c->next)
-                        {
-                          if (c->pid > 0 && !c->recursive)
-                            {
-                              kill (c->pid, SIGTERM);
-                              killed_count++;
-                            }
-                        }
-
-                      debug_write ("[EMERGENCY KILL] Sent SIGTERM to %u processes, waiting for them to exit...\n",
-                                  killed_count);
-                      fflush (stderr);
-
-                      /* Wait for all children to die */
-                      while (job_slots_used > 0)
-                        reap_children (1, 0);
-
-                      debug_write ("[EMERGENCY KILL] All children terminated - build will continue\n");
-                      fflush (stderr);
-
-                      /* Now wait for memory to recover above 1024MB */
-                      get_memory_stats (&mem_percent_temp, &free_mb_temp);
-                      while (free_mb_temp <= 1024)
-                        {
-                          debug_write ("[EMERGENCY RECOVERY] Waiting for memory... currently %luMB free (need >1024MB)\n",
-                                      free_mb_temp);
-                          usleep (500000); /* Wait 500ms */
-                          get_memory_stats (&mem_percent_temp, &free_mb_temp);
-                        }
-
-                      debug_write ("[EMERGENCY RECOVERY] Memory recovered to %luMB - resuming with -j1\n",
-                                  free_mb_temp);
-                      fflush (stderr);
-
-                      /* Resume with just 1 job */
-                      job_slots = 1;
-
-                      /* Clear the paused flag to allow resumption */
-                      jobs_paused = 0;
-                    }
-                }
-            }
-          else
-            {
-              /* Restore normal thresholds when responsive */
-              effective_critical_percent = memory_critical_percent;
-              effective_high_percent = memory_high_percent;
-            }
-        }
-
-      last_iteration = iteration_start;
 
       /* Debug marker A */
 #if DEBUG_MEMORY_MONITOR
@@ -1957,11 +1834,11 @@ memory_monitor_thread_func (void *arg)
                                     int descendant_idx = -1;
 
                                     /* Find this source file's individual peak */
-                                    for (int j = 0; j < shared_data->source_count; j++)
+                                    for (int j = 0; j < shared_data->compile_count; j++)
                                       {
-                                        if (shared_data->source_files[j].pid == pid)
+                                        if (shared_data->compilations[j].pid == pid)
                                           {
-                                            descendant_old_peak = shared_data->source_files[j].peak_mb * 1024;  /* Convert to KB for comparison */
+                                            descendant_old_peak = shared_data->compilations[j].peak_mb * 1024;  /* Convert to KB for comparison */
                                             descendant_idx = j;
                                             break;
                                           }
@@ -2085,14 +1962,14 @@ memory_monitor_thread_func (void *arg)
                                                               strip_ptr += 3;
 
                                                             /* Store the filename mapped to THIS descendant PID */
-                                                             if (shared_data->source_count < MAX_TRACKED_COMPILATIONS)
+                                                             if (shared_data->compile_count < MAX_TRACKED_COMPILATIONS)
                                                               {
                                                                 int found = 0;
 
                                                                 /* Check if already tracked */
-                                                                for (int k = 0; k < shared_data->source_count; k++)
+                                                                for (int k = 0; k < shared_data->compile_count; k++)
                                                                   {
-                                                                    if (shared_data->source_files[k].pid == pid)
+                                                                    if (shared_data->compilations[k].pid == pid)
                                                                       {
                                                                         found = 1;
                                                                         break;
@@ -2104,40 +1981,40 @@ memory_monitor_thread_func (void *arg)
                                                                     unsigned long predicted_peak_mb;
 
                                                                     /* Thread-safe access to shared descendant data */
-                                                                    pthread_mutex_lock (&shared_data->source_mutex);
-                                                                    if (shared_data->source_count < MAX_TRACKED_COMPILATIONS)
+                                                                    pthread_mutex_lock (&shared_data->compile_mutex);
+                                                                    if (shared_data->compile_count < MAX_TRACKED_COMPILATIONS)
                                                                       {
-                                                                        shared_data->source_files[shared_data->source_count].pid = pid;
-                                                                        generate_file_hash (strip_ptr, shared_data->source_files[shared_data->source_count].file_hash);
-                                                                        shared_data->source_files[shared_data->source_count].current_mb = rss_kb / 1024;
+                                                                        shared_data->compilations[shared_data->compile_count].pid = pid;
+                                                                        generate_file_hash (strip_ptr, shared_data->compilations[shared_data->compile_count].file_hash);
+                                                                        shared_data->compilations[shared_data->compile_count].current_mb = rss_kb / 1024;
 
                                                                         /* Add hash→filename mapping (main process only) */
-                                                                        add_hash_filename_mapping (shared_data->source_files[shared_data->source_count].file_hash, strip_ptr);
+                                                                        add_hash_filename_mapping (shared_data->compilations[shared_data->compile_count].file_hash, strip_ptr);
 
                                                                         /* Get predicted peak from history */
                                                                         predicted_peak_mb = get_file_memory_requirement (strip_ptr);
-                                                                        shared_data->source_files[shared_data->source_count].peak_mb = predicted_peak_mb;
+                                                                        shared_data->compilations[shared_data->compile_count].peak_mb = predicted_peak_mb;
 
                                                                         debug_write ("[MEMORY] Tracking source file PID %d -> %s (hash: %s, current: %luMB, predicted peak: %luMB)\n",
-                                                                                    (int)pid, strip_ptr, shared_data->source_files[shared_data->source_count].file_hash, rss_kb / 1024, predicted_peak_mb);
+                                                                                    (int)pid, strip_ptr, shared_data->compilations[shared_data->compile_count].file_hash, rss_kb / 1024, predicted_peak_mb);
 
-                                                                        shared_data->source_count++;
+                                                                        shared_data->compile_count++;
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->source_mutex);
+                                                                    pthread_mutex_unlock (&shared_data->compile_mutex);
                                                                   }
                                                                 else
                                                                   {
                                                                     /* Already tracked, just update current */
-                                                                    pthread_mutex_lock (&shared_data->source_mutex);
-                                                                    for (int k = 0; k < shared_data->source_count; k++)
+                                                                    pthread_mutex_lock (&shared_data->compile_mutex);
+                                                                    for (int k = 0; k < shared_data->compile_count; k++)
                                                                       {
-                                                                        if (shared_data->source_files[k].pid == pid)
+                                                                        if (shared_data->compilations[k].pid == pid)
                                                                           {
-                                                                            shared_data->source_files[k].current_mb = rss_kb / 1024;
+                                                                            shared_data->compilations[k].current_mb = rss_kb / 1024;
                                                                             break;
                                                                           }
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->source_mutex);
+                                                                    pthread_mutex_unlock (&shared_data->compile_mutex);
                                                                   }
                                                               }
                                                           }
@@ -2154,12 +2031,12 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            pthread_mutex_lock (&shared_data->source_mutex);
-                                            shared_data->source_files[descendant_idx].current_mb = rss_kb / 1024;
-                                            pthread_mutex_unlock (&shared_data->source_mutex);
+                                            pthread_mutex_lock (&shared_data->compile_mutex);
+                                            shared_data->compilations[descendant_idx].current_mb = rss_kb / 1024;
+                                            pthread_mutex_unlock (&shared_data->compile_mutex);
                                             if (rss_kb >= 10240)
                                               {
-                                                const char *filepath = get_filename_from_hash (shared_data->source_files[descendant_idx].file_hash);
+                                                const char *filepath = get_filename_from_hash (shared_data->compilations[descendant_idx].file_hash);
                                                 if (filepath)
                                                   record_file_memory_usage (filepath, rss_kb / 1024, 0);
                                               }
@@ -2197,46 +2074,46 @@ next_proc:
 
       /* Check for exited descendants and record their final memory */
       {
-        for (int i = 0; i < shared_data->source_count; i++)
+        for (int i = 0; i < shared_data->compile_count; i++)
           {
             char stat_path[512];
             FILE *stat_file;
 
             /* Check if this PID still exists */
-            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)shared_data->source_files[i].pid);
+            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)shared_data->compilations[i].pid);
             stat_file = fopen (stat_path, "r");
             if (!stat_file)
               {
                 /* Process exited - record final memory and release reservation */
-                if (shared_data->source_files[i].current_mb > 10 && shared_data->source_files[i].file_hash[0])
+                if (shared_data->compilations[i].current_mb > 10 && shared_data->compilations[i].file_hash[0])
                   {
                     debug_write ("[MEMORY] Compilation PID %d exited, final peak for hash %s: %luMB\n",
-                                (int)shared_data->source_files[i].pid,
-                                shared_data->source_files[i].file_hash,
-                                shared_data->source_files[i].current_mb);
+                                (int)shared_data->compilations[i].pid,
+                                shared_data->compilations[i].file_hash,
+                                shared_data->compilations[i].current_mb);
 
                     /* Release the reserved memory now that process has exited */
-                    if (shared_data->source_files[i].peak_mb > 0)
+                    if (shared_data->compilations[i].peak_mb > 0)
                       {
-                        release_reserved_memory_mb (shared_data->source_files[i].peak_mb);
+                        release_reserved_memory_mb (shared_data->compilations[i].peak_mb);
                         debug_write ("[MEMORY] Released %luMB reservation for hash %s (process exited)\n",
-                                    shared_data->source_files[i].peak_mb, shared_data->source_files[i].file_hash);
+                                    shared_data->compilations[i].peak_mb, shared_data->compilations[i].file_hash);
                       }
                     /* Get filename from hash for disk operations */
                     {
-                      const char *filepath = get_filename_from_hash (shared_data->source_files[i].file_hash);
+                      const char *filepath = get_filename_from_hash (shared_data->compilations[i].file_hash);
                       if (filepath)
                         {
-                          record_file_memory_usage (filepath, shared_data->source_files[i].current_mb, 1);  /* final=1 */
+                          record_file_memory_usage (filepath, shared_data->compilations[i].current_mb, 1);  /* final=1 */
                         }
                     }
                   }
 
                 /* Remove this entry by shifting remaining entries */
-                if (i < shared_data->source_count - 1)
-                  memmove (&shared_data->source_files[i], &shared_data->source_files[i + 1],
-                          (shared_data->source_count - i - 1) * sizeof(shared_data->source_files[0]));
-                shared_data->source_count--;
+                if (i < shared_data->compile_count - 1)
+                  memmove (&shared_data->compilations[i], &shared_data->compilations[i + 1],
+                          (shared_data->compile_count - i - 1) * sizeof(shared_data->compilations[0]));
+                shared_data->compile_count--;
                 i--;  /* Check this index again since we shifted */
               }
             else
@@ -2271,7 +2148,6 @@ next_proc:
 #endif
 
       /* Debug: Show actual state periodically (non-blocking) */
-      now = time (NULL);
 #if DEBUG_MEMORY_MONITOR
       if (now - last_debug >= 5)
         {
@@ -2292,45 +2168,6 @@ next_proc:
         debug_write ("[D%d]", iteration_count);
 #endif
 
-      /* DEBUG: Show when we're close to emergency threshold (rate limited to 1/sec) */
-      if (free_mb < min_memory_mb + 200 && free_mb >= min_memory_mb)
-        {
-          if (now - last_approaching_msg >= 1)
-            {
-              debug_write ("[APPROACHING EMERGENCY] %luMB free (threshold=%luMB) jobs_paused=%d\n",
-                          free_mb, min_memory_mb, jobs_paused);
-              last_approaching_msg = now;
-            }
-        }
-
-      /* CRITICAL EMERGENCY: Less than threshold free - PAUSE build until memory recovers */
-      if (free_mb < min_memory_mb)
-        {
-          if (!jobs_paused)
-            {
-              clear_status_line ();
-              debug_write ("[CRITICAL EMERGENCY] Only %luMB free - PAUSING build (setting -j0) until memory recovers...\n",
-                          free_mb);
-              jobs_paused = 1;
-              job_slots = 0;  /* Stop spawning new jobs immediately */
-            }
-        }
-      /* RECOVERY: Memory has recovered from emergency - RESUME build */
-      else if (jobs_paused && free_mb >= min_memory_mb + 500)  /* 500MB buffer */
-        {
-          clear_status_line ();
-          debug_write ("[RECOVERY] Memory recovered to %luMB - RESUMING build...\n", free_mb);
-          jobs_paused = 0;
-          /* Start with -j1, will gradually increase as memory allows */
-          job_slots = 1;
-        }
-
-      /* Skip normal adjustment when paused - waiting for memory recovery */
-      if (jobs_paused)
-        {
-          usleep (100000);  /* 100ms for accurate memory tracking */
-          continue;
-        }
 
       /* Job pausing logic - we don't adjust -j, just pause/resume jobs based on memory */
 
@@ -2430,18 +2267,6 @@ stop_memory_monitor_immediate (void)
   usleep (10000);  /* 10ms */
 }
 
-/* Legacy function - now just starts the thread */
-void
-check_and_adjust_jobs (void)
-{
-  /* This is now called once at startup to initialize the thread */
-  static int thread_started = 0;
-  if (!thread_started && auto_adjust_jobs_flag)
-    {
-      thread_started = 1;
-      start_memory_monitor ();
-    }
-}
 
 static void
 decode_debug_flags (void)

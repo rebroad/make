@@ -254,7 +254,7 @@ static unsigned int memory_profile_count = 0;
 static struct {
   unsigned long min_mb_per_kb;    /* Minimum MB per KB of source file */
   unsigned long avg_mb_per_kb;    /* Average (mean) MB per KB of source file */
-  unsigned long median_mb_per_kb; /* Median MB per KB of source file */
+  unsigned long conservative_mb_per_kb; /* Conservative estimate: 75th percentile MB per KB of source file */
   unsigned long max_mb_per_kb;    /* Maximum MB per KB of source file */
   int valid;                       /* Whether statistics are valid */
 } memory_stats = {0, 0, 0, 0, 0};
@@ -497,14 +497,7 @@ extern sigset_t fatal_signal_set;
 static void
 block_sigs ()
 {
-  sigset_t block_set = fatal_signal_set;
-
-  /* Don't block SIGTSTP (Ctrl+Z) - allow job control to work */
-#ifdef SIGTSTP
-  sigdelset (&block_set, SIGTSTP);
-#endif
-
-  sigprocmask (SIG_BLOCK, &block_set, (sigset_t *) 0);
+  sigprocmask (SIG_BLOCK, &fatal_signal_set, (sigset_t *) 0);
 }
 
 static void
@@ -528,14 +521,7 @@ extern int fatal_signal_mask;
 static void
 block_sigs ()
 {
-  int mask = fatal_signal_mask;
-
-  /* Don't block SIGTSTP (Ctrl+Z) - allow job control to work */
-#ifdef SIGTSTP
-  mask &= ~sigmask (SIGTSTP);
-#endif
-
-  sigblock (mask);
+  sigblock (fatal_signal_mask);
 }
 
 static void
@@ -674,9 +660,6 @@ reap_children (int block, int err)
 #endif
   /* Initially, assume we have some.  */
   int reap_more = 1;
-
-  /* Check memory frequently - this function is called constantly */
-  check_and_adjust_jobs ();
 
 #ifdef WAIT_NOHANG
 # define REAP_MORE reap_more
@@ -1119,89 +1102,11 @@ reap_children (int block, int err)
         {
           DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
-
-          /* Note: Memory tracking is now done in main.c via descendant process tracking.
-             This old command_lines-based extraction is kept for reference but not used. */
-#if 0
-          /* OLD CODE: Extract source filename from command line (look for .cpp, .c, .cc files) */
-          fprintf (stderr, "[MEMORY] Child exited: pid=%d, peak_kb=%lu, has_cmdlines=%d\n",
-                  (int)c->pid, c->peak_memory_kb, (c->command_lines != NULL));
-          fflush (stderr);
-          if (c->peak_memory_kb > 0)
-            {
-              fprintf (stderr, "[MEMORY] *** FOUND NON-ZERO PEAK! *** This child had %lu kB peak memory!\n", c->peak_memory_kb);
-              fflush (stderr);
-            }
-          if (c->peak_memory_kb > 0 && c->command_lines)
-            {
-              unsigned int cmd_idx;
-              fprintf (stderr, "[MEMORY] Attempting filename extraction, command_line count=%u\n", c->command_line);
-              fflush (stderr);
-              for (cmd_idx = 0; cmd_idx < c->command_line && c->command_lines[cmd_idx]; cmd_idx++)
-                {
-                  char *cmd = c->command_lines[cmd_idx];
-                  char *ptr = cmd;
-
-                  /* Debug: print first 200 chars of each command line */
-                  fprintf (stderr, "[MEMORY] cmdline[%u]: %.200s%s\n",
-                          cmd_idx, cmd, (strlen(cmd) > 200 ? "..." : ""));
-                  fflush (stderr);
-
-                  /* Search for source files in the command */
-                  while (*ptr)
-                    {
-                      if ((strstr (ptr, ".cpp") || strstr (ptr, ".c ") || strstr (ptr, ".cc")) &&
-                          ptr > cmd && (ptr[-1] == ' ' || ptr[-1] == '/'))
-                        {
-                          /* Found a source file - extract just the filename */
-                          char *end;
-                          char *start;
-                          size_t len;
-                          char filename[1000];
-                          unsigned long memory_mb;
-
-                          end = strstr (ptr, ".cpp");
-                          if (!end) end = strstr (ptr, ".cc");
-                          if (!end) end = strstr (ptr, ".c ");
-                          if (end)
-                            {
-                              /* Find start of filename (after last /) */
-                              start = ptr;
-                              while (start > cmd && start[-1] != ' ' && start[-1] != '=')
-                                start--;
-
-                              /* Extract and record */
-                              len = (end - start) + 4; /* include extension */
-                              if (len < 1000)
-                                {
-                                  memcpy (filename, start, len);
-                                  filename[len] = '\0';
-
-                                  memory_mb = c->peak_memory_kb / 1024;
-                                  fprintf (stderr, "[MEMORY] Recording %s: peak_kb=%lu -> %luMB (from command_lines)\n",
-                                          filename, c->peak_memory_kb, memory_mb);
-                                  fflush (stderr);
-                                  record_file_memory_usage (filename, memory_mb, 1);  /* final=1, child exited */
-                                  break;
-                                }
-                            }
-                        }
-                      ptr++;
-                    }
-                }
-            }
-#endif /* 0 - Old memory tracking code */
         }
 
       /* There is now another slot open.  */
       if (job_slots_used > 0)
-        {
-          job_slots_used -= c->jobslot;
-          if (c->jobslot)
-            {
-              /* Job slot released */
-            }
-        }
+        job_slots_used -= c->jobslot;
 
       /* Remove the child from the chain and free it.  */
       if (lastc == 0)
@@ -1267,9 +1172,6 @@ free_child (struct child *child)
   if (handling_fatal_signal) /* Don't bother free'ing if about to die.  */
     return;
 
-  /* Free memory tracking data */
-  if (child->source_file)
-    free (child->source_file);
 
   if (child->command_lines != 0)
     {
@@ -2418,8 +2320,6 @@ start_waiting_jobs (void)
   if (waiting_jobs == 0)
     return;
 
-  /* Check memory and adjust jobs if auto-adjust is enabled */
-  check_and_adjust_jobs ();
 
   do
     {
@@ -4170,13 +4070,16 @@ calculate_memory_stats (const char *caller_file, int caller_line)
 
       memory_stats.min_mb_per_kb = min_val;
       memory_stats.avg_mb_per_kb = total_mb_per_kb / valid_count;
-      memory_stats.median_mb_per_kb = ratios[valid_count / 2];  /* Middle value */
+      memory_stats.conservative_mb_per_kb = ratios[(valid_count * 3) / 4];  /* Conservative: 75th percentile */
       memory_stats.max_mb_per_kb = max_val;
       memory_stats.valid = 1;
 
-      fprintf (stderr, "[MEMORY] Statistics from %u files: min=%lu median=%lu avg=%lu max=%lu (MB per 1000KB)\n",
-              valid_count, memory_stats.min_mb_per_kb, memory_stats.median_mb_per_kb,
-              memory_stats.avg_mb_per_kb, memory_stats.max_mb_per_kb);
+      /* Use the higher of conservative or average for safety */
+      if (memory_stats.avg_mb_per_kb > memory_stats.conservative_mb_per_kb)
+        memory_stats.conservative_mb_per_kb = memory_stats.avg_mb_per_kb;
+
+      fprintf (stderr, "[MEMORY] Statistics from %u files: conservative=%lu max=%lu (MB per 1000KB)\n",
+              valid_count, memory_stats.conservative_mb_per_kb, memory_stats.max_mb_per_kb);
       fflush (stderr);
     }
 
@@ -4328,7 +4231,7 @@ get_file_memory_requirement (const char *filename)
             {
               /* Bump estimate by 50% for template-heavy code */
               if (memory_stats.valid)
-                estimated_mb = (file_kb * memory_stats.median_mb_per_kb * 3) / 2000;
+                estimated_mb = (file_kb * memory_stats.conservative_mb_per_kb * 3) / 2000;
               else
                 estimated_mb = file_kb / 3;  /* Rough guess */
 
@@ -4342,10 +4245,10 @@ get_file_memory_requirement (const char *filename)
       /* Fall back to statistical estimation if we have stats */
       if (memory_stats.valid)
         {
-          estimated_mb = (file_kb * memory_stats.median_mb_per_kb) / 1000;
+          estimated_mb = (file_kb * memory_stats.conservative_mb_per_kb) / 1000;
 
-          fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu median ratio = ~%luMB (stats)\n",
-                  filename, file_kb, memory_stats.median_mb_per_kb, estimated_mb);
+          fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu conservative ratio = ~%luMB (stats)\n",
+                  filename, file_kb, memory_stats.conservative_mb_per_kb, estimated_mb);
           fflush (stderr);
 
           return estimated_mb;

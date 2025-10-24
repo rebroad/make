@@ -126,10 +126,8 @@ Source files are tracked by:
 
 The system pauses job starts when memory is low and resumes when memory is available:
 
-1. **Critical memory** (< 12% free) → Pause new job starts
-2. **High memory** (< 20% free) → Continue with current jobs
-3. **Comfortable memory** (> 70% free) → Resume normal job starts
-4. **Emergency pause** (< 1GB free) → Pause all new jobs (`-j0`)
+1. **Low memory** → Pause new job starts
+2. **Adequate memory** → Allow new job starts
 
 **Key Insight**: Instead of adjusting the `-j` value, the system maintains the user's requested parallel job count and simply pauses/resumes job starts based on available memory. This provides more predictable behavior and better performance.
 
@@ -144,7 +142,6 @@ The system provides a real-time visual memory bar that shows:
 **Display Components:**
 - **Spinner** (`⠋`) - Indicates active monitoring
 - **Progress bar** (`████████████░░░░░░░░`) - Visual memory usage
-- **Percentage** (`62%`) - Current memory usage
 - **Memory amount** (`5905MB`) - Available memory
 - **Job count** (`-j1`) - Current parallel jobs
 - **Process count** (`5 procs`) - Active compilation processes
@@ -203,13 +200,11 @@ pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
 The system can be configured via environment variables:
 
 - **`MAKE_MEMORY_AWARE`**: Enable memory-aware job pausing
-- **`MAKE_MEMORY_LIMIT`**: Maximum memory to use (MB)
 - **`MAKE_MEMORY_PROFILES_DIR`**: Directory for memory profile storage
 
 ### Command Line Options
 
 - **`--memory-aware`**: Enable memory-aware mode
-- **`--memory-limit=N`**: Set memory limit to N MB
 - **`--memory-profiles-dir=DIR`**: Set profiles directory
 
 ## Error Handling
