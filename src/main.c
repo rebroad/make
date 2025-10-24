@@ -69,6 +69,10 @@ int vms_comma_separator = 0;
 int vms_unix_simulation = 0;
 int vms_report_unix_paths = 0;
 
+/* Memory profiling variables */
+struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+unsigned int memory_profile_count = 0;
+
 /* Evaluates if a VMS environment option is set, only look at first character */
 static int
 get_vms_env_flag (const char *name, int default_value)

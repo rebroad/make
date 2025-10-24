@@ -777,8 +777,8 @@ struct file_memory_profile
   unsigned long peak_memory_mb;
   time_t last_used;  /* Unix timestamp of last compilation */
 };
-static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
-static unsigned int memory_profile_count = 0;
+extern struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+extern unsigned int memory_profile_count;
 
 extern const char *program;
 
