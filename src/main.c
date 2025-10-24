@@ -269,6 +269,10 @@ double default_load_average = -1.0;
 
 /* Memory-aware job adjustment */
 int memory_aware_flag = -1;  /* -1 = not set, will check env */
+
+/* Memory profiling variables */
+struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+unsigned int memory_profile_count = 0;
 static int disable_memory_display = 0;  /* Disable memory status display */
 static int status_line_shown = 0;
 static int spinner_state = 0;
