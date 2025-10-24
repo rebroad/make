@@ -231,7 +231,7 @@ struct rlimit stack_limit;
 unsigned int job_slots;
 
 #define INVALID_JOB_SLOTS (-1)
-unsigned int master_job_slots = 0;
+static unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
 static const int default_job_slots = INVALID_JOB_SLOTS;
