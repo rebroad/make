@@ -955,7 +955,7 @@ struct shared_memory_data {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   pthread_mutex_t reserved_memory_mutex;
 #endif
-} __attribute__((packed));
+} __attribute__((packed)) __attribute__((aligned(8)));
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
