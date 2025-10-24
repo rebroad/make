@@ -248,7 +248,7 @@ static struct {
 } memory_stats = {0, 0, 0, 0};
 
 /* Forward declaration */
-static void calculate_memory_stats (const char *caller_file, int caller_line);
+void calculate_memory_stats (const char *caller_file, int caller_line);
 
 /* Nonzero if the 'good' standard input is in use.  */
 
@@ -3987,7 +3987,7 @@ compare_unsigned_long (const void *a, const void *b)
 }
 
 /* Calculate memory usage statistics from known profiles */
-static void
+void
 calculate_memory_stats (const char *caller_file, int caller_line)
 {
   unsigned int i;
