@@ -241,23 +241,16 @@ unsigned int job_slots_used = 0;
 
 /* Memory profiling per-file */
 #define MAX_MEMORY_PROFILES 10000
-struct file_memory_profile
-{
-  char *filename;
-  unsigned long peak_memory_mb;
-  time_t last_used;  /* Unix timestamp of last compilation */
-};
 static struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
 static unsigned int memory_profile_count = 0;
 
 /* Memory usage statistics for estimating unknown files */
 static struct {
-  unsigned long min_mb_per_kb;    /* Minimum MB per KB of source file */
   unsigned long avg_mb_per_kb;    /* Average (mean) MB per KB of source file */
   unsigned long conservative_mb_per_kb; /* Conservative estimate: 75th percentile MB per KB of source file */
   unsigned long max_mb_per_kb;    /* Maximum MB per KB of source file */
   int valid;                       /* Whether statistics are valid */
-} memory_stats = {0, 0, 0, 0, 0};
+} memory_stats = {0, 0, 0, 0};
 
 /* Forward declaration */
 static void calculate_memory_stats (const char *caller_file, int caller_line);
@@ -1172,7 +1165,6 @@ free_child (struct child *child)
   if (handling_fatal_signal) /* Don't bother free'ing if about to die.  */
     return;
 
-
   if (child->command_lines != 0)
     {
       unsigned int i;
@@ -1497,15 +1489,15 @@ start_job_command (struct child *child)
 
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
-      {
-        unsigned long required_mb = 0;
-        unsigned int mem_percent;
-        unsigned long free_mb;
+      if (memory_aware_flag)
+        {
+          unsigned long required_mb = 0;
+          unsigned long free_mb;
 
-        /* Check if this is an "echo Compiling ..." command */
-        if (argv[0] && argv[1] && argv[2] &&
-            strcmp (argv[0], "echo") == 0 &&
-            strcmp (argv[1], "Compiling") == 0)
+          /* Check if this is an "echo Compiling ..." command */
+          if (argv[0] && argv[1] && argv[2] &&
+              strcmp (argv[0], "echo") == 0 &&
+              strcmp (argv[1], "Compiling") == 0)
           {
             /* Extract filename from "Compiling src/foo/bar.cpp..." */
             const char *filename = argv[2];
@@ -1535,7 +1527,7 @@ start_job_command (struct child *child)
                     unsigned long imminent_mb;
                     unsigned long effective_free;
 
-                    get_memory_stats (&mem_percent, &free_mb);
+                    free_mb = get_memory_stats (NULL);
                     imminent_mb = get_imminent_memory_mb ();
                     effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
@@ -1576,29 +1568,20 @@ start_job_command (struct child *child)
                 /* No data available, just report current state */
                 unsigned long imminent_mb;
 
-                get_memory_stats (&mem_percent, &free_mb);
+                free_mb = get_memory_stats (NULL);
                 imminent_mb = get_imminent_memory_mb ();
                 fprintf (stderr, "[PREDICT] %s: no data yet, %luMB free (%luMB imminent)\n",
                         filename, free_mb, imminent_mb);
                 fflush (stderr);
               }
           }
-      }
+        }
 
       /* Now actually fork the child */
       jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
 
-      /* Initialize memory tracking for this compilation */
-      child->peak_memory_kb = 0;
-      child->source_file = NULL;
-
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
-
-      /* Note: Reserved memory will be released by the monitor thread once
-         the descendant compiler process is detected and added to tracking.
-         This avoids race conditions where multiple compilations reserve
-         the same memory space. */
 
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
@@ -1752,8 +1735,7 @@ start_waiting_job (struct child *c)
   /* If we are running at least one job already and the load average
      is too high, make this one wait.  */
   if (!c->remote
-      && job_slots_used > 0
-      && (load_too_high()
+      && ((job_slots_used > 0 && load_too_high ())
 #ifdef WINDOWS32
           || process_table_full ()
 #endif
@@ -2301,15 +2283,6 @@ load_too_high (void)
 #endif
 }
 
-/* Determine if the available memory is too low to start a new job.
-
-   This function checks if the available system memory is below the
-   minimum threshold set by --min-mem.  If so, it prevents new jobs
-   from starting until memory becomes available.
-
-   Returns 1 if memory is too low (don't start new jobs), 0 otherwise.  */
-
-
 /* Start jobs that are waiting for the load to be lower.  */
 
 void
@@ -2319,7 +2292,6 @@ start_waiting_jobs (void)
 
   if (waiting_jobs == 0)
     return;
-
 
   do
     {
@@ -2469,8 +2441,6 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
 
 #if !defined(USE_POSIX_SPAWN)
 
-  /* Track actual process spawns for memory monitoring */
-
   {
     /* The child may clobber environ so remember ours and restore it.  */
     char **parent_env = environ;
@@ -2584,8 +2554,6 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
       r = errno;
       goto cleanup;
     }
-
-  /* Track actual process spawns for memory monitoring */
 
   /* Start the program.  */
   while ((r = posix_spawn (&pid, cmd, &fa, &attr, argv,
@@ -4086,41 +4054,6 @@ calculate_memory_stats (const char *caller_file, int caller_line)
   free (ratios);
 }
 
-/* Save memory profiles to cache file */
-void
-save_memory_profiles (void)
-{
-  FILE *f;
-  unsigned int i;
-
-  //fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
-  //fflush (stderr);
-
-  f = fopen (".make_memory_cache", "w");
-  if (!f)
-    {
-      fprintf (stderr, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
-      fflush (stderr);
-      return;
-    }
-
-  for (i = 0; i < memory_profile_count; i++)
-    {
-      fprintf (f, "%lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);
-      /*fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);*/
-    }
-
-  fclose (f);
-  //fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
-  //fflush (stderr);
-}
-
 unsigned long
 get_file_memory_requirement (const char *filename)
 {
@@ -4264,57 +4197,6 @@ get_file_memory_requirement (const char *filename)
 
   /* No statistics yet, return 0 */
   return 0;
-}
-
-/* Record memory usage for a file
-   final=0: During compilation (only update if new_peak > old_peak)
-   final=1: On child exit (always update with measured value) */
-void
-record_file_memory_usage (const char *filename, unsigned long memory_mb, int final)
-{
-  unsigned int i;
-  time_t now;
-
-  if (!filename)
-    return;
-
-  now = time (NULL);
-
-  /* Look for existing profile */
-  for (i = 0; i < memory_profile_count; i++)
-    {
-      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filename) == 0)
-        {
-          if (memory_mb > memory_profiles[i].peak_memory_mb ||
-              (final && memory_mb != memory_profiles[i].peak_memory_mb))
-            {
-              fprintf (stderr, "[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
-                          final ? "final " : "", filename, memory_profiles[i].peak_memory_mb, memory_mb);
-              fflush (stderr);
-              memory_profiles[i].peak_memory_mb = memory_mb;
-            }
-          memory_profiles[i].last_used = now;
-          set_shared_memory_profiles_dirty ();  /* Signal main process to save */
-          return;
-        }
-    }
-
-  /* Add new profile if we have space */
-  if (memory_profile_count < MAX_MEMORY_PROFILES)
-    {
-      memory_profiles[memory_profile_count].filename = xstrdup (filename);
-      memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-      memory_profiles[memory_profile_count].last_used = now;
-      memory_profile_count++;
-      set_shared_memory_profiles_dirty ();  /* Signal main process to save */
-      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-              filename, memory_mb, memory_profile_count);
-      fflush (stderr);
-
-      /* New file added, recalculate statistics */
-      if (final)
-        calculate_memory_stats (__FILE__, __LINE__);
-    }
 }
 
 /* On VMS systems, include special VMS functions.  */

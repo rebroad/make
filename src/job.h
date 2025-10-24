@@ -63,10 +63,6 @@ struct child
     unsigned int  recursive:1;  /* Nonzero for recursive command ('+' etc.)  */
     unsigned int  jobslot:1;    /* Nonzero if it's reserved a job slot.  */
     unsigned int  dontcare:1;   /* Saved dontcare flag.  */
-
-    /* Memory tracking for this compilation */
-    volatile unsigned long peak_memory_kb;   /* Peak RSS memory used by this process */
-    char *source_file;                       /* Source file being compiled (for memory tracking) */
   };
 
 extern struct child *children;
@@ -93,13 +89,8 @@ pid_t exec_command (char **argv, char **envp);
 void unblock_all_sigs (void);
 
 extern unsigned int job_slots_used;
-extern volatile unsigned int jobs_started_total;
-extern volatile unsigned int jobs_ended_total;
 extern unsigned int jobserver_tokens;
 
 /* Memory profiling per file */
 void load_memory_profiles (const char *caller_file, int caller_line);
-void save_memory_profiles (void);
 unsigned long get_file_memory_requirement (const char *filename);
-void record_file_memory_usage (const char *filename, unsigned long memory_mb, int final);
-void set_shared_memory_profiles_dirty (void);

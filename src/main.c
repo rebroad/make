@@ -272,7 +272,7 @@ double max_load_average = -1.0;
 double default_load_average = -1.0;
 
 /* Memory-aware job adjustment */
-static int auto_adjust_jobs_flag = -1;  /* -1 = not set, will check env */
+int memory_aware_flag = -1;  /* -1 = not set, will check env */
 static int disable_memory_display = 0;  /* Disable memory status display */
 static unsigned int memory_check_interval = 3;  /* seconds */
 static int status_line_shown = 0;
@@ -605,13 +605,13 @@ init_memory_monitoring_env (void)
   char *env;
 
   /* Check if enabled via environment (default: ON) */
-  if (auto_adjust_jobs_flag == -1)
+  if (memory_aware_flag == -1)
     {
       env = getenv ("MAKE_MEMORY_AWARE");
       if (env)
-        auto_adjust_jobs_flag = (strcmp (env, "0") != 0 && strcmp (env, "no") != 0 && strcmp (env, "false") != 0);
+        memory_aware_flag = (strcmp (env, "0") != 0 && strcmp (env, "no") != 0 && strcmp (env, "false") != 0);
       else
-        auto_adjust_jobs_flag = 1;  /* Default: ON */
+        memory_aware_flag = 1;  /* Default: ON */
     }
 
 
@@ -875,8 +875,8 @@ static struct command_switch switches[] =
     { TEMP_STDIN_OPT, filename, &makefiles, 0, 0, 0, 0, 0, 0, "temp-stdin", 0 },
     { CHAR_MAX+11, string, &shuffle_mode, 1, 1, 0, 0, "random", 0, "shuffle", 0 },
     { CHAR_MAX+12, string, &jobserver_style, 1, 0, 0, 0, 0, 0, "jobserver-style", 0 },
-    { CHAR_MAX+13, flag, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
-    { CHAR_MAX+14, flag_off, &auto_adjust_jobs_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
+    { CHAR_MAX+13, flag, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
+    { CHAR_MAX+14, flag_off, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
     { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
@@ -1170,88 +1170,33 @@ debug_signal_handler (int sig UNUSED)
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
-  volatile int compile_count;
-  volatile int memory_profiles_dirty;  /* Shared dirty flag for cross-process signaling */
-  struct {
-    pid_t pid;
-    char file_hash[41];     /* SHA1 hex string (40 chars + null) */
-    unsigned long peak_mb;
-    unsigned long current_mb;
-  } compilations[MAX_TRACKED_COMPILATIONS];
-  pthread_mutex_t compile_mutex;
+  volatile unsigned long current_compile_usage_mb;  /* Sum of current memory usage of all running compilations */
+  pthread_mutex_t reserved_memory_mutex;
 };
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
 
+/* Main-make-only monitoring data (not shared between processes) */
+static struct {
+  int compile_count;
+  int memory_profiles_dirty;
+  struct {
+    pid_t pid;
+    char *filename;         /* Direct filename storage */
+    unsigned long peak_mb;
+    unsigned long current_mb;
+  } compilations[MAX_TRACKED_COMPILATIONS];
+} main_monitoring_data = {0};
+
 /* Forward declarations */
 static int init_shared_memory (void);
 
-/* Hash to filename mapping (main process only) */
-struct hash_filename_map {
-  char hash[41];
-  char *filename;
-};
-static struct hash_filename_map *hash_to_filename = NULL;
-static int hash_map_size = 0;
-static int hash_map_capacity = 0;
-
-/* Generate SHA1 hash of filename for efficient lookup */
-static void
-generate_file_hash (const char *filepath, char *hash_output)
-{
-  unsigned char hash[SHA_DIGEST_LENGTH];
-  SHA1 ((unsigned char *)filepath, strlen (filepath), hash);
-
-  /* Convert to hex string */
-  for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
-    {
-      sprintf (hash_output + (i * 2), "%02x", hash[i]);
-    }
-  hash_output[40] = '\0';  /* Null terminate */
-}
-
-/* Add hash→filename mapping (main process only) */
-static void
-add_hash_filename_mapping (const char *hash, const char *filepath)
-{
-  /* Expand array if needed */
-  if (hash_map_size >= hash_map_capacity)
-    {
-      hash_map_capacity = hash_map_capacity ? hash_map_capacity * 2 : 16;
-      hash_to_filename = xrealloc (hash_to_filename,
-                                   hash_map_capacity * sizeof (struct hash_filename_map));
-    }
-
-  /* Add new mapping */
-  strcpy (hash_to_filename[hash_map_size].hash, hash);
-  hash_to_filename[hash_map_size].filename = xstrdup (filepath);
-  hash_map_size++;
-}
-
-/* Get filename from hash (main process only) */
-static const char *
-get_filename_from_hash (const char *hash)
-{
-  for (int i = 0; i < hash_map_size; i++)
-    {
-      if (strcmp (hash_to_filename[i].hash, hash) == 0)
-        return hash_to_filename[i].filename;
-    }
-  return NULL;  /* Hash not found */
-}
-
-/* Set shared dirty flag (called from any process) */
+/* Set dirty flag (main process only) */
 void
-set_shared_memory_profiles_dirty (void)
+set_memory_profiles_dirty (void)
 {
-  if (shared_data == NULL)
-    {
-      if (init_shared_memory () != 0)
-        return; /* Fallback if shared memory fails */
-    }
-
-  shared_data->memory_profiles_dirty = 1;
+  main_monitoring_data.memory_profiles_dirty = 1;
 }
 
 /* Initialize shared memory for inter-process communication */
@@ -1260,7 +1205,6 @@ init_shared_memory (void)
 {
   int created = 0;
   struct stat st;
-  pthread_mutexattr_t mutex_attr;
 
   /* Create or open shared memory object */
   shared_memory_fd = shm_open (SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
@@ -1295,12 +1239,12 @@ init_shared_memory (void)
   /* Initialize if this is the first process */
   if (created)
     {
+      pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
-      shared_data->compile_count = 0;
-      shared_data->memory_profiles_dirty = 0;
+      shared_data->current_compile_usage_mb = 0;
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-      pthread_mutex_init (&shared_data->compile_mutex, &mutex_attr);
+      pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
     }
 
@@ -1311,6 +1255,14 @@ init_shared_memory (void)
 static void
 cleanup_shared_memory (void)
 {
+  /* Safety check: only run in main make process */
+  if (makelevel > 0)
+    {
+      fprintf (stderr, "[MEMORY] WARNING: cleanup_shared_memory() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      fflush (stderr);
+      return;
+    }
+
   if (shared_data != NULL && shared_data != MAP_FAILED)
     {
       munmap (shared_data, sizeof (struct shared_memory_data));
@@ -1322,18 +1274,121 @@ cleanup_shared_memory (void)
       close (shared_memory_fd);
       shared_memory_fd = -1;
     }
+}
 
-  /* Cleanup hash→filename mapping */
-  if (hash_to_filename)
+/* Update shared memory with total current compile usage */
+static void
+update_shared_current_usage (void)
+{
+  unsigned long total_current = 0;
+  int i;
+
+  /* Calculate total current usage from main monitoring data */
+  for (i = 0; i < main_monitoring_data.compile_count; i++)
     {
-      for (int i = 0; i < hash_map_size; i++)
+      total_current += main_monitoring_data.compilations[i].current_mb;
+    }
+
+  /* Update shared memory (thread-safe) */
+  if (shared_data)
+    {
+      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+      shared_data->current_compile_usage_mb = total_current;
+      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+    }
+}
+
+/* Save memory profiles to cache file (main make only) */
+void
+save_memory_profiles (void)
+{
+  FILE *f;
+  unsigned int i;
+
+  /* Safety check: only run in main make process */
+  if (makelevel > 0)
+    {
+      fprintf (stderr, "[MEMORY] WARNING: save_memory_profiles() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      fflush (stderr);
+      return;
+    }
+
+  //fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
+  //fflush (stderr);
+
+  f = fopen (".make_memory_cache", "w");
+  if (!f)
+    {
+      fprintf (stderr, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
+      fflush (stderr);
+      return;
+    }
+
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      fprintf (f, "%lu %ld %s\n",
+               memory_profiles[i].peak_memory_mb,
+               (long)memory_profiles[i].last_used,
+               memory_profiles[i].filename);
+      /*fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
+               memory_profiles[i].peak_memory_mb,
+               (long)memory_profiles[i].last_used,
+               memory_profiles[i].filename);*/
+    }
+
+  fclose (f);
+  //fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
+  //fflush (stderr);
+}
+
+/* Record memory usage for a file (main make only)
+   final=0: During compilation (only update if new_peak > old_peak)
+   final=1: On child exit (always update with measured value) */
+void
+record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
+{
+  unsigned int i;
+  time_t now;
+
+  if (!filepath)
+    return;
+
+  now = time (NULL);
+
+  /* Look for existing profile */
+  for (i = 0; i < memory_profile_count; i++)
+    {
+      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0)
         {
-          free (hash_to_filename[i].filename);
+          if (memory_mb > memory_profiles[i].peak_memory_mb ||
+              (final && memory_mb != memory_profiles[i].peak_memory_mb))
+            {
+              fprintf (stderr, "[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
+                          final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
+              fflush (stderr);
+              memory_profiles[i].peak_memory_mb = memory_mb;
+            }
+          memory_profiles[i].last_used = now;
+          set_memory_profiles_dirty ();
+          return;
         }
-      free (hash_to_filename);
-      hash_to_filename = NULL;
-      hash_map_size = 0;
-      hash_map_capacity = 0;
+    }
+
+  /* Add new profile if we have space */
+  if (memory_profile_count < MAX_MEMORY_PROFILES)
+    {
+      memory_profiles[memory_profile_count].filename = xstrdup (filepath);
+      memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
+      memory_profiles[memory_profile_count].last_used = now;
+      memory_profile_count++;
+      set_memory_profiles_dirty ();  /* Signal main process to save */
+      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+              filepath, memory_mb, memory_profile_count);
+      fflush (stderr);
+
+      /* New file added, recalculate statistics */
+      if (final)
+        calculate_memory_stats (__FILE__, __LINE__);
     }
 }
 
@@ -1343,8 +1398,7 @@ get_imminent_memory_mb (void)
 {
   unsigned long total_current = 0;
   unsigned long result = 0;
-  int i;
-  int local_compile_count;
+  unsigned long reserved_mb;
 
   /* Initialize shared memory if not already done */
   if (shared_data == NULL)
@@ -1353,48 +1407,59 @@ get_imminent_memory_mb (void)
         return 0; /* Fallback to no imminent memory if shared memory fails */
     }
 
-  /* Thread-safe access to shared compilation data */
-  pthread_mutex_lock (&shared_data->compile_mutex);
-  local_compile_count = shared_data->compile_count;
-  pthread_mutex_unlock (&shared_data->compile_mutex);
-
-  /* Calculate imminent memory on-demand in a single loop */
-  /* reserved_memory_mb = sum of peak memory for all active processes
-     We need to subtract current usage to get imminent (remaining) memory */
+  /* Thread-safe access to shared memory values */
+  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+  reserved_mb = shared_data->reserved_memory_mb;
+  total_current = shared_data->current_compile_usage_mb;
+  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
   fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
-  fprintf (stderr, "  Reserved memory (active processes): %luMB\n", shared_data->reserved_memory_mb);
-
-  if (local_compile_count > 0 || shared_data->reserved_memory_mb > 0)
-    {
-
-      if (local_compile_count > 0)
-        {
-          fprintf (stderr, "  Tracked compilations (%d):\n", local_compile_count);
-
-          /* Thread-safe access to compilation data for calculation and debug output */
-          pthread_mutex_lock (&shared_data->compile_mutex);
-          for (i = 0; i < local_compile_count; i++)
-            {
-              total_current += shared_data->compilations[i].current_mb;
-              fprintf (stderr, "    [%d] %s: current=%luMB, peak=%luMB\n",
-                      i, shared_data->compilations[i].file_hash,
-                      shared_data->compilations[i].current_mb, shared_data->compilations[i].peak_mb);
-            }
-          pthread_mutex_unlock (&shared_data->compile_mutex);
-        }
-
-      fprintf (stderr, "  Calculation: reserved=%luMB - current=%luMB = imminent=%luMB\n",
-              shared_data->reserved_memory_mb, total_current, result);
-    }
+  fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_mb);
+  fprintf (stderr, "  Current compile usage: %luMB\n", total_current);
 
   /* Imminent = reserved peak memory - current usage */
-  result = shared_data->reserved_memory_mb > total_current ? shared_data->reserved_memory_mb - total_current : 0;
+  result = reserved_mb > total_current ? reserved_mb - total_current : 0;
 
   fprintf (stderr, "  Final result: %luMB\n", result);
 
   return result;
+}
+
+
+unsigned long
+get_memory_stats (unsigned int *percent)
+{
+#ifdef __linux__
+  FILE *meminfo;
+  unsigned long total_kb = 0, avail_kb = 0;
+  char line[256];
+
+  if (percent)
+    *percent = 0;
+
+  meminfo = fopen ("/proc/meminfo", "r");
+  if (!meminfo)
+    return 0;
+
+  while (fgets (line, sizeof (line), meminfo))
+    {
+      if (sscanf (line, "MemTotal: %lu", &total_kb) == 1)
+        continue;
+      if (sscanf (line, "MemAvailable: %lu", &avail_kb) == 1)
+        break;
+    }
+
+  fclose (meminfo);
+
+  if (avail_kb > 0)
+    {
+      if (percent && total_kb > 0)
+        *percent = (unsigned int)(100 - (avail_kb * 100 / total_kb));
+      return avail_kb / 1024;
+    }
+#endif
+  return 0;
 }
 
 /* Reserve memory for a process about to start */
@@ -1407,7 +1472,9 @@ reserve_memory_mb (unsigned long mb)
         return; /* Fallback if shared memory fails */
     }
 
+  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
   shared_data->reserved_memory_mb += mb;
+  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 }
 
 /* Release reserved memory once process is being tracked */
@@ -1420,45 +1487,12 @@ release_reserved_memory_mb (unsigned long mb)
         return; /* Fallback if shared memory fails */
     }
 
+  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
   if (shared_data->reserved_memory_mb >= mb)
     shared_data->reserved_memory_mb -= mb;
   else
     shared_data->reserved_memory_mb = 0;
-}
-
-void
-get_memory_stats (unsigned int *percent, unsigned long *free_mb)
-{
-#ifdef __linux__
-  FILE *meminfo;
-  unsigned long total_kb = 0, avail_kb = 0;
-  char line[256];
-#endif
-
-  *percent = 0;
-  *free_mb = 0;
-
-#ifdef __linux__
-  meminfo = fopen ("/proc/meminfo", "r");
-  if (!meminfo)
-    return;
-
-  while (fgets (line, sizeof (line), meminfo))
-    {
-      if (sscanf (line, "MemTotal: %lu", &total_kb) == 1)
-        continue;
-      if (sscanf (line, "MemAvailable: %lu", &avail_kb) == 1)
-        break;
-    }
-
-  fclose (meminfo);
-
-  if (total_kb > 0 && avail_kb > 0)
-    {
-      *percent = (unsigned int)(100 - (avail_kb * 100 / total_kb));
-      *free_mb = avail_kb / 1024;
-    }
-#endif
+  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 }
 
 /* Forward declaration for non-blocking debug output */
@@ -1510,7 +1544,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Only show if enabled AND we have active jobs OR we're in emergency pause */
   /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
-  if (!auto_adjust_jobs_flag || disable_memory_display)
+  if (!memory_aware_flag || disable_memory_display)
     return;
 
   gettimeofday (&now, NULL);
@@ -1769,7 +1803,7 @@ memory_monitor_thread_func (void *arg)
         debug_write ("[A%d]", iteration_count);
 #endif
 
-      get_memory_stats (&mem_percent, &free_mb);
+      free_mb = get_memory_stats (&mem_percent);
 
       /* Imminent memory is now calculated on-demand in get_imminent_memory_mb() */
 
@@ -1834,11 +1868,11 @@ memory_monitor_thread_func (void *arg)
                                     int descendant_idx = -1;
 
                                     /* Find this source file's individual peak */
-                                    for (int j = 0; j < shared_data->compile_count; j++)
+                                    for (int j = 0; j < main_monitoring_data.compile_count; j++)
                                       {
-                                        if (shared_data->compilations[j].pid == pid)
+                                        if (main_monitoring_data.compilations[j].pid == pid)
                                           {
-                                            descendant_old_peak = shared_data->compilations[j].peak_mb * 1024;  /* Convert to KB for comparison */
+                                            descendant_old_peak = main_monitoring_data.compilations[j].peak_mb * 1024;  /* Convert to KB for comparison */
                                             descendant_idx = j;
                                             break;
                                           }
@@ -1846,10 +1880,6 @@ memory_monitor_thread_func (void *arg)
 
                                     /*debug_write ("[MEMORY] Found descendant PID %d of child %d, rss=%lu kB, desc_peak=%lu kB\n",
                                                 (int)pid, (int)c->pid, rss_kb, descendant_old_peak);*/
-
-                                    /* Update BOTH the child's overall peak AND this descendant's individual peak */
-                                    if (rss_kb > c->peak_memory_kb)
-                                      c->peak_memory_kb = rss_kb;
 
                                     if (rss_kb > descendant_old_peak)
                                       {
@@ -1962,14 +1992,14 @@ memory_monitor_thread_func (void *arg)
                                                               strip_ptr += 3;
 
                                                             /* Store the filename mapped to THIS descendant PID */
-                                                             if (shared_data->compile_count < MAX_TRACKED_COMPILATIONS)
+                                                             if (main_monitoring_data.compile_count < MAX_TRACKED_COMPILATIONS)
                                                               {
                                                                 int found = 0;
 
                                                                 /* Check if already tracked */
-                                                                for (int k = 0; k < shared_data->compile_count; k++)
+                                                                for (int k = 0; k < main_monitoring_data.compile_count; k++)
                                                                   {
-                                                                    if (shared_data->compilations[k].pid == pid)
+                                                                    if (main_monitoring_data.compilations[k].pid == pid)
                                                                       {
                                                                         found = 1;
                                                                         break;
@@ -1980,41 +2010,34 @@ memory_monitor_thread_func (void *arg)
                                                                   {
                                                                     unsigned long predicted_peak_mb;
 
-                                                                    /* Thread-safe access to shared descendant data */
-                                                                    pthread_mutex_lock (&shared_data->compile_mutex);
-                                                                    if (shared_data->compile_count < MAX_TRACKED_COMPILATIONS)
+                                                                    /* Add to main-make-only monitoring data */
+                                                                    if (main_monitoring_data.compile_count < MAX_TRACKED_COMPILATIONS)
                                                                       {
-                                                                        shared_data->compilations[shared_data->compile_count].pid = pid;
-                                                                        generate_file_hash (strip_ptr, shared_data->compilations[shared_data->compile_count].file_hash);
-                                                                        shared_data->compilations[shared_data->compile_count].current_mb = rss_kb / 1024;
-
-                                                                        /* Add hash→filename mapping (main process only) */
-                                                                        add_hash_filename_mapping (shared_data->compilations[shared_data->compile_count].file_hash, strip_ptr);
+                                                                        main_monitoring_data.compilations[main_monitoring_data.compile_count].pid = pid;
+                                                                        main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = xstrdup (strip_ptr);
+                                                                        main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
 
                                                                         /* Get predicted peak from history */
                                                                         predicted_peak_mb = get_file_memory_requirement (strip_ptr);
-                                                                        shared_data->compilations[shared_data->compile_count].peak_mb = predicted_peak_mb;
+                                                                        main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = predicted_peak_mb;
 
-                                                                        debug_write ("[MEMORY] Tracking source file PID %d -> %s (hash: %s, current: %luMB, predicted peak: %luMB)\n",
-                                                                                    (int)pid, strip_ptr, shared_data->compilations[shared_data->compile_count].file_hash, rss_kb / 1024, predicted_peak_mb);
+                                                                        debug_write ("[MEMORY] Tracking source file PID %d -> %s (current: %luMB, predicted peak: %luMB)\n",
+                                                                                    (int)pid, strip_ptr, rss_kb / 1024, predicted_peak_mb);
 
-                                                                        shared_data->compile_count++;
+                                                                        main_monitoring_data.compile_count++;
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->compile_mutex);
                                                                   }
                                                                 else
                                                                   {
                                                                     /* Already tracked, just update current */
-                                                                    pthread_mutex_lock (&shared_data->compile_mutex);
-                                                                    for (int k = 0; k < shared_data->compile_count; k++)
+                                                                    for (int k = 0; k < main_monitoring_data.compile_count; k++)
                                                                       {
-                                                                        if (shared_data->compilations[k].pid == pid)
+                                                                        if (main_monitoring_data.compilations[k].pid == pid)
                                                                           {
-                                                                            shared_data->compilations[k].current_mb = rss_kb / 1024;
+                                                                            main_monitoring_data.compilations[k].current_mb = rss_kb / 1024;
                                                                             break;
                                                                           }
                                                                       }
-                                                                    pthread_mutex_unlock (&shared_data->compile_mutex);
                                                                   }
                                                               }
                                                           }
@@ -2031,14 +2054,11 @@ memory_monitor_thread_func (void *arg)
                                         /* Update the descendant's current usage and record if it's a new peak */
                                         if (descendant_idx >= 0)
                                           {
-                                            pthread_mutex_lock (&shared_data->compile_mutex);
-                                            shared_data->compilations[descendant_idx].current_mb = rss_kb / 1024;
-                                            pthread_mutex_unlock (&shared_data->compile_mutex);
+                                            main_monitoring_data.compilations[descendant_idx].current_mb = rss_kb / 1024;
                                             if (rss_kb >= 10240)
                                               {
-                                                const char *filepath = get_filename_from_hash (shared_data->compilations[descendant_idx].file_hash);
-                                                if (filepath)
-                                                  record_file_memory_usage (filepath, rss_kb / 1024, 0);
+                                                if (main_monitoring_data.compilations[descendant_idx].filename)
+                                                  record_file_memory_usage (main_monitoring_data.compilations[descendant_idx].filename, rss_kb / 1024, 0);
                                               }
                                           }
                                       }
@@ -2074,46 +2094,50 @@ next_proc:
 
       /* Check for exited descendants and record their final memory */
       {
-        for (int i = 0; i < shared_data->compile_count; i++)
+        for (int i = 0; i < main_monitoring_data.compile_count; i++)
           {
             char stat_path[512];
             FILE *stat_file;
 
             /* Check if this PID still exists */
-            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)shared_data->compilations[i].pid);
+            snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.compilations[i].pid);
             stat_file = fopen (stat_path, "r");
             if (!stat_file)
               {
                 /* Process exited - record final memory and release reservation */
-                if (shared_data->compilations[i].current_mb > 10 && shared_data->compilations[i].file_hash[0])
+                if (main_monitoring_data.compilations[i].current_mb > 10 && main_monitoring_data.compilations[i].filename)
                   {
-                    debug_write ("[MEMORY] Compilation PID %d exited, final peak for hash %s: %luMB\n",
-                                (int)shared_data->compilations[i].pid,
-                                shared_data->compilations[i].file_hash,
-                                shared_data->compilations[i].current_mb);
+                    debug_write ("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
+                                (int)main_monitoring_data.compilations[i].pid,
+                                main_monitoring_data.compilations[i].filename,
+                                main_monitoring_data.compilations[i].current_mb);
 
                     /* Release the reserved memory now that process has exited */
-                    if (shared_data->compilations[i].peak_mb > 0)
+                    if (main_monitoring_data.compilations[i].peak_mb > 0)
                       {
-                        release_reserved_memory_mb (shared_data->compilations[i].peak_mb);
-                        debug_write ("[MEMORY] Released %luMB reservation for hash %s (process exited)\n",
-                                    shared_data->compilations[i].peak_mb, shared_data->compilations[i].file_hash);
+                        release_reserved_memory_mb (main_monitoring_data.compilations[i].peak_mb);
+                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited)\n",
+                                    main_monitoring_data.compilations[i].peak_mb, main_monitoring_data.compilations[i].filename);
                       }
-                    /* Get filename from hash for disk operations */
-                    {
-                      const char *filepath = get_filename_from_hash (shared_data->compilations[i].file_hash);
-                      if (filepath)
-                        {
-                          record_file_memory_usage (filepath, shared_data->compilations[i].current_mb, 1);  /* final=1 */
-                        }
-                    }
+                    /* Record final memory usage for disk operations */
+                    if (main_monitoring_data.compilations[i].filename)
+                      {
+                        record_file_memory_usage (main_monitoring_data.compilations[i].filename, main_monitoring_data.compilations[i].current_mb, 1);  /* final=1 */
+                      }
+                  }
+
+                /* Free filename before removing entry */
+                if (main_monitoring_data.compilations[i].filename)
+                  {
+                    free (main_monitoring_data.compilations[i].filename);
+                    main_monitoring_data.compilations[i].filename = NULL;
                   }
 
                 /* Remove this entry by shifting remaining entries */
-                if (i < shared_data->compile_count - 1)
-                  memmove (&shared_data->compilations[i], &shared_data->compilations[i + 1],
-                          (shared_data->compile_count - i - 1) * sizeof(shared_data->compilations[0]));
-                shared_data->compile_count--;
+                if (i < main_monitoring_data.compile_count - 1)
+                  memmove (&main_monitoring_data.compilations[i], &main_monitoring_data.compilations[i + 1],
+                          (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.compilations[0]));
+                main_monitoring_data.compile_count--;
                 i--;  /* Check this index again since we shifted */
               }
             else
@@ -2124,12 +2148,12 @@ next_proc:
       }
 
       /* Save memory profiles if they've been updated (check shared dirty flag) */
-      if (shared_data && shared_data->memory_profiles_dirty)
+      if (main_monitoring_data.memory_profiles_dirty)
         {
-          debug_write ("[MEMORY] Shared dirty flag detected, saving profiles...\n");
+          debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
           save_memory_profiles ();
-          shared_data->memory_profiles_dirty = 0;
-          //debug_write ("[MEMORY] Profiles saved, shared dirty flag cleared\n");
+          main_monitoring_data.memory_profiles_dirty = 0;
+          //debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
         }
 
       /* Debug marker B */
@@ -2181,6 +2205,9 @@ next_proc:
         debug_write ("[E%d:sleep]", iteration_count);
 #endif
 
+      /* Update shared memory with current compile usage for sub-makes */
+      update_shared_current_usage ();
+
       /* Sleep 100ms before next check for accurate process memory tracking */
       usleep (100000);
 
@@ -2212,7 +2239,7 @@ start_memory_monitor (void)
 {
   static int already_started = 0;
 
-  if (!auto_adjust_jobs_flag)
+  if (!memory_aware_flag)
     return;
 
   /* Only top-level make should monitor (not recursive makes) */
@@ -2229,7 +2256,7 @@ start_memory_monitor (void)
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
     {
       O (error, NILF, _("Failed to create memory monitor thread"));
-      auto_adjust_jobs_flag = 0;
+      memory_aware_flag = 0;
     }
 }
 
@@ -2237,7 +2264,7 @@ start_memory_monitor (void)
 static void
 stop_memory_monitor (void)
 {
-  if (!auto_adjust_jobs_flag || !monitor_thread_running)
+  if (!memory_aware_flag || !monitor_thread_running)
     return;
 
   /* DEBUG: Show we're stopping */
@@ -2254,7 +2281,7 @@ stop_memory_monitor (void)
 void
 stop_memory_monitor_immediate (void)
 {
-  if (!auto_adjust_jobs_flag || !monitor_thread_running)
+  if (!memory_aware_flag || !monitor_thread_running)
     return;
 
   /* DEBUG: Show we're stopping (from signal handler) */
@@ -3356,7 +3383,7 @@ main (int argc, char **argv, char **envp)
   init_memory_monitoring_env ();
 
   /* Start memory monitoring thread if auto-adjust-jobs is enabled (top-level only) */
-  if (auto_adjust_jobs_flag && makelevel == 0 && job_slots > 0)
+  if (memory_aware_flag && makelevel == 0 && job_slots > 0)
     {
       char msg[256];
       sprintf (msg, _("Memory-aware job pausing enabled (starting with -j%u)"), job_slots);
@@ -3717,7 +3744,6 @@ main (int argc, char **argv, char **envp)
      submakes it's the token they were given by their parent.  For the top
      make, we just subtract one from the number the user wants.  */
 
-  /* Always use jobserver for parallel builds - it's the standard mechanism */
   if (job_slots > 1 && jobserver_setup (job_slots - 1, jobserver_style))
     {
       /* Fill in the jobserver_auth for our children.  */
@@ -3726,6 +3752,7 @@ main (int argc, char **argv, char **envp)
       if (jobserver_auth)
         {
           /* We're using the jobserver so set job_slots to 0.  */
+          master_job_slots = job_slots;
           job_slots = 0;
         }
     }
@@ -4448,7 +4475,7 @@ main (int argc, char **argv, char **envp)
   /* NOTREACHED */
   exit (MAKE_SUCCESS);
 }
-
+
 /* Parsing of arguments, decoding of switches.  */
 
 static char options[1 + sizeof (switches) / sizeof (switches[0]) * 3];
@@ -4944,7 +4971,7 @@ decode_env_switches (const char *envar, size_t len, enum variable_origin origin)
   /* Parse those words.  */
   decode_switches (argc, argv, origin);
 }
-
+
 /* Quote the string IN so that it will be interpreted as a single word with
    no magic by decode_env_switches; also double dollar signs to avoid
    variable expansion in make itself.  Write the result into OUT, returning
@@ -5204,7 +5231,7 @@ should_print_dir (void)
        default setting: disable under -s / print in sub-makes and under -C.  */
     return !silent_flag && (makelevel > 0 || directories != NULL);
 }
-
+
 /* Print version information.  */
 
 static void
@@ -5287,20 +5314,20 @@ clean_jobserver (int status)
 
   /* Sanity: If we're the master, were all the tokens written back?  */
 
-  if (jobserver_auth)
+  if (master_job_slots)
     {
       /* We didn't write one for ourself, so start at 1.  */
       unsigned int tokens = 1 + jobserver_acquire_all ();
 
-      if (tokens != job_slots)
+      if (tokens != master_job_slots)
         ONN (error, NILF,
              "INTERNAL: Exiting with %u jobserver tokens available; should be %u!",
-             tokens, job_slots);
+             tokens, master_job_slots);
 
       reset_jobserver ();
     }
 }
-
+
 /* Exit with STATUS, cleaning up as necessary.  */
 
 void
@@ -5376,4 +5403,3 @@ die (int status)
 
   exit (status);
 }
-

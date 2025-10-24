@@ -762,12 +762,27 @@ extern unsigned int no_intermediates;
 
 extern char *jobserver_auth;
 extern unsigned int job_slots;
+extern unsigned int master_job_slots;
 extern double max_load_average;
 extern unsigned long min_memory_mb;
-extern void get_memory_stats (unsigned int *percent, unsigned long *free_mb);
+extern unsigned long get_memory_stats (unsigned int *percent);
 extern unsigned long get_imminent_memory_mb (void);
 extern void reserve_memory_mb (unsigned long mb);
 extern void release_reserved_memory_mb (unsigned long mb);
+extern void save_memory_profiles (void);
+extern void record_file_memory_usage (const char *filename, unsigned long memory_mb, int final);
+extern void set_memory_profiles_dirty (void);
+extern void calculate_memory_stats (const char *caller_file, int caller_line);
+extern int memory_aware_flag;
+
+/* Memory profiling structures */
+#define MAX_MEMORY_PROFILES 10000
+struct file_memory_profile
+{
+  char *filename;
+  unsigned long peak_memory_mb;
+  time_t last_used;  /* Unix timestamp of last compilation */
+};
 
 extern const char *program;
 
