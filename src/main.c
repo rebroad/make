@@ -1071,8 +1071,8 @@ save_memory_profiles (void)
       return;
     }
 
-  //fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count);
-  //fflush (stderr);
+  /* fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count); */
+  /* fflush (stderr); */
 
   f = fopen (".make_memory_cache", "w");
   if (!f)
@@ -1095,8 +1095,8 @@ save_memory_profiles (void)
     }
 
   fclose (f);
-  //fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count);
-  //fflush (stderr);
+  /* fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
+  /* fflush (stderr); */
 }
 
 /* Record memory usage for a file (main make only)
@@ -1503,6 +1503,7 @@ memory_monitor_thread_func (void *arg)
   struct timeval iteration_start;
   unsigned int mem_percent;
   unsigned long free_mb;
+  int j, k, i;
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
 #endif
@@ -1621,7 +1622,7 @@ memory_monitor_thread_func (void *arg)
                                     int descendant_idx = -1;
 
                                     /* Find this source file's individual peak */
-                                    for (int j = 0; j < main_monitoring_data.compile_count; j++)
+                                    for (j = 0; j < main_monitoring_data.compile_count; j++)
                                       {
                                         if (main_monitoring_data.compilations[j].pid == pid)
                                           {
@@ -1663,7 +1664,7 @@ memory_monitor_thread_func (void *arg)
                                                 if (cmdline_len > 0)
                                                   {
                                                     /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-                                                    for (ssize_t j = 0; j < cmdline_len - 1; j++)
+                                                    for (j = 0; j < cmdline_len - 1; j++)
                                                       if (cmdline_buf[j] == '\0')
                                                         cmdline_buf[j] = ' ';
                                                     cmdline_buf[cmdline_len] = '\0';
@@ -1750,7 +1751,7 @@ memory_monitor_thread_func (void *arg)
                                                                 int found = 0;
 
                                                                 /* Check if already tracked */
-                                                                for (int k = 0; k < main_monitoring_data.compile_count; k++)
+                                                                for (k = 0; k < main_monitoring_data.compile_count; k++)
                                                                   {
                                                                     if (main_monitoring_data.compilations[k].pid == pid)
                                                                       {
@@ -1783,7 +1784,7 @@ memory_monitor_thread_func (void *arg)
                                                                 else
                                                                   {
                                                                     /* Already tracked, just update current */
-                                                                    for (int k = 0; k < main_monitoring_data.compile_count; k++)
+                                                                    for (k = 0; k < main_monitoring_data.compile_count; k++)
                                                                       {
                                                                         if (main_monitoring_data.compilations[k].pid == pid)
                                                                           {
@@ -1847,7 +1848,7 @@ next_proc:
 
       /* Check for exited descendants and record their final memory */
       {
-        for (int i = 0; i < main_monitoring_data.compile_count; i++)
+        for (i = 0; i < main_monitoring_data.compile_count; i++)
           {
             char stat_path[512];
             FILE *stat_file;
@@ -1906,7 +1907,7 @@ next_proc:
           debug_write ("[MEMORY] Dirty flag detected, saving profiles...\n");
           save_memory_profiles ();
           main_monitoring_data.memory_profiles_dirty = 0;
-          //debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n");
+          /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
         }
 
       /* Debug marker B */
