@@ -282,11 +282,13 @@ int memory_aware_flag = -1;  /* -1 = not set, will check env */
 struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
 unsigned int memory_profile_count = 0;
 static int disable_memory_display = 0;  /* Disable memory status display */
+#ifdef HAVE_PTHREAD_H
 static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
-static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
+#endif
+static volatile int monitor_thread_running = 0;
 
 /* Count all descendant processes (recursive - includes grandchildren!) */
 static unsigned int __attribute__((unused))
@@ -954,9 +956,11 @@ struct shared_memory_data {
   pthread_mutex_t reserved_memory_mutex;
 #endif
 } __attribute__((packed));
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
+#endif
 
 /* Main-make-only monitoring data (not shared between processes) */
 static struct {
@@ -1287,6 +1291,7 @@ reserve_memory_mb (long mb)
 }
 
 /* Forward declaration for non-blocking debug output */
+#ifdef HAVE_PTHREAD_H
 static void debug_write (const char *format, ...);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
@@ -1294,7 +1299,9 @@ static int cached_term_width = 80;
 
 /* Monitor thread's private non-blocking stderr fd (dup of STDERR_FILENO) */
 static int monitor_stderr_fd = -1;
+#endif
 
+#ifdef HAVE_PTHREAD_H
 static void
 display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
 {
@@ -1456,7 +1463,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
       status_line_shown = 1;
     }
 }
+#endif
 
+#ifdef HAVE_PTHREAD_H
 static void
 clear_status_line (void)
 {
@@ -1485,8 +1494,10 @@ clear_status_line (void)
       status_line_shown = 0;
     }
 }
+#endif
 
 /* Non-blocking debug write helper - uses monitor's private fd! */
+#ifdef HAVE_PTHREAD_H
 static void
 debug_write (const char *format, ...)
 {
@@ -1531,8 +1542,10 @@ debug_write (const char *format, ...)
 #endif
     }
 }
+#endif
 
 /* Memory monitoring thread - runs independently! */
+#ifdef HAVE_PTHREAD_H
 static void *
 memory_monitor_thread_func (void *arg)
 {
@@ -1546,17 +1559,17 @@ memory_monitor_thread_func (void *arg)
 
   static int iteration_count = 0;
 
-
-
   (void)arg;
   monitor_start_time = time (NULL);
 
   /* Cache terminal width ONCE before setting non-blocking (ioctl can block!) */
+#ifdef HAVE_SYS_IOCTL_H
   {
     struct winsize w;
     if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
       cached_term_width = w.ws_col;
   }
+#endif
 
   /* Use dup() to create private fd for monitor thread
    * NOTE: We do NOT set O_NONBLOCK because that flag is shared between the original
@@ -2022,6 +2035,7 @@ next_proc:
 
   return NULL;
 }
+#endif
 
 /* Start the memory monitoring thread */
 #ifdef HAVE_PTHREAD_H
