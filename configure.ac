@@ -63,12 +63,16 @@ AM_GNU_GETTEXT([external])
 AC_SEARCH_LIBS([strerror],[cposix])
 AC_SEARCH_LIBS([getpwnam], [sun])
 
+# Check for pthread library
+AC_SEARCH_LIBS([pthread_create], [pthread])
+
 AC_HEADER_DIRENT
 AC_HEADER_STAT
 
 AC_CHECK_HEADERS([stdlib.h string.h strings.h locale.h unistd.h limits.h \
                   memory.h sys/param.h sys/resource.h sys/timeb.h sys/time.h \
-                  sys/select.h sys/file.h fcntl.h spawn.h])
+                  sys/select.h sys/file.h fcntl.h spawn.h pthread.h sys/mman.h \
+                  sys/ioctl.h])
 
 AM_PROG_CC_C_O
 AC_C_CONST
@@ -136,7 +140,7 @@ AC_CHECK_FUNCS([strtoll strdup strndup stpcpy memrchr mempcpy umask mkstemp \
                 getgroups seteuid setegid setlinebuf setreuid setregid \
                 mkfifo getrlimit setrlimit setvbuf pipe strerror strsignal \
                 lstat readlink atexit isatty ttyname pselect posix_spawn \
-                posix_spawnattr_setsigmask])
+                posix_spawnattr_setsigmask shm_open])
 
 # We need to check declarations, not just existence, because on Tru64 this
 # function is not declared without special flags, which themselves cause
