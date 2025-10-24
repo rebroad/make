@@ -266,7 +266,6 @@ double default_load_average = -1.0;
 /* Memory-aware job adjustment */
 int memory_aware_flag = -1;  /* -1 = not set, will check env */
 static int disable_memory_display = 0;  /* Disable memory status display */
-static unsigned int memory_check_interval = 3;  /* seconds */
 static int status_line_shown = 0;
 static int spinner_state = 0;
 static pthread_t memory_monitor_thread;
@@ -275,116 +274,6 @@ static time_t monitor_start_time = 0;
 /* Note: We used to hold jobserver tokens here, but that deadlocked the build.
  * Now we just adjust job_slots directly for both jobserver and direct modes. */
 
-/* Freeze or resume ALL descendant make processes (recursive!) */
-static unsigned int UNUSED
-signal_all_descendant_makes (int sig)
-{
-  DIR *proc_dir;
-  struct dirent *entry;
-  char stat_path[512];
-  char cmdline_path[512];
-  FILE *stat_file;
-  FILE *cmdline_file;
-  pid_t ppid;
-  pid_t my_pid;
-  pid_t check_pid;
-  int i;
-  int j;
-  unsigned int signaled = 0;
-  char cmdline[256];
-
-  /* Track all our descendants */
-  static pid_t descendant_pids[MAX_TRACKED_COMPILATIONS];
-  int compile_count = 0;
-  int found;
-
-  my_pid = getpid ();
-  descendant_pids[compile_count++] = my_pid;
-
-  /* Walk /proc multiple times to find all descendants */
-  for (i = 0; i < 5; i++)
-    {
-      proc_dir = opendir ("/proc");
-      if (!proc_dir)
-        break;
-
-      while ((entry = readdir (proc_dir)) != NULL)
-        {
-          if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
-            continue;
-
-          check_pid = atoi (entry->d_name);
-          if (check_pid <= 0)
-            continue;
-
-          snprintf (stat_path, sizeof(stat_path), "/proc/%s/stat", entry->d_name);
-          stat_file = fopen (stat_path, "r");
-          if (!stat_file)
-            continue;
-
-          if (fscanf (stat_file, "%*d %*s %*c %d", &ppid) == 1)
-            {
-              found = 0;
-              for (j = 0; j < compile_count; j++)
-                {
-                  if (ppid == descendant_pids[j])
-                    {
-                      found = 1;
-                      break;
-                    }
-                }
-
-              if (found)
-                {
-                  found = 0;
-                  for (j = 0; j < compile_count; j++)
-                    {
-                      if (check_pid == descendant_pids[j])
-                        {
-                          found = 1;
-                          break;
-                        }
-                    }
-
-                  if (!found && compile_count < MAX_TRACKED_COMPILATIONS)
-                    {
-                      descendant_pids[compile_count++] = check_pid;
-                    }
-                }
-            }
-
-          fclose (stat_file);
-        }
-
-      closedir (proc_dir);
-    }
-
-  /* Now signal only descendant make processes (not ourselves, not gcc) */
-  for (i = 0; i < compile_count; i++)
-    {
-      if (descendant_pids[i] == my_pid)
-        continue;  /* Don't signal ourselves */
-
-      snprintf (cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", descendant_pids[i]);
-      cmdline_file = fopen (cmdline_path, "r");
-      if (!cmdline_file)
-        continue;
-
-      if (fread (cmdline, 1, sizeof(cmdline) - 1, cmdline_file) > 0)
-        {
-          /* Signal ONLY make processes */
-          if (strstr(cmdline, "make"))
-            {
-              kill (descendant_pids[i], sig);
-              signaled++;
-            }
-        }
-
-      fclose (cmdline_file);
-    }
-
-  return signaled;
-}
 
 
 /* Count all descendant processes (recursive - includes grandchildren!) */
@@ -495,9 +384,6 @@ init_memory_monitoring_env (void)
     }
 
 
-  env = getenv ("MAKE_MEMORY_CHECK_INTERVAL");
-  if (env)
-    memory_check_interval = (unsigned int)atoi (env);
 }
 
 /* List of directories given with -C switches.  */
@@ -1625,8 +1511,6 @@ memory_monitor_thread_func (void *arg)
   static time_t last_debug = 0;
 #endif
 
-  /* Sliding window for smoothed rate calculation (last 10 samples = 3 seconds) */
-#define MEMORY_SAMPLE_WINDOW 10
   static int iteration_count = 0;
 
 
