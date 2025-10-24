@@ -18,7 +18,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "os.h"
 #include "filedef.h"
 #include "dep.h"
-#include <sys/mman.h>
 #include "variable.h"
 #include "job.h"
 #include "commands.h"
@@ -28,6 +27,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "shuffle.h"
 
 #include <assert.h>
+#include <sys/mman.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <dirent.h>
