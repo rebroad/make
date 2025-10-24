@@ -19,10 +19,6 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "filedef.h"
 #include "dep.h"
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <openssl/sha.h>
 #include "variable.h"
 #include "job.h"
 #include "commands.h"
@@ -32,15 +28,10 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "shuffle.h"
 
 #include <assert.h>
-#include <sys/time.h>
 #include <pthread.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include <sys/ioctl.h
 #include <dirent.h>
 #include <stdarg.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <ctype.h>
 
 /* Set to 1 to enable verbose memory monitor debugging (timing, iteration markers, etc.) */
 #define DEBUG_MEMORY_MONITOR 0
