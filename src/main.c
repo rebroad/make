@@ -27,10 +27,18 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "shuffle.h"
 
 #include <assert.h>
-#include <sys/mman.h>
-#include <pthread.h>
-#include <sys/ioctl.h>
-#include <dirent.h>
+#ifdef HAVE_SYS_MMAN_H
+# include <sys/mman.h>
+#endif
+#ifdef HAVE_PTHREAD_H
+# include <pthread.h>
+#endif
+#ifdef HAVE_SYS_IOCTL_H
+# include <sys/ioctl.h>
+#endif
+#ifdef HAVE_DIRENT_H
+# include <dirent.h>
+#endif
 #include <stdarg.h>
 
 /* Set to 1 to enable verbose memory monitor debugging (timing, iteration markers, etc.) */
@@ -281,9 +289,10 @@ static volatile int monitor_thread_running = 0;
 static time_t monitor_start_time = 0;
 
 /* Count all descendant processes (recursive - includes grandchildren!) */
-static unsigned int
+static unsigned int __attribute__((unused))
 count_all_descendants (void)
 {
+#ifdef HAVE_DIRENT_H
   unsigned int count = 0;
   DIR *proc_dir;
   struct dirent *entry;
@@ -369,6 +378,10 @@ count_all_descendants (void)
 
   /* Subtract 1 for ourselves */
   return count > 0 ? count : 0;
+#else
+  /* Non-POSIX systems: return 0 (no descendant tracking) */
+  return 0;
+#endif
 }
 
 /* Initialize memory monitoring settings from environment */
@@ -937,8 +950,10 @@ debug_signal_handler (int sig UNUSED)
 struct shared_memory_data {
   volatile unsigned long reserved_memory_mb;
   volatile unsigned long current_compile_usage_mb;  /* Sum of current memory usage of all running compilations */
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   pthread_mutex_t reserved_memory_mutex;
-};
+#endif
+} __attribute__((packed));
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
@@ -969,6 +984,7 @@ set_memory_profiles_dirty (void)
 static int
 init_shared_memory (void)
 {
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   int created = 0;
   struct stat st;
 
@@ -1015,12 +1031,16 @@ init_shared_memory (void)
     }
 
   return 0;
+#else
+  return -1; /* Not available on this platform */
+#endif
 }
 
 /* Cleanup shared memory */
 static void
 cleanup_shared_memory (void)
 {
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   /* Safety check: only run in main make process */
   if (makelevel > 0)
     {
@@ -1040,12 +1060,14 @@ cleanup_shared_memory (void)
       close (shared_memory_fd);
       shared_memory_fd = -1;
     }
+#endif
 }
 
 /* Update shared memory with total current compile usage */
-static void
+static void __attribute__((unused))
 update_shared_current_usage (void)
 {
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long total_current = 0;
   int i;
 
@@ -1062,6 +1084,7 @@ update_shared_current_usage (void)
       shared_data->current_compile_usage_mb = total_current;
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
+#endif
 }
 
 /* Save memory profiles to cache file (main make only) */
@@ -1162,6 +1185,7 @@ record_file_memory_usage (const char *filepath, unsigned long memory_mb, int fin
 unsigned long
 get_imminent_memory_mb (void)
 {
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long total_current = 0;
   unsigned long result = 0;
   unsigned long reserved_mb;
@@ -1190,8 +1214,10 @@ get_imminent_memory_mb (void)
   fprintf (stderr, "  Final result: %luMB\n", result);
 
   return result;
+#else
+  return 0; /* Not available on this platform */
+#endif
 }
-
 
 unsigned long
 get_memory_stats (unsigned int *percent)
@@ -1234,6 +1260,7 @@ get_memory_stats (unsigned int *percent)
 void
 reserve_memory_mb (long mb)
 {
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   if (shared_data == NULL)
     {
       if (init_shared_memory () != 0)
@@ -1256,6 +1283,7 @@ reserve_memory_mb (long mb)
         shared_data->reserved_memory_mb = 0;
     }
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+#endif
 }
 
 /* Forward declaration for non-blocking debug output */
@@ -1996,6 +2024,7 @@ next_proc:
 }
 
 /* Start the memory monitoring thread */
+#ifdef HAVE_PTHREAD_H
 static void
 start_memory_monitor (void)
 {
@@ -2015,14 +2044,21 @@ start_memory_monitor (void)
 
   monitor_thread_running = 1;
 
+#ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
     {
       O (error, NILF, _("Failed to create memory monitor thread"));
       memory_aware_flag = 0;
     }
+#else
+  O (error, NILF, _("Memory monitoring requires pthread support"));
+  memory_aware_flag = 0;
+#endif
 }
+#endif
 
 /* Stop the memory monitoring thread */
+#ifdef HAVE_PTHREAD_H
 static void
 stop_memory_monitor (void)
 {
@@ -2035,11 +2071,15 @@ stop_memory_monitor (void)
 #endif
 
   monitor_thread_running = 0;
+#ifdef HAVE_PTHREAD_H
   pthread_join (memory_monitor_thread, NULL);
+#endif
   clear_status_line ();
 }
+#endif
 
 /* Immediate stop for signal handlers - don't wait for thread join */
+#ifdef HAVE_PTHREAD_H
 void
 stop_memory_monitor_immediate (void)
 {
@@ -2055,6 +2095,27 @@ stop_memory_monitor_immediate (void)
   /* Give thread a moment to see the flag and exit */
   usleep (10000);  /* 10ms */
 }
+#else
+/* Stub functions for non-POSIX systems */
+static void
+start_memory_monitor (void)
+{
+  /* Memory monitoring not available on this platform */
+  memory_aware_flag = 0;
+}
+
+static void
+stop_memory_monitor (void)
+{
+  /* No-op on non-POSIX systems */
+}
+
+void
+stop_memory_monitor_immediate (void)
+{
+  /* No-op on non-POSIX systems */
+}
+#endif
 
 
 static void
