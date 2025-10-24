@@ -306,7 +306,7 @@ signal_all_descendant_makes (int sig)
   char cmdline[256];
 
   /* Track all our descendants */
-#define MAX_TRACKED_PIDS 1000
+#define MAX_TRACKED_PIDS 100
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
   int source_count = 0;
   int found;
@@ -418,7 +418,7 @@ kill_compilation_jobs (int sig)
   char cmdline[256];
 
   /* Track all our descendants */
-#define MAX_TRACKED_PIDS 1000
+#define MAX_TRACKED_PIDS 100
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
   int source_count = 0;
   int found;
@@ -529,7 +529,7 @@ count_all_descendants (void)
   int j;
 
   /* Simple array to track PIDs we've identified as descendants */
-#define MAX_TRACKED_PIDS 1000
+#define MAX_TRACKED_PIDS 100
   static pid_t descendant_pids[MAX_TRACKED_PIDS];
   int source_count = 0;
   int found;
@@ -1194,8 +1194,7 @@ debug_signal_handler (int sig UNUSED)
 #endif
 
 /* Memory monitoring for auto-adjust-jobs feature */
-#define MAX_TRACKED_SOURCES 1000
-#define MAX_TRACKED_DESCENDANTS 1000
+#define MAX_TRACKED_SOURCES 1000    /* Max unique source files to track */
 
 /* Shared memory structure for inter-process communication */
 struct shared_memory_data {
@@ -2115,7 +2114,7 @@ memory_monitor_thread_func (void *arg)
                                                               strip_ptr += 3;
 
                                                             /* Store the filename mapped to THIS descendant PID */
-                                                            if (shared_data->source_count < MAX_TRACKED_DESCENDANTS)
+                                                            if (shared_data->source_count < MAX_TRACKED_SOURCES)
                                                               {
                                                                 int found = 0;
 
@@ -2135,7 +2134,7 @@ memory_monitor_thread_func (void *arg)
 
                                                                     /* Thread-safe access to shared descendant data */
                                                                     pthread_mutex_lock (&shared_data->source_mutex);
-                                                                    if (shared_data->source_count < MAX_TRACKED_DESCENDANTS)
+                                                                    if (shared_data->source_count < MAX_TRACKED_SOURCES)
                                                                       {
                                                                         shared_data->source_files[shared_data->source_count].pid = pid;
                                                                         generate_file_hash (strip_ptr, shared_data->source_files[shared_data->source_count].file_hash);
