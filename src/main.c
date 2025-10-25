@@ -1093,7 +1093,6 @@ cleanup_shared_memory (void)
 #endif
 }
 
-
 /* Save memory profiles to cache file (main make only) */
 void
 save_memory_profiles (void)
