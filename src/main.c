@@ -1691,7 +1691,7 @@ static void find_child_descendants(pid_t parent_pid)
                 {
                   if (main_monitoring_data.compilations[j].pid == pid)
                     {
-                      descendant_old_peak = main_monitoring_data.compilations[j].peak_mb;
+                      descendant_old_peak = main_monitoring_data.compilations[j].old_peak_mb;
                       descendant_idx = j;
                       debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB (file: %s)\n",
                                   j, (int)pid, descendant_old_peak, rss_kb / 1024,
