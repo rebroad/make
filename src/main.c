@@ -1028,6 +1028,7 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
+      fprintf (stderr, "[DEBUG] Initialized shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -1046,6 +1047,7 @@ init_shared_memory (void)
           if (cwd) free(cwd);
           shared_data->reserved_memory_mb = 0;
           shared_data->current_compile_usage_mb = 0;
+          fprintf (stderr, "[DEBUG] Reinitialized shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
           pthread_mutexattr_init (&mutex_attr);
           pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
           pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -1226,6 +1228,7 @@ get_imminent_memory_mb (void)
       pthread_mutex_lock (&shared_data->reserved_memory_mutex);
       reserved_mb = shared_data->reserved_memory_mb;
       total_current = shared_data->current_compile_usage_mb;
+      fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
 
@@ -1299,16 +1302,20 @@ reserve_memory_mb (long mb)
       if (mb > 0)
         {
           /* Reserve memory */
+          unsigned long old_value = shared_data->reserved_memory_mb;
           shared_data->reserved_memory_mb += mb;
+          fprintf (stderr, "[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, getpid());
         }
       else if (mb < 0)
         {
           /* Release memory (ensure we don't go below zero) */
           unsigned long release_mb = (unsigned long)(-mb);
+          unsigned long old_value = shared_data->reserved_memory_mb;
           if (shared_data->reserved_memory_mb >= release_mb)
             shared_data->reserved_memory_mb -= release_mb;
           else
             shared_data->reserved_memory_mb = 0;
+          fprintf (stderr, "[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, getpid());
         }
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
