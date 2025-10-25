@@ -1028,7 +1028,7 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
-      fprintf (stderr, "[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
+      fprintf (stderr, "[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -1036,7 +1036,14 @@ init_shared_memory (void)
     }
   else
     {
-      fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid());
+      fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid(), makelevel);
+      /* Only top-level make should reset shared memory to prevent stale data */
+      if (makelevel == 0)
+        {
+          fprintf (stderr, "[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+          shared_data->reserved_memory_mb = 0;
+          shared_data->current_compile_usage_mb = 0;
+        }
       /* For existing shared memory, ensure mutex is properly initialized */
       /* This is a safety check - the mutex should already be initialized */
       if (shared_data->reserved_memory_mb == 0 && shared_data->current_compile_usage_mb == 0)
@@ -2557,11 +2564,6 @@ main (int argc, char **argv, char **envp)
   int argv_slots;  /* The jobslot info we got from our parent process.  */
 
 
-  /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
-  if (memory_aware_flag && init_shared_memory () != 0)
-    {
-      fprintf (stderr, "Warning: Failed to initialize shared memory for memory monitoring\n");
-    }
 
   /* Memory profiles will be loaded lazily when needed for PREDICT decisions */
 #ifdef WINDOWS32
@@ -3099,6 +3101,12 @@ main (int argc, char **argv, char **envp)
     else
       makelevel = 0;
   }
+
+  /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
+  if (memory_aware_flag && init_shared_memory () != 0)
+    {
+      fprintf (stderr, "Warning: Failed to initialize shared memory for memory monitoring\n");
+    }
 
 
   /* Set always_make_flag if -B was given and we've not restarted already.  */
