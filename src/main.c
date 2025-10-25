@@ -1821,10 +1821,10 @@ static void find_child_descendants(pid_t parent_pid)
                                               unsigned long profile_peak_mb = 0;
                                               for (p = 0; p < memory_profile_count; p++)
                                                 {
-                                                  if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, source_filename) == 0)
+                                                  if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0)
                                                     {
                                                       profile_peak_mb = memory_profiles[p].peak_memory_mb;
-                                                      debug_write("[DEBUG] Found memory profile for %s: %luMB\n", source_filename, profile_peak_mb);
+                                                      debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
                                                       break;
                                                     }
                                                 }
@@ -1833,10 +1833,10 @@ static void find_child_descendants(pid_t parent_pid)
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = rss_kb / 1024;
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = profile_peak_mb;  /* Set from memory profile */
-                                              main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = xstrdup (source_filename);
+                                              main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = xstrdup (strip_ptr);
                                               main_monitoring_data.compile_count++;
                                               debug_write("[DEBUG] New descendant[%d] PID %d: rss=%luKB, profile_peak=%luMB (file: %s)\n",
-                                                          main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, source_filename);
+                                                          main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, strip_ptr);
                                             }
                                         }
                                     }
