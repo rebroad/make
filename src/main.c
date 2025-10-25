@@ -1647,6 +1647,8 @@ static void find_child_descendants(pid_t parent_pid)
   int j, k;
   unsigned int p;
 
+  debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
+
   proc_dir = opendir ("/proc");
   if (!proc_dir)
     return;
@@ -1893,6 +1895,8 @@ memory_monitor_thread_func (void *arg)
   unsigned long free_mb;
   int i;
   static int debug_counter = 0;
+
+  debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
   time_t now;
@@ -1942,11 +1946,14 @@ memory_monitor_thread_func (void *arg)
         int total_tracked = 0;
 
         /* Start with our direct children and find their descendants */
+        debug_write("[DEBUG] Scanning children list...\n");
         for (c = children; c != 0; c = c->next)
           {
+            debug_write("[DEBUG] Found child: pid=%d\n", (int)c->pid);
             if (c->pid > 0)
               {
                 direct_children_count++;
+                debug_write("[DEBUG] Processing child pid=%d\n", (int)c->pid);
                 /* Check this child's memory directly */
                 check_child_memory_usage(c->pid);
 
@@ -2111,6 +2118,8 @@ start_memory_monitor (void)
 
   /* Load existing memory profiles from cache */
   load_memory_profiles ();
+
+  debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
 
 #ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
