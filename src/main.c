@@ -1826,8 +1826,6 @@ static void find_child_descendants(pid_t parent_pid)
                                               debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
                                               for (p = 0; p < memory_profile_count; p++)
                                                 {
-                                                  debug_write("[DEBUG] Checking profile[%u]: '%s' vs '%s'\n", p,
-                                                             memory_profiles[p].filename ? memory_profiles[p].filename : "NULL", strip_ptr);
                                                   if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0)
                                                     {
                                                       profile_peak_mb = memory_profiles[p].peak_memory_mb;
