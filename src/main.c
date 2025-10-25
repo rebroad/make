@@ -971,6 +971,7 @@ static struct {
     pid_t pid;
     char *filename;         /* Direct filename storage */
     unsigned long peak_mb;
+    unsigned long old_peak_mb;
     unsigned long current_mb;
   } compilations[MAX_TRACKED_COMPILATIONS];
 } main_monitoring_data = {0};
@@ -1613,6 +1614,7 @@ static void check_child_memory_usage(pid_t child_pid)
               main_monitoring_data.compilations[main_monitoring_data.compile_count].pid = child_pid;
               main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
               main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = 0;
+              main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = 0;
               main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = NULL;
               main_monitoring_data.compile_count++;
             }
@@ -1624,6 +1626,13 @@ static void check_child_memory_usage(pid_t child_pid)
               if (main_monitoring_data.compilations[j].current_mb > main_monitoring_data.compilations[j].peak_mb)
                 {
                   main_monitoring_data.compilations[j].peak_mb = main_monitoring_data.compilations[j].current_mb;
+                }
+              /* Set old_peak_mb if not set yet (first time we see this process with significant memory) */
+              if (main_monitoring_data.compilations[j].old_peak_mb == 0 && rss_kb >= 10240)
+                {
+                  main_monitoring_data.compilations[j].old_peak_mb = main_monitoring_data.compilations[j].peak_mb;
+                  debug_write("[DEBUG] Set old_peak_mb=%luMB for child PID %d (first significant memory)\n",
+                             main_monitoring_data.compilations[j].old_peak_mb, (int)child_pid);
                 }
             }
         }
@@ -1688,12 +1697,23 @@ static void find_child_descendants(pid_t parent_pid)
                     {
                       descendant_old_peak = main_monitoring_data.compilations[j].peak_mb * 1024;  /* Convert to KB for comparison */
                       descendant_idx = j;
+                      debug_write("[DEBUG] Found existing descendant PID %d: old_peak=%luKB, current_rss=%luKB\n",
+                                 (int)pid, descendant_old_peak, rss_kb);
+                      /* Set old_peak_mb to the stored peak value (what was actually reserved) */
+                      if (main_monitoring_data.compilations[descendant_idx].old_peak_mb == 0)
+                        {
+                          main_monitoring_data.compilations[descendant_idx].old_peak_mb = main_monitoring_data.compilations[descendant_idx].peak_mb;
+                          debug_write("[DEBUG] Set old_peak_mb=%luMB for PID %d (from stored peak)\n",
+                                     main_monitoring_data.compilations[descendant_idx].old_peak_mb, (int)pid);
+                        }
                       break;
                     }
                 }
 
               if (rss_kb > descendant_old_peak)
                 {
+                  debug_write("[DEBUG] Descendant PID %d memory increased: old_peak=%luKB -> current_rss=%luKB\n",
+                             (int)pid, descendant_old_peak, rss_kb);
                   /* If this is the first time we see this descendant with significant memory (>10MB), extract filename */
                   if (descendant_old_peak < 10240 && rss_kb >= 10240)
                     {
@@ -1831,9 +1851,11 @@ static void find_child_descendants(pid_t parent_pid)
                   else if (main_monitoring_data.compile_count < MAX_TRACKED_COMPILATIONS)
                     {
                       /* Add new entry for this descendant */
+                      debug_write("[DEBUG] New descendant PID %d: rss=%luKB (first time seen)\n", (int)pid, rss_kb);
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].pid = pid;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = rss_kb / 1024;
+                      main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = 0;  /* Will be set when we see it again */
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = NULL;
                       main_monitoring_data.compile_count++;
                     }
@@ -1933,7 +1955,7 @@ memory_monitor_thread_func (void *arg)
             if (!stat_file)
               {
                 /* Process exited - record final memory and release reservation */
-                if (main_monitoring_data.compilations[i].current_mb > 10 && main_monitoring_data.compilations[i].filename)
+                if (main_monitoring_data.compilations[i].current_mb > 1 && main_monitoring_data.compilations[i].filename)
                   {
                     debug_write ("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
                                 (int)main_monitoring_data.compilations[i].pid,
@@ -1941,11 +1963,12 @@ memory_monitor_thread_func (void *arg)
                                 main_monitoring_data.compilations[i].current_mb);
 
                     /* Release the reserved memory now that process has exited */
-                    if (main_monitoring_data.compilations[i].peak_mb > 0)
+                    if (main_monitoring_data.compilations[i].old_peak_mb > 0)
                       {
-                        reserve_memory_mb (-(long)main_monitoring_data.compilations[i].peak_mb);
-                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited)\n",
-                                    main_monitoring_data.compilations[i].peak_mb, main_monitoring_data.compilations[i].filename);
+                        reserve_memory_mb (-(long)main_monitoring_data.compilations[i].old_peak_mb);
+                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited, peak was %luMB)\n",
+                                    main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename,
+                                    main_monitoring_data.compilations[i].peak_mb);
                       }
                     /* Record final memory usage for disk operations */
                     if (main_monitoring_data.compilations[i].filename)
