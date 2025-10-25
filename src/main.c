@@ -1039,7 +1039,7 @@ init_shared_memory (void)
     }
   else
     {
-      fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid(), makelevel);
+      //fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid(), makelevel);
       /* Only top-level make should reset shared memory to prevent stale data */
       if (makelevel == 0)
         {
@@ -2110,7 +2110,7 @@ start_memory_monitor (void)
   monitor_thread_running = 1;
 
   /* Load existing memory profiles from cache */
-  load_memory_profiles (__FILE__, __LINE__);
+  load_memory_profiles ();
 
 #ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)

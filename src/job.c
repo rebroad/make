@@ -1481,7 +1481,6 @@ start_job_command (struct child *child)
       child->pid = child_execute_job ((struct childbase *)child, 1, argv);
 
 #else
-
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       if (memory_aware_flag)
@@ -3929,7 +3928,7 @@ static int memory_profiles_loaded = 0;
 
 /* Load memory profiles from cache file */
 void
-load_memory_profiles (const char *caller_file, int caller_line)
+load_memory_profiles (void)
 {
   FILE *f;
   char line[4096];
@@ -3939,7 +3938,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
   char *cwd = getcwd(NULL, 0);
   char *top_level_cwd = getenv("MAKE_TOP_LEVEL_CWD");
 
-  fprintf (stderr, "[DEBUG] PID=%d load_memory_profiles() called from %s:%d\n", getpid(), caller_file, caller_line);
+  //fprintf (stderr, "[DEBUG] PID=%d load_memory_profiles() called from %s:%d\n", getpid(), caller_file, caller_line);
 
   /* Check if already loaded */
   if (memory_profiles_loaded)
@@ -3952,7 +3951,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
 
   if (top_level_cwd)
     {
-      fprintf (stderr, "[DEBUG] PID=%d Using environment variable top-level CWD for cache: %s\n", getpid(), top_level_cwd);
+      //fprintf (stderr, "[DEBUG] PID=%d Using environment variable top-level CWD for cache: %s\n", getpid(), top_level_cwd);
       /* Change to top-level directory */
       if (chdir(top_level_cwd) == 0)
         {
@@ -4097,7 +4096,7 @@ get_file_memory_requirement (const char *filename)
   /* Lazy loading: load memory profiles if not already loaded */
   if (!memory_profiles_loaded)
     {
-      load_memory_profiles (__FILE__, __LINE__);
+      load_memory_profiles ();
     }
 
   /* Look up the file in our profiles */

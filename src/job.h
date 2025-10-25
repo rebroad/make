@@ -92,5 +92,5 @@ extern unsigned int job_slots_used;
 extern unsigned int jobserver_tokens;
 
 /* Memory profiling per file */
-void load_memory_profiles (const char *caller_file, int caller_line);
+void load_memory_profiles (void);
 unsigned long get_file_memory_requirement (const char *filename);
