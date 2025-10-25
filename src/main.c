@@ -1028,6 +1028,8 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
+      /* Set environment variable for child processes to inherit */
+      setenv("MAKE_TOP_LEVEL_CWD", getcwd(NULL, 0), 1);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -1041,7 +1043,9 @@ init_shared_memory (void)
         {
           /* If data looks uninitialized, reinitialize */
           pthread_mutexattr_t mutex_attr;
-          fprintf (stderr, "[DEBUG] Shared memory safety check triggered - reinitializing mutex (PID=%d)\n", getpid());
+          char *cwd = getcwd(NULL, 0);
+          fprintf (stderr, "[DEBUG] Shared memory safety check triggered - reinitializing mutex (PID=%d, makelevel=%u, cwd=%s)\n", getpid(), makelevel, cwd ? cwd : "unknown");
+          if (cwd) free(cwd);
           shared_data->reserved_memory_mb = 0;
           shared_data->current_compile_usage_mb = 0;
           pthread_mutexattr_init (&mutex_attr);

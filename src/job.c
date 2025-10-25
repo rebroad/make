@@ -3935,6 +3935,8 @@ load_memory_profiles (const char *caller_file, int caller_line)
   char filename[4000];
   unsigned long peak_mb;
   long timestamp;
+  char *cwd = getcwd(NULL, 0);
+  char *top_level_cwd = getenv("MAKE_TOP_LEVEL_CWD");
 
   fprintf (stderr, "[DEBUG] load_memory_profiles() called from %s:%d (PID=%d)\n", caller_file, caller_line, getpid());
 
@@ -3945,12 +3947,46 @@ load_memory_profiles (const char *caller_file, int caller_line)
       return;
     }
 
-  f = fopen (".make_memory_cache", "r");
+  fprintf (stderr, "[DEBUG] Looking for memory cache in: %s/.make_memory_cache\n", cwd);
+
+  /* Use environment variable for top-level CWD lookup */
+
+  if (top_level_cwd)
+    {
+      fprintf (stderr, "[DEBUG] Using environment variable top-level CWD for cache: %s\n", top_level_cwd);
+      /* Change to top-level directory */
+      if (chdir(top_level_cwd) == 0)
+        {
+          f = fopen(".make_memory_cache", "r");
+          /* Change back to original directory */
+          if (chdir(cwd) != 0)
+            {
+              fprintf (stderr, "[DEBUG] Warning: Failed to restore original directory\n");
+            }
+        }
+      else
+        {
+          fprintf (stderr, "[DEBUG] Failed to change to top-level directory, using current directory\n");
+          f = fopen(".make_memory_cache", "r");
+        }
+    }
+  else
+    {
+      /* Fallback to current directory if environment variable not available */
+      fprintf (stderr, "[DEBUG] Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n");
+      f = fopen (".make_memory_cache", "r");
+    }
+
   if (!f)
     {
+      fprintf (stderr, "[DEBUG] Memory cache file not found, marking as loaded\n");
       memory_profiles_loaded = 1; /* Mark as loaded even if no cache */
+      free(cwd);
       return; /* No cache yet */
     }
+
+  fprintf (stderr, "[DEBUG] Found memory cache file\n");
+  free(cwd);
 
   while (fgets (line, sizeof(line), f))
     {
