@@ -4105,7 +4105,7 @@ get_file_memory_requirement (const char *filename)
     {
       if (memory_profiles[i].filename)
         {
-          fprintf (stderr, "[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
+          //fprintf (stderr, "[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
           if (strcmp (memory_profiles[i].filename, filename) == 0)
             {
               fprintf (stderr, "[DEBUG] Found match! Returning %lu MB (PID=%d, makelevel=%u)\n", memory_profiles[i].peak_memory_mb, getpid(), makelevel);
