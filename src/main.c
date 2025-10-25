@@ -2785,11 +2785,11 @@ main (int argc, char **argv, char **envp)
       char *top_cwd = getcwd(NULL, 0);
       define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
                               top_cwd, o_env, 0, NILF);
-      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (makelevel=%u)\n", top_cwd, makelevel);
+      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
     }
   else
     {
-      fprintf (stderr, "[DEBUG] Sub-make process (makelevel=%u), not defining MAKE_TOP_LEVEL_CWD\n", makelevel);
+      fprintf (stderr, "[DEBUG] Sub-make process (PID=%d, makelevel=%u), not defining MAKE_TOP_LEVEL_CWD\n", getpid(), makelevel);
     }
 
   /* Ensure the temp directory is set up: we don't want the first time we use
