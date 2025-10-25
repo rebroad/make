@@ -1093,29 +1093,6 @@ cleanup_shared_memory (void)
 #endif
 }
 
-/* Update shared memory with total current compile usage */
-static void __attribute__((unused))
-update_shared_current_usage (void)
-{
-#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long total_current = 0;
-  int i;
-
-  /* Calculate total current usage from main monitoring data */
-  for (i = 0; i < main_monitoring_data.compile_count; i++)
-    {
-      total_current += main_monitoring_data.compilations[i].current_mb;
-    }
-
-  /* Update shared memory (thread-safe) */
-  if (shared_data)
-    {
-      pthread_mutex_lock (&shared_data->current_usage_mutex);
-      shared_data->current_compile_usage_mb = total_current;
-      pthread_mutex_unlock (&shared_data->current_usage_mutex);
-    }
-#endif
-}
 
 /* Save memory profiles to cache file (main make only) */
 void
@@ -2062,7 +2039,26 @@ next_proc:
 #endif
 
       /* Update shared memory with current compile usage for sub-makes */
-      update_shared_current_usage ();
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
+      {
+        unsigned long total_current = 0;
+        int i;
+
+        /* Calculate total current usage from main monitoring data */
+        for (i = 0; i < main_monitoring_data.compile_count; i++)
+          {
+            total_current += main_monitoring_data.compilations[i].current_mb;
+          }
+
+        /* Update shared memory (thread-safe) */
+        if (shared_data)
+          {
+            pthread_mutex_lock (&shared_data->current_usage_mutex);
+            shared_data->current_compile_usage_mb = total_current;
+            pthread_mutex_unlock (&shared_data->current_usage_mutex);
+          }
+      }
+#endif
 
       /* Sleep 100ms before next check for accurate process memory tracking */
       usleep (100000);
