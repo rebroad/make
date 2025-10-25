@@ -1044,23 +1044,6 @@ init_shared_memory (void)
           shared_data->reserved_memory_mb = 0;
           shared_data->current_compile_usage_mb = 0;
         }
-      /* For existing shared memory, ensure mutex is properly initialized */
-      /* This is a safety check - the mutex should already be initialized */
-      if (shared_data->reserved_memory_mb == 0 && shared_data->current_compile_usage_mb == 0)
-        {
-          /* If data looks uninitialized, reinitialize */
-          pthread_mutexattr_t mutex_attr;
-          char *cwd = getcwd(NULL, 0);
-          fprintf (stderr, "[DEBUG] Shared memory safety check triggered - reinitializing mutex (PID=%d, makelevel=%u, cwd=%s)\n", getpid(), makelevel, cwd ? cwd : "unknown");
-          if (cwd) free(cwd);
-          shared_data->reserved_memory_mb = 0;
-          shared_data->current_compile_usage_mb = 0;
-          fprintf (stderr, "[DEBUG] Reinitialized shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
-          pthread_mutexattr_init (&mutex_attr);
-          pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-          pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
-          pthread_mutexattr_destroy (&mutex_attr);
-        }
     }
 
   return 0;
@@ -1238,14 +1221,14 @@ get_imminent_memory_mb (void)
       pthread_mutex_lock (&shared_data->reserved_memory_mutex);
       reserved_mb = shared_data->reserved_memory_mb;
       total_current = shared_data->current_compile_usage_mb;
-      fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
+      //fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
-  fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
+  /*fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_mb);
-  fprintf (stderr, "  Current compile usage: %luMB\n", total_current);
+  fprintf (stderr, "  Current compile usage: %luMB\n", total_current);*/
 
   /* Imminent = reserved peak memory - current usage */
   result = reserved_mb > total_current ? reserved_mb - total_current : 0;
@@ -2791,19 +2774,6 @@ main (int argc, char **argv, char **envp)
 
   initialize_global_hash_tables ();
 
-  /* Define MAKE_TOP_LEVEL_CWD as a make variable for child processes (only for top-level make) */
-  if (makelevel == 0)
-    {
-      char *top_cwd = getcwd(NULL, 0);
-      define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
-                              top_cwd, o_env, 0, NILF);
-      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
-    }
-  else
-    {
-      fprintf (stderr, "[DEBUG] Sub-make process (PID=%d, makelevel=%u), not defining MAKE_TOP_LEVEL_CWD\n", getpid(), makelevel);
-    }
-
   /* Ensure the temp directory is set up: we don't want the first time we use
      it to be in a forked process.  */
   get_tmpdir ();
@@ -3102,12 +3072,20 @@ main (int argc, char **argv, char **envp)
       makelevel = 0;
   }
 
+  /* Define MAKE_TOP_LEVEL_CWD as a make variable for child processes (only for top-level make) */
+  if (makelevel == 0)
+    {
+      char *top_cwd = getcwd(NULL, 0);
+      define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
+                              top_cwd, o_env, 0, NILF);
+      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
+    }
+
   /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
   if (memory_aware_flag && init_shared_memory () != 0)
     {
       fprintf (stderr, "Warning: Failed to initialize shared memory for memory monitoring\n");
     }
-
 
   /* Set always_make_flag if -B was given and we've not restarted already.  */
   always_make_flag = always_make_set && (restarts == 0);
