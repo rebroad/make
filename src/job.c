@@ -4053,7 +4053,7 @@ calculate_memory_stats (const char *caller_file, int caller_line)
           if (file_kb == 0) file_kb = 1;  /* Avoid division by zero */
 
           /* Calculate MB per KB ratio */
-          mb_per_kb = memory_profiles[i].peak_memory_mb * 1000 / file_kb;
+          mb_per_kb = memory_profiles[i].peak_memory_mb / file_kb;
 
           ratios[valid_count] = mb_per_kb;
           total_mb_per_kb += mb_per_kb;
