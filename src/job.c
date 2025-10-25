@@ -3997,7 +3997,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
               memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
-              fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
+              //fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
               memory_profile_count++;
             }
         }
