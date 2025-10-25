@@ -954,6 +954,7 @@ struct shared_memory_data {
   volatile unsigned long current_compile_usage_mb;  /* Sum of current memory usage of all running compilations */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   pthread_mutex_t reserved_memory_mutex;
+  pthread_mutex_t current_usage_mutex;
 #endif
 } __attribute__((aligned(8)));
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
@@ -1032,6 +1033,7 @@ init_shared_memory (void)
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
+      pthread_mutex_init (&shared_data->current_usage_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
     }
   else
@@ -1078,6 +1080,16 @@ cleanup_shared_memory (void)
       close (shared_memory_fd);
       shared_memory_fd = -1;
     }
+
+  /* Remove the shared memory object from the system */
+  if (shm_unlink (SHARED_MEMORY_NAME) == -1)
+    {
+      perror ("shm_unlink");
+    }
+  else
+    {
+      fprintf (stderr, "[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+    }
 #endif
 }
 
@@ -1098,9 +1110,9 @@ update_shared_current_usage (void)
   /* Update shared memory (thread-safe) */
   if (shared_data)
     {
-      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+      pthread_mutex_lock (&shared_data->current_usage_mutex);
       shared_data->current_compile_usage_mb = total_current;
-      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+      pthread_mutex_unlock (&shared_data->current_usage_mutex);
     }
 #endif
 }
@@ -1123,7 +1135,8 @@ save_memory_profiles (void)
   /* fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count); */
   /* fflush (stderr); */
 
-  f = fopen (".make_memory_cache", "w");
+  /* Use atomic file replacement: write to temp file, then rename */
+  f = fopen (".make_memory_cache.tmp", "w");
   if (!f)
     {
       fprintf (stderr, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
@@ -1144,6 +1157,18 @@ save_memory_profiles (void)
     }
 
   fclose (f);
+
+  /* Atomic file replacement: rename temp file (automatically replaces existing file) */
+  if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1)
+    {
+      perror ("rename .make_memory_cache.tmp");
+      fprintf (stderr, "[MEMORY] ERROR: Failed to rename temp file to cache file\n");
+    }
+  else
+    {
+      fprintf (stderr, "[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
+    }
+
   /* fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
 }
@@ -1220,9 +1245,12 @@ get_imminent_memory_mb (void)
     {
       pthread_mutex_lock (&shared_data->reserved_memory_mutex);
       reserved_mb = shared_data->reserved_memory_mb;
-      total_current = shared_data->current_compile_usage_mb;
-      //fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+
+      pthread_mutex_lock (&shared_data->current_usage_mutex);
+      total_current = shared_data->current_compile_usage_mb;
+      pthread_mutex_unlock (&shared_data->current_usage_mutex);
+      //fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
