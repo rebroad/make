@@ -1028,7 +1028,7 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
-      fprintf (stderr, "[DEBUG] Initialized shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
+      fprintf (stderr, "[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d)\n", getpid());
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -1036,6 +1036,7 @@ init_shared_memory (void)
     }
   else
     {
+      fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid());
       /* For existing shared memory, ensure mutex is properly initialized */
       /* This is a safety check - the mutex should already be initialized */
       if (shared_data->reserved_memory_mb == 0 && shared_data->current_compile_usage_mb == 0)
@@ -1073,6 +1074,8 @@ cleanup_shared_memory (void)
       fflush (stderr);
       return;
     }
+
+  fprintf (stderr, "[DEBUG] cleanup_shared_memory() called (PID=%d, makelevel=%u)\n", getpid(), makelevel);
 
   if (shared_data != NULL && shared_data != MAP_FAILED)
     {
