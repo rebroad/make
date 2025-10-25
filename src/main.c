@@ -1587,7 +1587,6 @@ memory_monitor_thread_func (void *arg)
   static time_t last_debug = 0;
 #endif
 
-  static int iteration_count = 0;
 
   (void)arg;
   monitor_start_time = time (NULL);
@@ -1618,27 +1617,11 @@ memory_monitor_thread_func (void *arg)
 
   while (monitor_thread_running)
     {
-      iteration_count++;
-
-      /* Debug: Show loop is running (every 10 iterations = 3s) */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 0)
-        debug_write ("[ITER%d]", iteration_count);
-#endif
+      unsigned long total_current = 0;
 
       gettimeofday (&iteration_start, NULL);
 
-
-
-      /* Debug marker A */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 1)
-        debug_write ("[A%d]", iteration_count);
-#endif
-
       free_mb = get_memory_stats (&mem_percent);
-
-      /* Imminent memory is now calculated on-demand in get_imminent_memory_mb() */
 
       /* Update peak memory by finding ALL descendants (walk UP from each process to find our children) */
       {
@@ -1925,12 +1908,15 @@ next_proc:
           }
       }
 
-      /* Check for exited descendants and record their final memory */
+      /* Check for exited descendants and calculate total current usage in one loop */
       {
         for (i = 0; i < main_monitoring_data.compile_count; i++)
           {
             char stat_path[512];
             FILE *stat_file;
+
+            /* Calculate total current usage from main monitoring data */
+            total_current += main_monitoring_data.compilations[i].current_mb;
 
             /* Check if this PID still exists */
             snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.compilations[i].pid);
@@ -1989,20 +1975,8 @@ next_proc:
           /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
         }
 
-      /* Debug marker B */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 1)
-        debug_write ("[B%d]", iteration_count);
-#endif
-
       /* Always update status display */
       display_memory_status (mem_percent, free_mb, 0);
-
-      /* Debug marker C */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 1)
-        debug_write ("[C%d]", iteration_count);
-#endif
 
       /* Debug: Show actual state periodically (non-blocking) */
 #if DEBUG_MEMORY_MONITOR
@@ -2019,55 +1993,18 @@ next_proc:
       if (mem_percent == 0)
         continue;  /* Can't determine memory usage */
 
-
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 1)
-        debug_write ("[D%d]", iteration_count);
-#endif
-
-
-      /* Job pausing logic - we don't adjust -j, just pause/resume jobs based on memory */
-
-      /* Debug: Show we reached end of loop iteration */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 0)
-        debug_write ("[END%d]", iteration_count);
-
-      /* Debug marker E - right before sleep (for iteration 41, 51, etc.) */
-      if (iteration_count % 10 == 1)
-        debug_write ("[E%d:sleep]", iteration_count);
-#endif
-
-      /* Update shared memory with current compile usage for sub-makes */
+      /* Update shared memory with total current usage (calculated in the loop above) */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-      {
-        unsigned long total_current = 0;
-        int i;
-
-        /* Calculate total current usage from main monitoring data */
-        for (i = 0; i < main_monitoring_data.compile_count; i++)
-          {
-            total_current += main_monitoring_data.compilations[i].current_mb;
-          }
-
-        /* Update shared memory (thread-safe) */
-        if (shared_data)
-          {
-            pthread_mutex_lock (&shared_data->current_usage_mutex);
-            shared_data->current_compile_usage_mb = total_current;
-            pthread_mutex_unlock (&shared_data->current_usage_mutex);
-          }
-      }
+      if (shared_data)
+        {
+          pthread_mutex_lock (&shared_data->current_usage_mutex);
+          shared_data->current_compile_usage_mb = total_current;
+          pthread_mutex_unlock (&shared_data->current_usage_mutex);
+        }
 #endif
 
       /* Sleep 100ms before next check for accurate process memory tracking */
       usleep (100000);
-
-      /* Debug marker F - after sleep */
-#if DEBUG_MEMORY_MONITOR
-      if (iteration_count % 10 == 1)
-        debug_write ("[F%d:awake]", iteration_count);
-#endif
     }
 
   /* If we exit the loop, show why */
