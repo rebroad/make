@@ -955,7 +955,7 @@ struct shared_memory_data {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   pthread_mutex_t reserved_memory_mutex;
 #endif
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((aligned(8)));
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
@@ -1022,7 +1022,7 @@ init_shared_memory (void)
       return -1;
     }
 
-  /* Initialize if this is the first process */
+  /* Initialize shared memory data */
   if (created)
     {
       pthread_mutexattr_t mutex_attr;
@@ -1032,6 +1032,23 @@ init_shared_memory (void)
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
+    }
+  else
+    {
+      /* For existing shared memory, ensure mutex is properly initialized */
+      /* This is a safety check - the mutex should already be initialized */
+      if (shared_data->reserved_memory_mb == 0 && shared_data->current_compile_usage_mb == 0)
+        {
+          /* If data looks uninitialized, reinitialize */
+          pthread_mutexattr_t mutex_attr;
+          fprintf (stderr, "[DEBUG] Shared memory safety check triggered - reinitializing mutex (PID=%d)\n", getpid());
+          shared_data->reserved_memory_mb = 0;
+          shared_data->current_compile_usage_mb = 0;
+          pthread_mutexattr_init (&mutex_attr);
+          pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
+          pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
+          pthread_mutexattr_destroy (&mutex_attr);
+        }
     }
 
   return 0;
@@ -1192,20 +1209,23 @@ get_imminent_memory_mb (void)
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long total_current = 0;
   unsigned long result = 0;
-  unsigned long reserved_mb;
+  unsigned long reserved_mb = 0;
 
-  /* Initialize shared memory if not already done */
-  if (shared_data == NULL)
+  /* Initialize shared memory if not already done (only if memory monitoring is enabled) */
+  if (memory_aware_flag && shared_data == NULL)
     {
       if (init_shared_memory () != 0)
         return 0; /* Fallback to no imminent memory if shared memory fails */
     }
 
   /* Thread-safe access to shared memory values */
-  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-  reserved_mb = shared_data->reserved_memory_mb;
-  total_current = shared_data->current_compile_usage_mb;
-  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+  if (shared_data)
+    {
+      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+      reserved_mb = shared_data->reserved_memory_mb;
+      total_current = shared_data->current_compile_usage_mb;
+      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+    }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
   fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
@@ -1265,28 +1285,31 @@ void
 reserve_memory_mb (long mb)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  if (shared_data == NULL)
+  if (memory_aware_flag && shared_data == NULL)
     {
       if (init_shared_memory () != 0)
         return; /* Fallback if shared memory fails */
     }
 
-  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-  if (mb > 0)
+  if (shared_data)
     {
-      /* Reserve memory */
-      shared_data->reserved_memory_mb += mb;
+      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+      if (mb > 0)
+        {
+          /* Reserve memory */
+          shared_data->reserved_memory_mb += mb;
+        }
+      else if (mb < 0)
+        {
+          /* Release memory (ensure we don't go below zero) */
+          unsigned long release_mb = (unsigned long)(-mb);
+          if (shared_data->reserved_memory_mb >= release_mb)
+            shared_data->reserved_memory_mb -= release_mb;
+          else
+            shared_data->reserved_memory_mb = 0;
+        }
+      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
-  else if (mb < 0)
-    {
-      /* Release memory (ensure we don't go below zero) */
-      unsigned long release_mb = (unsigned long)(-mb);
-      if (shared_data->reserved_memory_mb >= release_mb)
-        shared_data->reserved_memory_mb -= release_mb;
-      else
-        shared_data->reserved_memory_mb = 0;
-    }
-  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 #endif
 }
 
@@ -2521,8 +2544,8 @@ main (int argc, char **argv, char **envp)
   unsigned int syncing = 0;
   int argv_slots;  /* The jobslot info we got from our parent process.  */
 
-  /* Initialize shared memory for inter-process communication */
-  if (init_shared_memory () != 0)
+  /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
+  if (memory_aware_flag && init_shared_memory () != 0)
     {
       fprintf (stderr, "Warning: Failed to initialize shared memory for memory monitoring\n");
     }

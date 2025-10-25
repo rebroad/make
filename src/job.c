@@ -3961,6 +3961,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
               memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
+              fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB\n", memory_profile_count, filename, peak_mb);
               memory_profile_count++;
             }
         }
@@ -4062,10 +4063,19 @@ get_file_memory_requirement (const char *filename)
     }
 
   /* Look up the file in our profiles */
+  fprintf (stderr, "[DEBUG] Looking up memory requirement for: '%s'\n", filename);
+  fprintf (stderr, "[DEBUG] Loaded %u memory profiles\n", memory_profile_count);
   for (i = 0; i < memory_profile_count; i++)
     {
-      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filename) == 0)
-        return memory_profiles[i].peak_memory_mb;
+      if (memory_profiles[i].filename)
+        {
+          fprintf (stderr, "[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
+          if (strcmp (memory_profiles[i].filename, filename) == 0)
+            {
+              fprintf (stderr, "[DEBUG] Found match! Returning %lu MB\n", memory_profiles[i].peak_memory_mb);
+              return memory_profiles[i].peak_memory_mb;
+            }
+        }
     }
 
   /* No profile yet - try heuristics and statistical estimation */
