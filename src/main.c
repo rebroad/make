@@ -1645,6 +1645,7 @@ static void find_child_descendants(pid_t parent_pid)
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
   int j, k;
+  unsigned int p;
 
   proc_dir = opendir ("/proc");
   if (!proc_dir)
@@ -1695,24 +1696,7 @@ static void find_child_descendants(pid_t parent_pid)
                       debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB (file: %s)\n",
                                   j, (int)pid, descendant_old_peak, rss_kb / 1024,
                                   main_monitoring_data.compilations[j].filename ? main_monitoring_data.compilations[j].filename : "unknown");
-                      /* Set old_peak_mb from memory profile if not set yet */
-                      if (main_monitoring_data.compilations[j].old_peak_mb == 0)
-                        {
-                          /* Look up memory profile for this filename */
-                          unsigned long profile_peak_mb = 0;
-                          for (int p = 0; p < memory_profile_count; p++)
-                            {
-                              if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0)
-                                {
-                                  profile_peak_mb = memory_profiles[p].peak_memory_mb;
-                                  debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
-                                  break;
-                                }
-                            }
-                          main_monitoring_data.compilations[j].old_peak_mb = profile_peak_mb;
-                          debug_write("[DEBUG] Set old_peak_mb=%luMB for PID %d (from memory profile)\n",
-                                     profile_peak_mb, (int)pid);
-                        }
+                      /* old_peak_mb will be set when filename is extracted */
                       break;
                     }
                 }
@@ -1835,12 +1819,12 @@ static void find_child_descendants(pid_t parent_pid)
                                             {
                                               /* Look up memory profile for this filename */
                                               unsigned long profile_peak_mb = 0;
-                                              for (int p = 0; p < memory_profile_count; p++)
+                                              for (p = 0; p < memory_profile_count; p++)
                                                 {
-                                                  if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0)
+                                                  if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, source_filename) == 0)
                                                     {
                                                       profile_peak_mb = memory_profiles[p].peak_memory_mb;
-                                                      debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
+                                                      debug_write("[DEBUG] Found memory profile for %s: %luMB\n", source_filename, profile_peak_mb);
                                                       break;
                                                     }
                                                 }
@@ -1849,10 +1833,10 @@ static void find_child_descendants(pid_t parent_pid)
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = rss_kb / 1024;
                                               main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = profile_peak_mb;  /* Set from memory profile */
-                                              main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = xstrdup (strip_ptr);
+                                              main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = xstrdup (source_filename);
                                               main_monitoring_data.compile_count++;
                                               debug_write("[DEBUG] New descendant[%d] PID %d: rss=%luKB, profile_peak=%luMB (file: %s)\n",
-                                                          main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, strip_ptr);
+                                                          main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, source_filename);
                                             }
                                         }
                                     }
@@ -1878,7 +1862,7 @@ static void find_child_descendants(pid_t parent_pid)
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].pid = pid;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = rss_kb / 1024;
-                      main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = rss_kb / 1024;  /* Set to current value since this is first time we see it */
+                      main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = rss_kb / 1024;  // TODO - is this right?
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = NULL;
                       main_monitoring_data.compile_count++;
                     }
@@ -2008,7 +1992,7 @@ memory_monitor_thread_func (void *arg)
                     if (main_monitoring_data.compilations[i].old_peak_mb > 0)
                       {
                         reserve_memory_mb (-(long)main_monitoring_data.compilations[i].old_peak_mb);
-                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited, peak was %luMB)\n",
+                        debug_write ("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
                                     main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename,
                                     main_monitoring_data.compilations[i].peak_mb);
                       }
