@@ -1372,127 +1372,130 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
   /* Only show if enabled AND we have active jobs OR we're in emergency pause */
   /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
-  if (!memory_aware_flag || disable_memory_display)
+  if (!memory_aware_flag)
     return;
 
   gettimeofday (&now, NULL);
 
-  /* Update status line every 300ms for smooth spinner */
-  if (!force)
+  /* Only do visual display if --nomem is not specified */
+  if (!disable_memory_display)
     {
-      elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
-                   (now.tv_usec - last_display.tv_usec) / 1000;
-      if (elapsed_ms < 300)
+      /* Update status line every 300ms for smooth spinner */
+      if (!force)
         {
-          skip_count++;
-          /* Debug if we're skipping a LOT */
-          if (skip_count % 100 == 0)
+          elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
+                       (now.tv_usec - last_display.tv_usec) / 1000;
+          if (elapsed_ms < 300)
             {
-              debug_len = snprintf (debug_msg, sizeof(debug_msg), "[SKIP%d:elapsed=%ldms]", skip_count, elapsed_ms);
-              written = write (STDERR_FILENO, debug_msg, debug_len);
-              (void)written;
+              skip_count++;
+              /* Debug if we're skipping a LOT */
+              if (skip_count % 100 == 0)
+                {
+                  debug_len = snprintf (debug_msg, sizeof(debug_msg), "[SKIP%d:elapsed=%ldms]", skip_count, elapsed_ms);
+                  written = write (STDERR_FILENO, debug_msg, debug_len);
+                  (void)written;
+                }
+              return;
             }
-          return;
+          skip_count = 0;  /* Reset when we do display */
         }
-      skip_count = 0;  /* Reset when we do display */
-    }
 
-  last_display = now;
+      last_display = now;
 
-  /* Spinner to show we're alive */
-  spinner = spinners[spinner_state % 10];
-  spinner_state++;
+      /* Spinner to show we're alive */
+      spinner = spinners[spinner_state % 10];
+      spinner_state++;
 
-  /* Use green color for memory bar */
-  bar_color = green;
+      /* Use green color for memory bar */
+      bar_color = green;
 
-  /* Build memory bar (20 chars) - use safe string building */
-  filled = (mem_percent * bar_len) / 100;
+      /* Build memory bar (20 chars) - use safe string building */
+      filled = (mem_percent * bar_len) / 100;
 
-  /* Add color code */
-  pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", bar_color);
+      /* Add color code */
+      pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", bar_color);
 
-  /* Add filled portion */
-  for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-    pos += snprintf (bar + pos, sizeof(bar) - pos, "█");
+      /* Add filled portion */
+      for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
+        pos += snprintf (bar + pos, sizeof(bar) - pos, "█");
 
-  /* Switch to gray for empty portion */
-  pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", gray);
+      /* Switch to gray for empty portion */
+      pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", gray);
 
-  /* Add empty portion */
-  for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-    pos += snprintf (bar + pos, sizeof(bar) - pos, "░");
+      /* Add empty portion */
+      for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
+        pos += snprintf (bar + pos, sizeof(bar) - pos, "░");
 
-  /* Reset color */
-  snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
+      /* Reset color */
+      snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
 
-  /* Get effective job slots */
-  /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
-  if (job_slots > 0)
-    display_slots = job_slots;
-  else
-    display_slots = 0;  /* Not running jobs */
+      /* Get effective job slots */
+      /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
+      if (job_slots > 0)
+        display_slots = job_slots;
+      else
+        display_slots = 0;  /* Not running jobs */
 
+      /* Build the status string - show total descendant count */
+      /* Measure how long counting actually takes */
+      current_time = time (NULL);
 
-  /* Build the status string - show total descendant count */
-  /* Measure how long counting actually takes */
-  current_time = time (NULL);
-
-  if (current_time - last_count_time >= 2)
-    {
+      if (current_time - last_count_time >= 2)
+        {
 #if DEBUG_MEMORY_MONITOR
-      gettimeofday (&count_start, NULL);
+          gettimeofday (&count_start, NULL);
 #endif
-      cached_descendants = count_all_descendants ();
+          cached_descendants = count_all_descendants ();
 #if DEBUG_MEMORY_MONITOR
-      gettimeofday (&count_end, NULL);
+          gettimeofday (&count_end, NULL);
 
-      count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
-                      (count_end.tv_usec - count_start.tv_usec) / 1000;
+          count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
+                          (count_end.tv_usec - count_start.tv_usec) / 1000;
 
-      /* DEBUG: Show how long counting took (non-blocking) */
-      debug_write ("[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
-                   cached_descendants, count_time_ms, mem_percent);
+          /* DEBUG: Show how long counting took (non-blocking) */
+          debug_write ("[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
+                       cached_descendants, count_time_ms, mem_percent);
 #endif
 
-      last_count_time = current_time;
-    }
+          last_count_time = current_time;
+        }
 
-  snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
-              spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-              green, display_slots, reset, gray, cached_descendants, reset);
+      snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
+                spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+                green, display_slots, reset, gray, cached_descendants, reset);
 
-  /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
-  term_width = cached_term_width;
+      /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
+      term_width = cached_term_width;
 
-  /* Calculate position (right-aligned with 2 char margin) */
-  /* Note: actual visible length is less than total due to ANSI codes */
-  col_pos = term_width - visible_len;
-  if (col_pos < 1)
-    col_pos = 1;
+      /* Calculate position (right-aligned with 2 char margin) */
+      /* Note: actual visible length is less than total due to ANSI codes */
+      col_pos = term_width - visible_len;
+      if (col_pos < 1)
+        col_pos = 1;
 
-  /* Move up one line, save cursor, move to right side, display, restore, move down */
-  /* This makes the status appear on the line ABOVE the current compilation message */
-  /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-  output_len = snprintf (output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+      /* Move up one line, save cursor, move to right side, display, restore, move down */
+      /* This makes the status appear on the line ABOVE the current compilation message */
+      /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
+      output_len = snprintf (output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
 
-  if (output_len > 0 && output_len < (int)sizeof(output_buf))
-    {
-      write_count++;
+      if (output_len > 0 && output_len < (int)sizeof(output_buf))
+        {
+          write_count++;
 
-      /* Debug EVERY write for now to see gaps */
+          /* Debug EVERY write for now to see gaps */
 #if DEBUG_MEMORY_MONITOR
-      debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
-      written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
-      (void)written;
+          debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
+          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
+          (void)written;
 #endif
 
-      /* write() to monitor's private non-blocking fd - never blocks! */
-      written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
-      (void)written;  /* Ignore errors - if it fails, next iteration will try again */
-      status_line_shown = 1;
-    }
-}
+          /* write() to monitor's private non-blocking fd - never blocks! */
+          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
+          (void)written;  /* Ignore errors - if it fails, next iteration will try again */
+          status_line_shown = 1;
+        }
+    }  /* End of visual display block */
+  }
 #endif
 
 #ifdef HAVE_PTHREAD_H
