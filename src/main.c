@@ -1028,8 +1028,6 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
-      /* Set environment variable for child processes to inherit */
-      setenv("MAKE_TOP_LEVEL_CWD", getcwd(NULL, 0), 1);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -2548,6 +2546,7 @@ main (int argc, char **argv, char **envp)
   unsigned int syncing = 0;
   int argv_slots;  /* The jobslot info we got from our parent process.  */
 
+
   /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
   if (memory_aware_flag && init_shared_memory () != 0)
     {
@@ -2779,6 +2778,19 @@ main (int argc, char **argv, char **envp)
     }
 
   initialize_global_hash_tables ();
+
+  /* Define MAKE_TOP_LEVEL_CWD as a make variable for child processes (only for top-level make) */
+  if (makelevel == 0)
+    {
+      char *top_cwd = getcwd(NULL, 0);
+      define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
+                              top_cwd, o_env, 0, NILF);
+      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (makelevel=%u)\n", top_cwd, makelevel);
+    }
+  else
+    {
+      fprintf (stderr, "[DEBUG] Sub-make process (makelevel=%u), not defining MAKE_TOP_LEVEL_CWD\n", makelevel);
+    }
 
   /* Ensure the temp directory is set up: we don't want the first time we use
      it to be in a forked process.  */
@@ -3077,6 +3089,7 @@ main (int argc, char **argv, char **envp)
     else
       makelevel = 0;
   }
+
 
   /* Set always_make_flag if -B was given and we've not restarted already.  */
   always_make_flag = always_make_set && (restarts == 0);
