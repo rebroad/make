@@ -3947,7 +3947,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
       return;
     }
 
-  fprintf (stderr, "[DEBUG] Looking for memory cache in: %s/.make_memory_cache\n", cwd);
+  fprintf (stderr, "[DEBUG] Looking for memory cache in: %s/.make_memory_cache (PID=%d)\n", cwd, getpid());
 
   /* Use environment variable for top-level CWD lookup */
 
@@ -4100,7 +4100,7 @@ get_file_memory_requirement (const char *filename)
 
   /* Look up the file in our profiles */
   fprintf (stderr, "[DEBUG] Looking up memory requirement for: '%s' (PID=%d, makelevel=%u)\n", filename, getpid(), makelevel);
-  fprintf (stderr, "[DEBUG] Loaded %u memory profiles\n", memory_profile_count);
+  fprintf (stderr, "[DEBUG] Loaded %u memory profiles (PID=%d)\n", memory_profile_count, getpid());
   for (i = 0; i < memory_profile_count; i++)
     {
       if (memory_profiles[i].filename)
