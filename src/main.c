@@ -2110,6 +2110,9 @@ start_memory_monitor (void)
 
   monitor_thread_running = 1;
 
+  /* Load existing memory profiles from cache */
+  load_memory_profiles (__FILE__, __LINE__);
+
 #ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
     {
