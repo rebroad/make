@@ -1701,6 +1701,10 @@ static void find_child_descendants(pid_t parent_pid)
                     }
                 }
 
+              debug_write("[DEBUG] Checking condition: rss_kb=%lu >= 10240? %s, peak_mb=%lu < 10? %s\n",
+                         rss_kb, (rss_kb >= 10240) ? "YES" : "NO",
+                         main_monitoring_data.compilations[j].peak_mb,
+                         (main_monitoring_data.compilations[j].peak_mb < 10) ? "YES" : "NO");
               if (rss_kb >= 10240 && main_monitoring_data.compilations[j].peak_mb < 10)
                 {
                   debug_write("[DEBUG] Descendant[%d] PID %d memory increased: peak=%luMB -> current_rss=%luMB (file: %s)\n",
@@ -1819,8 +1823,11 @@ static void find_child_descendants(pid_t parent_pid)
                                             {
                                               /* Look up memory profile for this filename */
                                               unsigned long profile_peak_mb = 0;
+                                              debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
                                               for (p = 0; p < memory_profile_count; p++)
                                                 {
+                                                  debug_write("[DEBUG] Checking profile[%u]: '%s' vs '%s'\n", p,
+                                                             memory_profiles[p].filename ? memory_profiles[p].filename : "NULL", strip_ptr);
                                                   if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0)
                                                     {
                                                       profile_peak_mb = memory_profiles[p].peak_memory_mb;
@@ -1862,7 +1869,7 @@ static void find_child_descendants(pid_t parent_pid)
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].pid = pid;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].current_mb = rss_kb / 1024;
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].peak_mb = rss_kb / 1024;
-                      main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = rss_kb / 1024;  // TODO - is this right?
+                      main_monitoring_data.compilations[main_monitoring_data.compile_count].old_peak_mb = 0;  /* Will be set when filename is extracted */
                       main_monitoring_data.compilations[main_monitoring_data.compile_count].filename = NULL;
                       main_monitoring_data.compile_count++;
                     }
