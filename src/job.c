@@ -3961,7 +3961,7 @@ load_memory_profiles (const char *caller_file, int caller_line)
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
               memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
-              fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB\n", memory_profile_count, filename, peak_mb);
+              fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
               memory_profile_count++;
             }
         }
@@ -4063,7 +4063,7 @@ get_file_memory_requirement (const char *filename)
     }
 
   /* Look up the file in our profiles */
-  fprintf (stderr, "[DEBUG] Looking up memory requirement for: '%s'\n", filename);
+  fprintf (stderr, "[DEBUG] Looking up memory requirement for: '%s' (PID=%d, makelevel=%u)\n", filename, getpid(), makelevel);
   fprintf (stderr, "[DEBUG] Loaded %u memory profiles\n", memory_profile_count);
   for (i = 0; i < memory_profile_count; i++)
     {
@@ -4072,7 +4072,7 @@ get_file_memory_requirement (const char *filename)
           fprintf (stderr, "[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
           if (strcmp (memory_profiles[i].filename, filename) == 0)
             {
-              fprintf (stderr, "[DEBUG] Found match! Returning %lu MB\n", memory_profiles[i].peak_memory_mb);
+              fprintf (stderr, "[DEBUG] Found match! Returning %lu MB (PID=%d, makelevel=%u)\n", memory_profiles[i].peak_memory_mb, getpid(), makelevel);
               return memory_profiles[i].peak_memory_mb;
             }
         }
