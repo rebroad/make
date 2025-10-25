@@ -1237,7 +1237,7 @@ get_imminent_memory_mb (void)
   /* Imminent = reserved peak memory - current usage */
   result = reserved_mb > total_current ? reserved_mb - total_current : 0;
 
-  fprintf (stderr, "  Final result: %luMB\n", result);
+  //fprintf (stderr, "  Final result: %luMB\n", result);
 
   return result;
 #else
@@ -1535,13 +1535,13 @@ debug_write (const char *format, ...)
   ssize_t written;
   va_list args;
   int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
+#if DEBUG_MEMORY_MONITOR
+  static int eagain_count = 0;
+#endif
 
   /* Only output debug info when --nomem is specified (disable_memory_display is true) */
   if (disable_memory_display)
     return;
-#if DEBUG_MEMORY_MONITOR
-  static int eagain_count = 0;
-#endif
 
   va_start (args, format);
   len = vsnprintf (buf, sizeof(buf), format, args);
@@ -1859,6 +1859,7 @@ memory_monitor_thread_func (void *arg)
   int i;
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
+  time_t now;
 #endif
 
 
@@ -1988,6 +1989,7 @@ memory_monitor_thread_func (void *arg)
 
       /* Debug: Show actual state periodically (non-blocking) */
 #if DEBUG_MEMORY_MONITOR
+      now = time (NULL);
       if (now - last_debug >= 5)
         {
           debug_write ("[DEBUG @ %lus] job_slots=%u job_slots_used=%u mem=%u%% free=%luMB\n",
@@ -3224,8 +3226,8 @@ main (int argc, char **argv, char **envp)
   /* Initialize memory monitoring from environment variables */
   init_memory_monitoring_env ();
 
-  /* Start memory monitoring thread if auto-adjust-jobs is enabled (top-level only) */
-  if (memory_aware_flag && makelevel == 0 && job_slots > 0)
+  /* Start memory monitoring thread if memory-aware mode is enabled (top-level only) */
+  if (memory_aware_flag && makelevel == 0)
     {
       char msg[256];
       sprintf (msg, _("Memory-aware job pausing enabled (starting with -j%u)"), job_slots);
