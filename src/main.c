@@ -1411,28 +1411,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 static void
 clear_status_line (void)
 {
-  int term_width;
-  int col_pos;
-  char clear_cmd[64];
-  int clear_len;
-  ssize_t written;
-
   if (status_line_shown)
     {
-      /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
-      term_width = cached_term_width;
-
-      col_pos = term_width - 50;
-      if (col_pos < 1)
-        col_pos = 1;
-
-      /* Use monitor's private non-blocking fd - never blocks! */
-      clear_len = snprintf (clear_cmd, sizeof(clear_cmd), "\033[s\033[%dG\033[K\033[u", col_pos);
-      if (clear_len > 0 && clear_len < (int)sizeof(clear_cmd))
-        {
-          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, clear_cmd, clear_len);
-          (void)written;
-        }
+      /* Simple newline to clear status line - no ANSI escape sequences that can mess up TTY */
+      ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
+      (void)written;
       status_line_shown = 0;
     }
 }
