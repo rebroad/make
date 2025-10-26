@@ -1300,110 +1300,99 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   char debug_msg[128];
   int debug_len;
 
-  /* Only show if enabled AND we have active jobs OR we're in emergency pause */
-  /* Don't check job_slots here because in emergency/paused mode we STILL want to show status! */
-  if (!memory_aware_flag)
+  if (!memory_aware_flag || disable_memory_display)
     return;
 
-  gettimeofday (&now, NULL);
+  gettimeofday(&now, NULL);
 
-  /* Only do visual display if --nomem is not specified */
-  if (!disable_memory_display)
-    {
-      /* Update status line every 300ms for smooth spinner */
-      if (!force)
-        {
-          elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
-                       (now.tv_usec - last_display.tv_usec) / 1000;
-          if (elapsed_ms < 300)
-            {
-              skip_count++;
-              /* Debug if we're skipping a LOT */
-              if (skip_count % 100 == 0)
-                {
-                  debug_len = snprintf (debug_msg, sizeof(debug_msg), "[SKIP%d:elapsed=%ldms]", skip_count, elapsed_ms);
-                  written = write (STDERR_FILENO, debug_msg, debug_len);
-                  (void)written;
-                }
-              return;
-            }
-          skip_count = 0;  /* Reset when we do display */
-        }
+  /* Update status line every 300ms for smooth spinner */
+  if (!force) {
+    elapsed_ms = (now.tv_sec - last_display.tv_sec) * 1000 +
+                 (now.tv_usec - last_display.tv_usec) / 1000;
+    if (elapsed_ms < 300) {
+      skip_count++;
+      /* Debug if we're skipping a LOT */
+      if (skip_count % 100 == 0) {
+        debug_len = snprintf(debug_msg, sizeof(debug_msg), "[SKIP%d:elapsed=%ldms]", skip_count, elapsed_ms);
+        written = write(STDERR_FILENO, debug_msg, debug_len);
+        (void)written;
+      }
+      return;
+    }
+    skip_count = 0;  /* Reset when we do display */
+  }
 
-      last_display = now;
+  last_display = now;
 
-      /* Spinner to show we're alive */
-      spinner = spinners[spinner_state % 10];
-      spinner_state++;
+  /* Spinner to show we're alive */
+  spinner = spinners[spinner_state % 10];
+  spinner_state++;
 
-      /* Use green color for memory bar */
-      bar_color = green;
+  /* Use green color for memory bar */
+  bar_color = green;
 
-      /* Build memory bar (20 chars) - use safe string building */
-      filled = (mem_percent * bar_len) / 100;
+  /* Build memory bar (20 chars) - use safe string building */
+  filled = (mem_percent * bar_len) / 100;
 
-      /* Add color code */
-      pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", bar_color);
+  /* Add color code */
+  pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", bar_color);
 
-      /* Add filled portion */
-      for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-        pos += snprintf (bar + pos, sizeof(bar) - pos, "█");
+  /* Add filled portion */
+  for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
 
-      /* Switch to gray for empty portion */
-      pos += snprintf (bar + pos, sizeof(bar) - pos, "%s", gray);
+  /* Switch to gray for empty portion */
+  pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", gray);
 
-      /* Add empty portion */
-      for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-        pos += snprintf (bar + pos, sizeof(bar) - pos, "░");
+  /* Add empty portion */
+  for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
 
-      /* Reset color */
-      snprintf (bar + pos, sizeof(bar) - pos, "%s", reset);
+  /* Reset color */
+  snprintf(bar + pos, sizeof(bar) - pos, "%s", reset);
 
-      /* Get effective job slots */
-      /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
-      if (job_slots > 0)
-        display_slots = job_slots;
-      else
-        display_slots = 0;  /* Not running jobs */
+  /* Get effective job slots */
+  /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
+  if (job_slots > 0)
+    display_slots = job_slots;
+  else
+    display_slots = 0;  /* Not running jobs */
 
-      /* Build the status string - show total descendant count */
-      /* Use the total_tracked count we already calculated (no need to scan /proc again) */
+  /* Build the status string - show total descendant count */
+  /* Use the total_tracked count we already calculated (no need to scan /proc again) */
 
-      snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
-                spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-                green, display_slots, reset, gray, total_tracked, reset);
+  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
+           spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+           green, display_slots, reset, gray, total_tracked, reset);
 
-      /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
-      term_width = cached_term_width;
+  /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
+  term_width = cached_term_width;
 
-      /* Calculate position (right-aligned with 2 char margin) */
-      /* Note: actual visible length is less than total due to ANSI codes */
-      col_pos = term_width - visible_len;
-      if (col_pos < 1)
-        col_pos = 1;
+  /* Calculate position (right-aligned with 2 char margin) */
+  /* Note: actual visible length is less than total due to ANSI codes */
+  col_pos = term_width - visible_len;
+  if (col_pos < 1)
+    col_pos = 1;
 
-      /* Move up one line, save cursor, move to right side, display, restore, move down */
-      /* This makes the status appear on the line ABOVE the current compilation message */
-      /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-      output_len = snprintf (output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+  /* Move up one line, save cursor, move to right side, display, restore, move down */
+  /* This makes the status appear on the line ABOVE the current compilation message */
+  /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
+  output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
 
-      if (output_len > 0 && output_len < (int)sizeof(output_buf))
-        {
-          write_count++;
+  if (output_len > 0 && output_len < (int)sizeof(output_buf)) {
+    write_count++;
 
-          /* Debug EVERY write for now to see gaps */
+    /* Debug EVERY write for now to see gaps */
 #if DEBUG_MEMORY_MONITOR
-          debug_len = snprintf (debug_msg, sizeof(debug_msg), "[W%d]", write_count);
-          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
-          (void)written;
+    debug_len = snprintf(debug_msg, sizeof(debug_msg), "[W%d]", write_count);
+    written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
+    (void)written;
 #endif
 
-          /* write() to monitor's private non-blocking fd - never blocks! */
-          written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
-          (void)written;  /* Ignore errors - if it fails, next iteration will try again */
-          status_line_shown = 1;
-        }
-    }  /* End of visual display block */
+    /* write() to monitor's private non-blocking fd - never blocks! */
+    written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
+    (void)written;  /* Ignore errors - if it fails, next iteration will try again */
+    status_line_shown = 1;
   }
 #endif
 
@@ -1688,8 +1677,6 @@ memory_monitor_thread_func (void *arg)
   unsigned int mem_percent;
   unsigned long free_mb;
   unsigned int i;
-  static int debug_counter = 0;
-  int total_tracked = 0;
 
   debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
@@ -1760,15 +1747,6 @@ memory_monitor_thread_func (void *arg)
     /* Update peak memory by finding descendants starting from our PID */
     find_child_descendants(getpid());
 
-    total_tracked = main_monitoring_data.compile_count; // TODO - redundant
-
-    /* Debug: Show tracking summary every 10 iterations */
-    if (++debug_counter >= 10) {
-      debug_write("[DEBUG] Tracking summary: %d total tracked processes (max %d)\n",
-                  total_tracked, MAX_TRACKED_COMPILATIONS);
-      debug_counter = 0;
-    }
-
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
@@ -1828,7 +1806,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Always update status display */
-    display_memory_status (mem_percent, free_mb, 0, total_tracked);
+    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count;);
 
     /* Update shared memory with total current usage (calculated in the loop above) */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
