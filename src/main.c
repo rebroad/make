@@ -77,10 +77,6 @@ int vms_comma_separator = 0;
 int vms_unix_simulation = 0;
 int vms_report_unix_paths = 0;
 
-/* Memory profiling variables */
-struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
-unsigned int memory_profile_count = 0;
-
 /* Evaluates if a VMS environment option is set, only look at first character */
 static int
 get_vms_env_flag (const char *name, int default_value)
@@ -289,35 +285,6 @@ static pthread_t memory_monitor_thread;
 static time_t monitor_start_time = 0;
 #endif
 static volatile int monitor_thread_running = 0;
-
-/* Helper function to update an existing compilation entry */
-static void
-update_compilation_entry (int idx, unsigned long rss_kb)
-{
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  if (main_monitoring_data.compilations[idx].current_mb > main_monitoring_data.compilations[idx].peak_mb)
-    {
-      main_monitoring_data.compilations[idx].peak_mb = main_monitoring_data.compilations[idx].current_mb;
-    }
-}
-
-/* Helper function to add a new compilation entry */
-static int
-add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filename)
-{
-  if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
-    return 0;  /* No space available */
-
-  int idx = main_monitoring_data.compile_count;
-  main_monitoring_data.compilations[idx].pid = pid;
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].peak_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].old_peak_mb = old_peak_mb;
-  main_monitoring_data.compilations[idx].filename = filename ? xstrdup(filename) : NULL;
-  main_monitoring_data.compile_count++;
-
-  return 1;  /* Success */
-}
 
 /* Initialize memory monitoring settings from environment */
 static void
@@ -898,7 +865,7 @@ static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
 
 /* Main-make-only monitoring data (not shared between processes) */
 static struct {
-  int compile_count;
+  unsigned int compile_count;
   int memory_profiles_dirty;
   struct {
     pid_t pid;
@@ -908,6 +875,37 @@ static struct {
     unsigned long current_mb;
   } compilations[MAX_TRACKED_COMPILATIONS];
 } main_monitoring_data = {0};
+
+/* Helper function to update an existing compilation entry */
+static void
+update_compilation_entry (int idx, unsigned long rss_kb)
+{
+  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
+  if (main_monitoring_data.compilations[idx].current_mb > main_monitoring_data.compilations[idx].peak_mb)
+    {
+      main_monitoring_data.compilations[idx].peak_mb = main_monitoring_data.compilations[idx].current_mb;
+    }
+}
+
+/* Helper function to add a new compilation entry */
+static int
+add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
+{
+  int idx;
+
+  if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
+    return 0;  /* No space available */
+
+  idx = main_monitoring_data.compile_count;
+  main_monitoring_data.compilations[idx].pid = pid;
+  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
+  main_monitoring_data.compilations[idx].peak_mb = rss_kb / 1024;
+  main_monitoring_data.compilations[idx].old_peak_mb = old_peak_mb;
+  main_monitoring_data.compilations[idx].filename = filepath ? xstrdup(filepath) : NULL;
+  main_monitoring_data.compile_count++;
+
+  return 1;  /* Success */
+}
 
 /* Forward declarations */
 static int init_shared_memory (void);
@@ -1493,7 +1491,7 @@ static void check_child_memory_usage(pid_t child_pid)
   FILE *stat_file;
   char line[512];
   unsigned long rss_kb = 0;
-  int j = 0;
+  unsigned int j = 0;
 
   snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)child_pid);
   stat_file = fopen (stat_path, "r");
@@ -1544,6 +1542,8 @@ static void find_child_descendants(pid_t parent_pid)
   char line[512];
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
+  unsigned long profile_peak_mb = 0;
+  unsigned int i;
 
   debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1604,7 +1604,7 @@ static void find_child_descendants(pid_t parent_pid)
       /* Found a descendant! Track its memory */
 
       /* Find this descendant's individual peak */
-      for (int i = 0; i < main_monitoring_data.compile_count; i++) {
+      for (i = 0; i < main_monitoring_data.compile_count; i++) {
         if (main_monitoring_data.compilations[i].pid == pid) {
           descendant_idx = i;
           debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB (file: %s)\n",
@@ -1614,20 +1614,19 @@ static void find_child_descendants(pid_t parent_pid)
         }
       }
 
-      // Do we have the filename for this descendant?
-      if (main_monitoring_data.compilations[descendant_idx].filename == NULL) {
-        if (descendant_idx >= 0) {
-          // We already know about it and it wasn't relevant to us (as no filename was extracted)
-          return;
-        }
+      if (descendant_idx >= 0 && main_monitoring_data.compilations[descendant_idx].filename == NULL) {
+        // We already know about it and it wasn't relevant to us (as no filename was extracted)
+        return;
+      }
 
+      if (descendant_idx < 0) {
         if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS) {
           debug_write("[DEBUG] Max tracked compilations reached, skipping descendant PID %d\n",
                       (int)pid);
           return;
         }
 
-        /* Extract filename for this descendant */
+        /* Extract filename for this new descendant */
         snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
         cmdline_file = fopen(cmdline_path, "r");
         if (cmdline_file) {
@@ -1636,7 +1635,7 @@ static void find_child_descendants(pid_t parent_pid)
 
           if (cmdline_len > 0) {
             /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-            for (int i = 0; i < cmdline_len - 1; i++)
+            for (i = 0; i < cmdline_len - 1; i++)
               if (cmdline_buf[i] == '\0') cmdline_buf[i] = ' ';
             cmdline_buf[cmdline_len] = '\0';
 
@@ -1696,9 +1695,8 @@ static void find_child_descendants(pid_t parent_pid)
 
                 /* Store the filename mapped to THIS descendant PID */
                 /* Look up memory profile for this filename */
-                unsigned long profile_peak_mb = 0;
                 debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
-                for (int i = 0; i < memory_profile_count; i++) {
+                for (i = 0; i < memory_profile_count; i++) {
                   if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
                     profile_peak_mb = memory_profiles[i].peak_memory_mb;
                     debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
@@ -1713,20 +1711,17 @@ static void find_child_descendants(pid_t parent_pid)
             } // if (end)
           } // if (cmdline_len > 0)
         } // if (cmdline_file)
-      } // if (main_monitoring_data.compilations[descendant_idx].filename == NULL)
+      } // if new descendant
 
-      /* Update memory tracking for this relevant descendant */
-      if (descendant_idx >= 0)
-      {
+      if (descendant_idx >= 0) {
+        // Existing descendant - update memory tracking
         debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
           descendant_idx, (int)pid, rss_kb / 1024,
           main_monitoring_data.compilations[descendant_idx].filename ?
               main_monitoring_data.compilations[descendant_idx].filename : "unknown");
         update_compilation_entry(descendant_idx, rss_kb);
-      }
-      else
-      {
-        /* Add new entry for this irrelevant descendant */
+      } else {
+        /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */
         if (add_compilation_entry(pid, rss_kb, 0, NULL))
           debug_write("[DEBUG] New irrelevant descendant[%d] PID %d: rss=%luKB (first time seen)\n",
                       descendant_idx, (int)pid, rss_kb);
@@ -1746,8 +1741,11 @@ memory_monitor_thread_func (void *arg)
 {
   unsigned int mem_percent;
   unsigned long free_mb;
-  int i;
+  unsigned int i;
   static int debug_counter = 0;
+  struct child *c;
+  int direct_children_count = 0;
+  int total_tracked = 0;
 
   debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
@@ -1787,7 +1785,6 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running)
     {
       unsigned long total_current = 0;
-      int total_tracked = 0;
 
       /* Sleep 100ms between each check for accurate process memory tracking */
       usleep (100000);
@@ -1797,13 +1794,10 @@ memory_monitor_thread_func (void *arg)
       if (mem_percent == 0)
         {
           debug_write("[ERROR] Could not determine memory usage!\n");
-          return;
+          return NULL;
         }
 
       /* Update peak memory by finding descendants starting from our children list (much more efficient!) */
-
-      struct child *c;
-      int direct_children_count = 0;
 
       /* Start with our direct children and find their descendants */
       debug_write("[DEBUG] Scanning children list...\n");
