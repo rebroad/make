@@ -1499,7 +1499,7 @@ static void find_child_descendants(pid_t parent_pid)
   unsigned long profile_peak_mb = 0;
   unsigned int i;
 
-  debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
+  //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
   proc_dir = opendir("/proc");
   if (!proc_dir) {
@@ -1550,10 +1550,10 @@ static void find_child_descendants(pid_t parent_pid)
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.compilations[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
+        /*debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
                     i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.compilations[i].peak_mb,
-                    main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");
+                    main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");*/
         break;
       }
     }
