@@ -1491,7 +1491,7 @@ static void check_child_memory_usage(pid_t child_pid)
   FILE *stat_file;
   char line[512];
   unsigned long rss_kb = 0;
-  unsigned int j = 0;
+  unsigned int i = 0;
 
   snprintf (stat_path, sizeof(stat_path), "/proc/%d/status", (int)child_pid);
   stat_file = fopen (stat_path, "r");
@@ -1508,11 +1508,11 @@ static void check_child_memory_usage(pid_t child_pid)
       fclose (stat_file);
 
       /* Find or create entry for this child */
-      for (j = 0; j < main_monitoring_data.compile_count; j++)
+      for (i = 0; i < main_monitoring_data.compile_count; i++)
         {
-          if (main_monitoring_data.compilations[j].pid == child_pid)
+          if (main_monitoring_data.compilations[i].pid == child_pid)
             {
-              idx = j;
+              idx = i;
               break;
             }
         }
