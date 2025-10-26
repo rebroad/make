@@ -963,7 +963,7 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
-      fprintf (stderr, "[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+      debug_write("[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -972,11 +972,11 @@ init_shared_memory (void)
     }
   else
     {
-      //fprintf (stderr, "[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid(), makelevel);
+      //debug_write("[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->current_compile_usage_mb, getpid(), makelevel);
       /* Only top-level make should reset shared memory to prevent stale data */
       if (makelevel == 0)
         {
-          fprintf (stderr, "[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+          debug_write("[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
           shared_data->reserved_memory_mb = 0;
           shared_data->current_compile_usage_mb = 0;
         }
@@ -996,12 +996,12 @@ cleanup_shared_memory (void)
   /* Safety check: only run in main make process */
   if (makelevel > 0)
     {
-      fprintf (stderr, "[MEMORY] WARNING: cleanup_shared_memory() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      debug_write("[MEMORY] WARNING: cleanup_shared_memory() called in sub-make (makelevel=%u), ignoring\n", makelevel);
       fflush (stderr);
       return;
     }
 
-  fprintf (stderr, "[DEBUG] cleanup_shared_memory() called (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+  debug_write("[DEBUG] cleanup_shared_memory() called (PID=%d, makelevel=%u)\n", getpid(), makelevel);
 
   if (shared_data != NULL && shared_data != MAP_FAILED)
     {
@@ -1022,7 +1022,7 @@ cleanup_shared_memory (void)
     }
   else
     {
-      fprintf (stderr, "[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+      debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
     }
 #endif
 }
@@ -1037,19 +1037,19 @@ save_memory_profiles (void)
   /* Safety check: only run in main make process */
   if (makelevel > 0)
     {
-      fprintf (stderr, "[MEMORY] WARNING: save_memory_profiles() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      debug_write("[MEMORY] WARNING: save_memory_profiles() called in sub-make (makelevel=%u), ignoring\n", makelevel);
       fflush (stderr);
       return;
     }
 
-  /* fprintf (stderr, "[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count); */
+  /* debug_write("[MEMORY] save_memory_profiles() called, profile_count=%u\n", memory_profile_count); */
   /* fflush (stderr); */
 
   /* Use atomic file replacement: write to temp file, then rename */
   f = fopen (".make_memory_cache.tmp", "w");
   if (!f)
     {
-      fprintf (stderr, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
+      debug_write("[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
       fflush (stderr);
       return;
     }
@@ -1060,7 +1060,7 @@ save_memory_profiles (void)
                memory_profiles[i].peak_memory_mb,
                (long)memory_profiles[i].last_used,
                memory_profiles[i].filename);
-      /*fprintf (stderr, "[MEMORY] Wrote: %lu %ld %s\n",
+      /*debug_write("[MEMORY] Wrote: %lu %ld %s\n",
                memory_profiles[i].peak_memory_mb,
                (long)memory_profiles[i].last_used,
                memory_profiles[i].filename);*/
@@ -1072,14 +1072,14 @@ save_memory_profiles (void)
   if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1)
     {
       perror ("rename .make_memory_cache.tmp");
-      fprintf (stderr, "[MEMORY] ERROR: Failed to rename temp file to cache file\n");
+      debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
     }
   else
     {
-      fprintf (stderr, "[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
+      debug_write("[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
     }
 
-  /* fprintf (stderr, "[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
+  /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
 }
 
@@ -1105,7 +1105,7 @@ record_file_memory_usage (const char *filepath, unsigned long memory_mb, int fin
           if (memory_mb > memory_profiles[i].peak_memory_mb ||
               (final && memory_mb != memory_profiles[i].peak_memory_mb))
             {
-              fprintf (stderr, "[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
+              debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
                           final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
               fflush (stderr);
               memory_profiles[i].peak_memory_mb = memory_mb;
@@ -1124,7 +1124,7 @@ record_file_memory_usage (const char *filepath, unsigned long memory_mb, int fin
       memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
       set_memory_profiles_dirty ();  /* Signal main process to save */
-      fprintf (stderr, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+      debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
               filepath, memory_mb, memory_profile_count);
       fflush (stderr);
 
@@ -1160,13 +1160,13 @@ get_imminent_memory_mb (void)
       pthread_mutex_lock (&shared_data->current_usage_mutex);
       total_current = shared_data->current_compile_usage_mb;
       pthread_mutex_unlock (&shared_data->current_usage_mutex);
-      //fprintf (stderr, "[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
+      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
-  /*fprintf (stderr, "[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
-  fprintf (stderr, "  Reserved memory (active processes): %luMB\n", reserved_mb);
-  fprintf (stderr, "  Current compile usage: %luMB\n", total_current);*/
+  /*debug_write("[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
+  debug_write("  Reserved memory (active processes): %luMB\n", reserved_mb);
+  debug_write("  Current compile usage: %luMB\n", total_current);*/
 
   /* Imminent = reserved peak memory - current usage */
   result = reserved_mb > total_current ? reserved_mb - total_current : 0;
@@ -1235,7 +1235,7 @@ reserve_memory_mb (long mb, const char *filepath)
           /* Reserve memory */
           unsigned long old_value = shared_data->reserved_memory_mb;
           shared_data->reserved_memory_mb += mb;
-          fprintf (stderr, "[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid());
+          debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid());
         }
       else if (mb < 0)
         {
@@ -1246,7 +1246,7 @@ reserve_memory_mb (long mb, const char *filepath)
             shared_data->reserved_memory_mb -= release_mb;
           else
             shared_data->reserved_memory_mb = 0;
-          fprintf (stderr, "[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid());
+          debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid());
         }
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
@@ -2894,7 +2894,7 @@ main (int argc, char **argv, char **envp)
       char *top_cwd = getcwd(NULL, 0);
       define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
                               top_cwd, o_env, 0, NILF);
-      fprintf (stderr, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
+      debug_write("[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
     }
 
   /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */

@@ -1529,13 +1529,13 @@ start_job_command (struct child *child)
                       {
                         if (waited)
                           {
-                            fprintf (stderr, "[PREDICT] PID=%d %s: memory available after %ds, proceeding\n",
+                            debug_write("[PREDICT] PID=%d %s: memory available after %ds, proceeding\n",
                                     getpid(), filename, waited / 10);
                             fflush (stderr);
                           }
                         else
                           {
-                            fprintf (stderr, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
+                            debug_write("[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
                                     getpid(), filename, required_mb, effective_free, imminent_mb);
                             fflush (stderr);
                           }
@@ -1549,7 +1549,7 @@ start_job_command (struct child *child)
                     /* Not enough memory, wait */
                     if (waited == 0)
                       {
-                        fprintf (stderr, "[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
+                        debug_write("[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
                                 getpid(), filename, required_mb, effective_free, imminent_mb);
                         fflush (stderr);
                       }
@@ -1565,7 +1565,7 @@ start_job_command (struct child *child)
 
                 free_mb = get_memory_stats (NULL);
                 imminent_mb = get_imminent_memory_mb ();
-                fprintf (stderr, "[PREDICT] PID=%d %s: no data yet, %luMB free (%luMB imminent)\n",
+                debug_write("[PREDICT] PID=%d %s: no data yet, %luMB free (%luMB imminent)\n",
                         getpid(), filename, free_mb, imminent_mb);
                 fflush (stderr);
               }
@@ -3938,12 +3938,12 @@ load_memory_profiles (void)
   char *cwd = getcwd(NULL, 0);
   char *top_level_cwd = getenv("MAKE_TOP_LEVEL_CWD");
 
-  //fprintf (stderr, "[DEBUG] PID=%d load_memory_profiles() called from %s:%d\n", getpid(), caller_file, caller_line);
+  //debug_write("[DEBUG] PID=%d load_memory_profiles() called from %s:%d\n", getpid(), caller_file, caller_line);
 
   /* Check if already loaded */
   if (memory_profiles_loaded)
     {
-      fprintf (stderr, "[DEBUG] PID=%d Memory profiles already loaded, skipping\n", getpid());
+      debug_write("[DEBUG] PID=%d Memory profiles already loaded, skipping\n", getpid());
       return;
     }
 
@@ -3951,7 +3951,7 @@ load_memory_profiles (void)
 
   if (top_level_cwd)
     {
-      //fprintf (stderr, "[DEBUG] PID=%d Using environment variable top-level CWD for cache: %s\n", getpid(), top_level_cwd);
+      //debug_write("[DEBUG] PID=%d Using environment variable top-level CWD for cache: %s\n", getpid(), top_level_cwd);
       /* Change to top-level directory */
       if (chdir(top_level_cwd) == 0)
         {
@@ -3959,31 +3959,31 @@ load_memory_profiles (void)
           /* Change back to original directory */
           if (chdir(cwd) != 0)
             {
-              fprintf (stderr, "[DEBUG] PID=%d Warning: Failed to restore original directory\n", getpid());
+              debug_write("[DEBUG] PID=%d Warning: Failed to restore original directory\n", getpid());
             }
         }
       else
         {
-          fprintf (stderr, "[DEBUG] PID=%d Failed to change to top-level directory, using current directory\n", getpid());
+          debug_write("[DEBUG] PID=%d Failed to change to top-level directory, using current directory\n", getpid());
           f = fopen(".make_memory_cache", "r");
         }
     }
   else
     {
       /* Fallback to current directory if environment variable not available */
-      fprintf (stderr, "[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
+      debug_write("[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
       f = fopen (".make_memory_cache", "r");
     }
 
   if (!f)
     {
-      fprintf (stderr, "[DEBUG] PID=%d Memory cache file not found, marking as loaded\n", getpid());
+      debug_write("[DEBUG] PID=%d Memory cache file not found, marking as loaded\n", getpid());
       memory_profiles_loaded = 1; /* Mark as loaded even if no cache */
       free(cwd);
       return; /* No cache yet */
     }
 
-  //fprintf (stderr, "[DEBUG] PID=%d Found memory cache file\n", getpid());
+  //debug_write("[DEBUG] PID=%d Found memory cache file\n", getpid());
   free(cwd);
 
   while (fgets (line, sizeof(line), f))
@@ -3995,7 +3995,7 @@ load_memory_profiles (void)
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
               memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
-              //fprintf (stderr, "[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
+              //debug_write("[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
               memory_profile_count++;
             }
         }
@@ -4034,7 +4034,7 @@ calculate_memory_stats (const char *caller_file, int caller_line)
   (void)caller_file;
   (void)caller_line;
 
-  //fprintf (stderr, "[DEBUG] PID=%d calculate_memory_stats() called from %s:%d\n", getpid(), caller_file, caller_line);
+  //debug_write("[DEBUG] PID=%d calculate_memory_stats() called from %s:%d\n", getpid(), caller_file, caller_line);
 
   /* Allocate array for median calculation */
   ratios = (unsigned long *)malloc (memory_profile_count * sizeof(unsigned long));
@@ -4076,7 +4076,7 @@ calculate_memory_stats (const char *caller_file, int caller_line)
       if (memory_stats.avg_mb_per_kb > memory_stats.conservative_mb_per_kb)
         memory_stats.conservative_mb_per_kb = memory_stats.avg_mb_per_kb;
 
-      fprintf (stderr, "[MEMORY] PID=%d Statistics from %u files: conservative=%lu max=%lu (MB per 1000KB)\n",
+      debug_write("[MEMORY] PID=%d Statistics from %u files: conservative=%lu max=%lu (MB per 1000KB)\n",
               getpid(), valid_count, memory_stats.conservative_mb_per_kb, memory_stats.max_mb_per_kb);
       fflush (stderr);
     }
@@ -4100,16 +4100,16 @@ get_file_memory_requirement (const char *filename)
     }
 
   /* Look up the file in our profiles */
-  //fprintf (stderr, "[DEBUG] PID=%d Looking up memory requirement for: '%s' (makelevel=%u)\n", getpid(), filename, makelevel);
-  //fprintf (stderr, "[DEBUG] PID=%d Loaded %u memory profiles\n", getpid(), memory_profile_count);
+  //debug_write("[DEBUG] PID=%d Looking up memory requirement for: '%s' (makelevel=%u)\n", getpid(), filename, makelevel);
+  //debug_write("[DEBUG] PID=%d Loaded %u memory profiles\n", getpid(), memory_profile_count);
   for (i = 0; i < memory_profile_count; i++)
     {
       if (memory_profiles[i].filename)
         {
-          //fprintf (stderr, "[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
+          //debug_write("[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
           if (strcmp (memory_profiles[i].filename, filename) == 0)
             {
-              //fprintf (stderr, "[DEBUG] PID=%d Found match! Returning %lu MB (makelevel=%u)\n", getpid(), memory_profiles[i].peak_memory_mb, makelevel);
+              //debug_write("[DEBUG] PID=%d Found match! Returning %lu MB (makelevel=%u)\n", getpid(), memory_profiles[i].peak_memory_mb, makelevel);
               return memory_profiles[i].peak_memory_mb;
             }
         }
@@ -4136,7 +4136,7 @@ get_file_memory_requirement (const char *filename)
         {
           /* These are huge auto-generated files, ~200K lines, ~200-500 bytes per MB */
           estimated_mb = file_kb / 4;  /* Very rough: 4KB source → 1MB compiled */
-          fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC m68k-autogen ~%luMB\n", filename, estimated_mb);
+          debug_write("[MEMORY] Estimating %s: HEURISTIC m68k-autogen ~%luMB\n", filename, estimated_mb);
           fflush (stderr);
           return estimated_mb;
         }
@@ -4181,8 +4181,8 @@ get_file_memory_requirement (const char *filename)
             {
               /* Like emumem_hed*.cpp: ~120 lines, 104 templates → 1.4GB */
               estimated_mb = template_count * 13;  /* ~13MB per template instantiation */
-              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC template-explosion (%d tmpls) ~%luMB\n",
-                      filename, template_count, estimated_mb);
+              debug_write("[MEMORY] Estimating %s: HEURISTIC template-explosion (%d tmpls) ~%luMB\n",
+                          filename, template_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
             }
@@ -4192,8 +4192,8 @@ get_file_memory_requirement (const char *filename)
             {
               /* luaengine.cpp: 423 sol:: → 3414MB, ~8MB per sol:: */
               estimated_mb = sol_count * 8;
-              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC sol2-heavy (%d sol::) ~%luMB\n",
-                      filename, sol_count, estimated_mb);
+              debug_write("[MEMORY] Estimating %s: HEURISTIC sol2-heavy (%d sol::) ~%luMB\n",
+                          filename, sol_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
             }
@@ -4207,8 +4207,8 @@ get_file_memory_requirement (const char *filename)
               else
                 estimated_mb = file_kb / 3;  /* Rough guess */
 
-              fprintf (stderr, "[MEMORY] Estimating %s: HEURISTIC template-moderate (%d tmpls) ~%luMB\n",
-                      filename, template_count, estimated_mb);
+              debug_write("[MEMORY] Estimating %s: HEURISTIC template-moderate (%d tmpls) ~%luMB\n",
+                          filename, template_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
             }
@@ -4219,8 +4219,8 @@ get_file_memory_requirement (const char *filename)
         {
           estimated_mb = (file_kb * memory_stats.conservative_mb_per_kb) / 1000;
 
-          fprintf (stderr, "[MEMORY] Estimating %s: %luKB file * %lu conservative ratio = ~%luMB (stats)\n",
-                  filename, file_kb, memory_stats.conservative_mb_per_kb, estimated_mb);
+          debug_write("[MEMORY] Estimating %s: %luKB file * %lu conservative ratio = ~%luMB (stats)\n",
+                      filename, file_kb, memory_stats.conservative_mb_per_kb, estimated_mb);
           fflush (stderr);
 
           return estimated_mb;
@@ -4228,8 +4228,8 @@ get_file_memory_requirement (const char *filename)
 
       /* No stats yet - very conservative guess */
       estimated_mb = file_kb / 10;
-      fprintf (stderr, "[MEMORY] Estimating %s: %luKB → ~%luMB (wild guess)\n",
-              filename, file_kb, estimated_mb);
+      debug_write("[MEMORY] Estimating %s: %luKB → ~%luMB (wild guess)\n",
+                  filename, file_kb, estimated_mb);
       fflush (stderr);
       return estimated_mb;
     }
