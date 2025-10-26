@@ -871,6 +871,7 @@ static struct {
   int memory_profiles_dirty;
   struct {
     pid_t pid;
+    int idx;                // maps to the memory_profile entry
     char *filename;         /* Direct filename storage */
     unsigned long peak_mb;
     unsigned long old_peak_mb;
@@ -1521,7 +1522,7 @@ static void find_child_descendants(pid_t parent_pid)
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.compilations[i].pid == pid) {
-        descendant_idx = i;
+        descendant_idx = main_monitoring_data.compilations[i].idx; // HERE
         /*debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
                     i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.compilations[i].peak_mb,
@@ -1761,10 +1762,10 @@ memory_monitor_thread_func (void *arg)
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
         if (main_monitoring_data.compilations[i].current_mb > 1 && main_monitoring_data.compilations[i].filename) {
-          debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
+          /*debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
                       (int)main_monitoring_data.compilations[i].pid,
                       main_monitoring_data.compilations[i].filename,
-                      main_monitoring_data.compilations[i].current_mb);
+                      main_monitoring_data.compilations[i].current_mb);*/
 
           /* Release the reserved memory now that process has exited */
           if (main_monitoring_data.compilations[i].old_peak_mb > 0) {
