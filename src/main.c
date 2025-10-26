@@ -1333,7 +1333,7 @@ static int monitor_stderr_fd = -1;
 
 #ifdef HAVE_PTHREAD_H
 static void
-display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force)
+display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_tracked)
 {
   static struct timeval last_display = {0, 0};
   struct timeval now;
@@ -1355,9 +1355,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   int term_width;
   int visible_len = 50;  /* Adjusted for "X procs" display */
   int col_pos;
-  time_t current_time;
-  static unsigned int cached_descendants = 0;
-  static time_t last_count_time = 0;
   static int write_count = 0;
   static int skip_count = 0;
 #if DEBUG_MEMORY_MONITOR
@@ -1437,32 +1434,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
         display_slots = 0;  /* Not running jobs */
 
       /* Build the status string - show total descendant count */
-      /* Measure how long counting actually takes */
-      current_time = time (NULL);
-
-      if (current_time - last_count_time >= 2)
-        {
-#if DEBUG_MEMORY_MONITOR
-          gettimeofday (&count_start, NULL);
-#endif
-          cached_descendants = count_all_descendants ();
-#if DEBUG_MEMORY_MONITOR
-          gettimeofday (&count_end, NULL);
-
-          count_time_ms = (count_end.tv_sec - count_start.tv_sec) * 1000 +
-                          (count_end.tv_usec - count_start.tv_usec) / 1000;
-
-          /* DEBUG: Show how long counting took (non-blocking) */
-          debug_write ("[COUNT_TIMING] Counted %u descendants in %ldms at %u%% memory\n",
-                       cached_descendants, count_time_ms, mem_percent);
-#endif
-
-          last_count_time = current_time;
-        }
+      /* Use the total_tracked count we already calculated (no need to scan /proc again) */
 
       snprintf (status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
                 spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-                green, display_slots, reset, gray, cached_descendants, reset);
+                green, display_slots, reset, gray, total_tracked, reset);
 
       /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
       term_width = cached_term_width;
@@ -1937,6 +1913,7 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running)
     {
       unsigned long total_current = 0;
+      int total_tracked = 0;
 
       gettimeofday (&iteration_start, NULL);
 
@@ -1946,7 +1923,6 @@ memory_monitor_thread_func (void *arg)
       {
         struct child *c;
         int direct_children_count = 0;
-        int total_tracked = 0;
 
         /* Start with our direct children and find their descendants */
         debug_write("[DEBUG] Scanning children list...\n");
@@ -2050,7 +2026,7 @@ memory_monitor_thread_func (void *arg)
         }
 
       /* Always update status display */
-      display_memory_status (mem_percent, free_mb, 0);
+      display_memory_status (mem_percent, free_mb, 0, total_tracked);
 
       /* Debug: Show actual state periodically (non-blocking) */
 #if DEBUG_MEMORY_MONITOR
