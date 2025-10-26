@@ -1494,7 +1494,6 @@ static void find_child_descendants(pid_t parent_pid)
   char line[512];
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
-  int depth;
   unsigned long profile_peak_mb = 0;
   unsigned int i;
 
@@ -1510,13 +1509,13 @@ static void find_child_descendants(pid_t parent_pid)
     int descendant_idx = -1;
     char cmdline_path[512];
     FILE *cmdline_file;
-    char cmdline_buf[4096]; // TODO needed?
+    char cmdline_buf[4096];
     ssize_t cmdline_len;
     char *ptr;
     char *end;
     char *start;
     size_t len;
-    char source_filename[1000]; // TODO needed?
+    char source_filename[1000];
 
     /* Skip non-numeric entries */
     if (!isdigit(entry->d_name[0])) continue;
@@ -1545,12 +1544,13 @@ static void find_child_descendants(pid_t parent_pid)
 
     /* Found a descendant! Track its memory */
 
-    /* Find this descendant's individual peak */
+    // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.compilations[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB (file: %s)\n",
+        debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
                     i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
+                    main_monitoring_data.compilations[i].peak_mb,
                     main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");
         break;
       }
@@ -1562,6 +1562,7 @@ static void find_child_descendants(pid_t parent_pid)
     }
 
     if (descendant_idx < 0) {
+      // This new descendant is not yet tracked
       if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS) {
         debug_write("[DEBUG] Max tracked compilations reached, skipping descendant PID %d\n",
                     (int)pid);
@@ -1623,6 +1624,7 @@ static void find_child_descendants(pid_t parent_pid)
             ptr++;
           }
 
+          source_filename[0] = '\0';
           if (end) {
             /* Backtrack to find start of filepath */
             start = end;
@@ -1657,6 +1659,17 @@ static void find_child_descendants(pid_t parent_pid)
                             main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, strip_ptr);
             } // len between 0 and 1000
           } // if (end)
+          if (source_filename[0] == '\0')
+          {
+            char tmp_filename[64];
+            FILE *f;
+            snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_cmdline_%d.txt", (int)pid);
+            f = fopen(tmp_filename, "w");
+            if (f) {
+              fprintf(f, "%s", cmdline_buf);
+              fclose(f);
+            }
+          }
         } // if (cmdline_len > 0)
       } // if (cmdline_file)
     } // if new descendant
