@@ -1255,7 +1255,7 @@ reserve_memory_mb (long mb, const char *filepath)
 
 /* Forward declaration for non-blocking debug output */
 #ifdef HAVE_PTHREAD_H
-static void debug_write (const char *format, ...);
+void debug_write (const char *format, ...);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
@@ -1440,7 +1440,7 @@ clear_status_line (void)
 
 /* Non-blocking debug write helper - uses monitor's private fd! */
 #ifdef HAVE_PTHREAD_H
-static void
+void
 debug_write (const char *format, ...)
 {
   char buf[512];
