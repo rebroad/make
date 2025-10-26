@@ -1544,8 +1544,6 @@ static void find_child_descendants(pid_t parent_pid)
   char line[512];
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
-  int j, k;
-  unsigned int p;
 
   debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1606,12 +1604,12 @@ static void find_child_descendants(pid_t parent_pid)
       /* Found a descendant! Track its memory */
 
       /* Find this descendant's individual peak */
-      for (j = 0; j < main_monitoring_data.compile_count; j++) {
-        if (main_monitoring_data.compilations[j].pid == pid) {
-          descendant_idx = j;
+      for (int i = 0; i < main_monitoring_data.compile_count; i++) {
+        if (main_monitoring_data.compilations[i].pid == pid) {
+          descendant_idx = i;
           debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB (file: %s)\n",
-                      j, (int)pid, main_monitoring_data.compilations[j].old_peak_mb, rss_kb / 1024,
-                      main_monitoring_data.compilations[j].filename ? main_monitoring_data.compilations[j].filename : "unknown");
+                      i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
+                      main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");
           break;
         }
       }
@@ -1619,7 +1617,7 @@ static void find_child_descendants(pid_t parent_pid)
       // Do we have the filename for this descendant?
       if (main_monitoring_data.compilations[descendant_idx].filename == NULL) {
         if (descendant_idx >= 0) {
-          // We already know about it and it's not relevant to us (as no filename was extracted)
+          // We already know about it and it wasn't relevant to us (as no filename was extracted)
           return;
         }
 
@@ -1638,8 +1636,8 @@ static void find_child_descendants(pid_t parent_pid)
 
           if (cmdline_len > 0) {
             /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-            for (j = 0; j < cmdline_len - 1; j++)
-              if (cmdline_buf[j] == '\0') cmdline_buf[j] = ' ';
+            for (int i = 0; i < cmdline_len - 1; i++)
+              if (cmdline_buf[i] == '\0') cmdline_buf[i] = ' ';
             cmdline_buf[cmdline_len] = '\0';
 
             /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
@@ -1700,9 +1698,9 @@ static void find_child_descendants(pid_t parent_pid)
                 /* Look up memory profile for this filename */
                 unsigned long profile_peak_mb = 0;
                 debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
-                for (p = 0; p < memory_profile_count; p++) {
-                  if (memory_profiles[p].filename && strcmp(memory_profiles[p].filename, strip_ptr) == 0) {
-                    profile_peak_mb = memory_profiles[p].peak_memory_mb;
+                for (int i = 0; i < memory_profile_count; i++) {
+                  if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
+                    profile_peak_mb = memory_profiles[i].peak_memory_mb;
                     debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
                     break;
                   }
@@ -1717,21 +1715,21 @@ static void find_child_descendants(pid_t parent_pid)
         } // if (cmdline_file)
       } // if (main_monitoring_data.compilations[descendant_idx].filename == NULL)
 
-      debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  j, (int)pid, rss_kb / 1024,
-                  main_monitoring_data.compilations[j].filename ? main_monitoring_data.compilations[j].filename : "unknown");
-
-      /* Update memory tracking for this descendant */
+      /* Update memory tracking for this relevant descendant */
       if (descendant_idx >= 0)
       {
+        debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
+          descendant_idx, (int)pid, rss_kb / 1024,
+          main_monitoring_data.compilations[descendant_idx].filename ?
+              main_monitoring_data.compilations[descendant_idx].filename : "unknown");
         update_compilation_entry(descendant_idx, rss_kb);
       }
       else
       {
-        /* Add new entry for this descendant (only if using ≥10MB) */
+        /* Add new entry for this irrelevant descendant */
         if (add_compilation_entry(pid, rss_kb, 0, NULL))
-          debug_write("[DEBUG] New descendant[%d] PID %d: rss=%luKB (first time seen)\n",
-                      main_monitoring_data.compile_count - 1, (int)pid, rss_kb);
+          debug_write("[DEBUG] New irrelevant descendant[%d] PID %d: rss=%luKB (first time seen)\n",
+                      descendant_idx, (int)pid, rss_kb);
       }
 
       /* Recursively find descendants of this descendant */
