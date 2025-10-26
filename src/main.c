@@ -1494,6 +1494,7 @@ static void find_child_descendants(pid_t parent_pid)
   char line[512];
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
+  int depth;
   unsigned long profile_peak_mb = 0;
   unsigned int i;
 
@@ -1509,29 +1510,24 @@ static void find_child_descendants(pid_t parent_pid)
     int descendant_idx = -1;
     char cmdline_path[512];
     FILE *cmdline_file;
-    char cmdline_buf[4096];
+    char cmdline_buf[4096]; // TODO needed?
     ssize_t cmdline_len;
     char *ptr;
     char *end;
     char *start;
     size_t len;
-    char source_filename[1000];
+    char source_filename[1000]; // TODO needed?
 
     /* Skip non-numeric entries */
-    if (!isdigit(entry->d_name[0]))
-      continue;
+    if (!isdigit(entry->d_name[0])) continue;
 
     pid = atoi(entry->d_name);
-    if (pid <= 0)
-      continue;
+    if (pid <= 0) continue;
 
     /* Read this process's status to check if it's a descendant */
     snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)pid);
     stat_file = fopen(stat_path, "r");
-    if (!stat_file) {
-      closedir(proc_dir);
-      return;
-    }
+    if (!stat_file) continue;
 
     check_pid = 0;
     rss_kb = 0;
@@ -1540,16 +1536,12 @@ static void find_child_descendants(pid_t parent_pid)
       sscanf(line, "PPid: %d", &check_pid);
       sscanf(line, "VmRSS: %lu kB", &rss_kb);
 
-      if (check_pid > 0 && rss_kb > 0)
-        break;
+      if (check_pid > 0 && rss_kb > 0) break;
     }
     fclose(stat_file);
 
     /* Check if this process is a direct descendant of our parent */
-    if (check_pid != parent_pid) {
-      closedir(proc_dir);
-      return;
-    }
+    if (check_pid != parent_pid) continue;
 
     /* Found a descendant! Track its memory */
 
