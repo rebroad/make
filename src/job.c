@@ -1541,7 +1541,7 @@ start_job_command (struct child *child)
                           }
 
                         /* We have enough memory! Reserve it and proceed */
-                        reserve_memory_mb (required_mb);
+                        reserve_memory_mb (required_mb, filename);
 
                         break;
                       }

@@ -36,6 +36,8 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #ifdef HAVE_SYS_IOCTL_H
 # include <sys/ioctl.h>
 #endif
+#include <termios.h>
+#include <unistd.h>
 #ifdef HAVE_DIRENT_H
 # include <dirent.h>
 #endif
@@ -1216,7 +1218,7 @@ get_memory_stats (unsigned int *percent)
    Positive value: reserve memory
    Negative value: release memory */
 void
-reserve_memory_mb (long mb)
+reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   if (memory_aware_flag && shared_data == NULL)
@@ -1233,7 +1235,7 @@ reserve_memory_mb (long mb)
           /* Reserve memory */
           unsigned long old_value = shared_data->reserved_memory_mb;
           shared_data->reserved_memory_mb += mb;
-          fprintf (stderr, "[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, getpid());
+          fprintf (stderr, "[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid());
         }
       else if (mb < 0)
         {
@@ -1244,7 +1246,7 @@ reserve_memory_mb (long mb)
             shared_data->reserved_memory_mb -= release_mb;
           else
             shared_data->reserved_memory_mb = 0;
-          fprintf (stderr, "[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, getpid());
+          fprintf (stderr, "[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid());
         }
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     }
@@ -1256,7 +1258,7 @@ reserve_memory_mb (long mb)
 static void debug_write (const char *format, ...);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
-static int cached_term_width = 80;
+static int cached_term_width = 0;
 
 /* Monitor thread's private non-blocking stderr fd (dup of STDERR_FILENO) */
 static int monitor_stderr_fd = -1;
@@ -1716,12 +1718,35 @@ memory_monitor_thread_func (void *arg)
   monitor_start_time = time (NULL);
 
   /* Cache terminal width ONCE before setting non-blocking (ioctl can block!) */
+  /* Get terminal width safely by saving/restoring terminal state */
 #ifdef HAVE_SYS_IOCTL_H
   {
     struct winsize w;
-    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0)
+    struct termios saved_termios;
+
+    /* Save current terminal state if stderr is a TTY */
+    int saved_termios_ok = isatty(STDERR_FILENO) && (tcgetattr(STDERR_FILENO, &saved_termios) == 0);
+
+    /* Get terminal window size */
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
       cached_term_width = w.ws_col;
+    }
+
+    /* Restore terminal state if we saved it */
+    if (saved_termios_ok) {
+      tcsetattr(STDERR_FILENO, TCSANOW, &saved_termios);
+    }
+
+    /* If we couldn't get terminal width, disable memory display */
+    if (!cached_term_width) {
+      disable_memory_display = 1;
+      debug_write("[MONITOR] Could not obtain terminal width, disabling memory display\n");
+    }
   }
+#else
+  /* No ioctl support, disable memory display */
+  disable_memory_display = 1;
+  debug_write("[MONITOR] No ioctl support, disabling memory display\n");
 #endif
 
   /* Use dup() to create private fd for monitor thread
@@ -1782,7 +1807,7 @@ memory_monitor_thread_func (void *arg)
 
           /* Release the reserved memory now that process has exited */
           if (main_monitoring_data.compilations[i].old_peak_mb > 0) {
-            reserve_memory_mb(-(long)main_monitoring_data.compilations[i].old_peak_mb);
+            reserve_memory_mb(-(long)main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename);
             debug_write("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
                         main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename,
                         main_monitoring_data.compilations[i].peak_mb);
