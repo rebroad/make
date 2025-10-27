@@ -1474,6 +1474,7 @@ static void find_child_descendants(pid_t parent_pid)
     char *start;
     size_t len;
     char source_filename[1000];
+    char *strip_ptr = NULL;
 
     /* Skip non-numeric entries */
     if (!isdigit(entry->d_name[0])) continue;
@@ -1591,8 +1592,6 @@ static void find_child_descendants(pid_t parent_pid)
 
             len = (end - start) + 1;
             if (len < 1000 && len > 0) {
-              char *strip_ptr;
-
               memcpy(source_filename, start, len);
               source_filename[len] = '\0';
 
@@ -1611,10 +1610,6 @@ static void find_child_descendants(pid_t parent_pid)
                   break;
                 }
               }
-              /* Add new entry for this descendant */
-              if (add_compilation_entry(pid, rss_kb, profile_peak_mb, strip_ptr))
-                debug_write("[DEBUG] New descendant[%d] PID %d: rss=%luKB, profile_peak=%luMB (file: %s)\n",
-                            main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, strip_ptr);
             } // len between 0 and 1000
           } // if (end)
           if (source_filename[0] == '\0')
@@ -1640,10 +1635,11 @@ static void find_child_descendants(pid_t parent_pid)
                       main_monitoring_data.compilations[descendant_idx].filename : "unknown");
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
-      /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */
-      if (add_compilation_entry(pid, rss_kb, 0, NULL))
-        debug_write("[DEBUG] New irrelevant descendant[%d] PID %d: rss=%luKB (first time seen)\n",
-                    descendant_idx, (int)pid, rss_kb);
+      /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */ // TODO why no filename?
+      if (add_compilation_entry(pid, rss_kb, profile_peak_mb, strip_ptr))
+        debug_write("[DEBUG] New %sdescendant[%d] PID %d: rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
+                    strip_ptr == NULL ? "irrelevant " : "", descendant_idx, (int)pid, rss_kb / 1024,
+                    profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
     }
 
     /* Recursively find descendants of this descendant */
