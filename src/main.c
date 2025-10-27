@@ -865,46 +865,75 @@ static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
 #endif
 
+/* Global dirty flag for memory profiles */
+static int memory_profiles_dirty = 0;
+
 /* Main-make-only monitoring data (not shared between processes) */
 static struct {
   unsigned int compile_count;
-  int memory_profiles_dirty;
   struct {
     pid_t pid;
     int idx;                // maps to the memory_profile entry
-    char *filename;         /* Direct filename storage */
-    unsigned long peak_mb;
-    unsigned long old_peak_mb;
-    unsigned long current_mb;
-  } compilations[MAX_TRACKED_COMPILATIONS];
+    unsigned long current_mb; /* Current memory usage for this specific PID */
+    int relevant;           // true if this PID is compiling a tracked source file
+  } descendants[MAX_TRACKED_COMPILATIONS];
 } main_monitoring_data = {0};
 
 /* Helper function to update an existing compilation entry */
 static void
 update_compilation_entry (int idx, unsigned long rss_kb)
-{
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  if (main_monitoring_data.compilations[idx].current_mb > main_monitoring_data.compilations[idx].peak_mb)
-    {
-      main_monitoring_data.compilations[idx].peak_mb = main_monitoring_data.compilations[idx].current_mb;
+{ // TODO - do we actually need this wrapper at all?
+  unsigned long current_mb = rss_kb / 1024;
+
+  /* Store current memory usage for this specific PID */
+  main_monitoring_data.descendants[idx].current_mb = current_mb;
+
+  /* Update the memory profile peak if this is higher */
+  int profile_idx = main_monitoring_data.descendants[idx].idx;
+  if (profile_idx >= 0 && profile_idx < (int)memory_profile_count) {
+    if (current_mb > memory_profiles[profile_idx].peak_memory_mb) {
+      memory_profiles[profile_idx].peak_memory_mb = current_mb;
     }
+  }
 }
 
 /* Helper function to add a new compilation entry */
 static int
 add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
 {
+  // TODO - we we actually need this wrapper at all?
   int idx;
+  int profile_idx = -1;
 
   if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
     return 0;  /* No space available */
 
+  /* Find or create memory profile for this file */
+  if (filepath) {
+    /* Look for existing profile */
+    unsigned int i;
+    for (i = 0; i < memory_profile_count; i++) {
+      if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, filepath) == 0) {
+        profile_idx = i;
+        /* Set old_peak_mb to the current peak before starting new compilation */
+        memory_profiles[i].old_peak_mb = memory_profiles[i].peak_memory_mb;
+        /* Increment pid_count for this new compilation */
+        memory_profiles[i].pid_count++;
+        break;
+      }
+    }
+    /* If not found, record_file_memory_usage will create it */
+    if (profile_idx == -1) {
+      record_file_memory_usage(-1, filepath, rss_kb / 1024, 0);  /* final=0 */
+      profile_idx = memory_profile_count - 1;  /* New profile was added */
+    }
+  }
+
   idx = main_monitoring_data.compile_count;
-  main_monitoring_data.compilations[idx].pid = pid;
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].peak_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].old_peak_mb = old_peak_mb;
-  main_monitoring_data.compilations[idx].filename = filepath ? xstrdup(filepath) : NULL;
+  main_monitoring_data.descendants[idx].pid = pid;
+  main_monitoring_data.descendants[idx].idx = profile_idx;
+  main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
+  main_monitoring_data.descendants[idx].relevant = (filepath != NULL);  /* Relevant if we have a source filename */
   main_monitoring_data.compile_count++;
 
   return 1;  /* Success */
@@ -917,7 +946,7 @@ static int init_shared_memory (void);
 void
 set_memory_profiles_dirty (void)
 {
-  main_monitoring_data.memory_profiles_dirty = 1;
+  memory_profiles_dirty = 1;
 }
 
 /* Initialize shared memory for inter-process communication */
@@ -1085,43 +1114,80 @@ save_memory_profiles (void)
 }
 
 /* Record memory usage for a file (main make only)
-   final=0: During compilation (only update if new_peak > old_peak)
-   final=1: On child exit (always update with measured value) */
+   idx: Index into memory_profiles array (-1 for new entry)
+   filepath: Filename (used only if idx == -1)
+   memory_mb: Memory usage in MB
+   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
 void
-record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
+record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final)
 {
-  unsigned int i;
   time_t now;
-
-  if (!filepath)
-    return;
 
   now = time (NULL);
 
-  /* Look for existing profile */
-  for (i = 0; i < memory_profile_count; i++)
+  /* If idx is valid, update existing profile */
+  if (idx >= 0 && idx < (int)memory_profile_count)
     {
-      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0)
-        {
-          if (memory_mb > memory_profiles[i].peak_memory_mb ||
-              (final && memory_mb != memory_profiles[i].peak_memory_mb))
-            {
-              debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
-                          final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
-              fflush (stderr);
-              memory_profiles[i].peak_memory_mb = memory_mb;
-            }
-          memory_profiles[i].last_used = now;
-          set_memory_profiles_dirty ();
-          return;
+      if (final) {
+        /* Final update: decrement pid_count and only show message on last PID */
+        if (memory_profiles[idx].pid_count > 0) {
+          memory_profiles[idx].pid_count--;
         }
+
+        /* Only show final peak message when this is the last PID for this file */
+        if (memory_profiles[idx].pid_count == 0) {
+          debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
+                      memory_profiles[idx].filename, memory_profiles[idx].old_peak_mb, memory_mb);
+          memory_profiles[idx].peak_memory_mb = memory_mb;
+        }
+      } else {
+        /* During compilation: update peak if this is higher */
+        if (memory_mb > memory_profiles[idx].peak_memory_mb) {
+          memory_profiles[idx].peak_memory_mb = memory_mb;
+        }
+      }
+      memory_profiles[idx].last_used = now;
+      set_memory_profiles_dirty ();
+      return;
     }
+
+  /* idx == -1: Look for existing profile by filename */
+  if (filepath) {
+      unsigned int i;
+      for (i = 0; i < memory_profile_count; i++) {
+          if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
+              if (final) {
+                /* Final update: decrement pid_count and only show message on last PID */
+                if (memory_profiles[i].pid_count > 0) {
+                  memory_profiles[i].pid_count--;
+                }
+
+                /* Only show final peak message when this is the last PID for this file */
+                if (memory_profiles[i].pid_count == 0) {
+                  debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
+                              filepath, memory_profiles[i].old_peak_mb, memory_mb);
+                  memory_profiles[i].peak_memory_mb = memory_mb;
+                }
+              } else {
+                /* During compilation: update peak if this is higher */
+                if (memory_mb > memory_profiles[i].peak_memory_mb) {
+                  memory_profiles[i].peak_memory_mb = memory_mb;
+                }
+              }
+              memory_profiles[i].last_used = now;
+              set_memory_profiles_dirty ();
+              return;
+          }
+      }
+  }
 
   /* Add new profile if we have space */
   if (memory_profile_count < MAX_MEMORY_PROFILES)
     {
       memory_profiles[memory_profile_count].filename = xstrdup (filepath);
       memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
+      memory_profiles[memory_profile_count].old_peak_mb = 0;  /* Will be set on first compilation */
+      memory_profiles[memory_profile_count].pid_count = final ? 0 : 1;  /* Start with 1 PID if during compilation */
       memory_profiles[memory_profile_count].last_used = now;
       memory_profile_count++;
       set_memory_profiles_dirty ();  /* Signal main process to save */
@@ -1521,18 +1587,18 @@ static void find_child_descendants(pid_t parent_pid)
 
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
-      if (main_monitoring_data.compilations[i].pid == pid) {
-        descendant_idx = main_monitoring_data.compilations[i].idx; // HERE
+      if (main_monitoring_data.descendants[i].pid == pid) {
+        descendant_idx = main_monitoring_data.descendants[i].idx; // HERE
         /*debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
-                    i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
-                    main_monitoring_data.compilations[i].peak_mb,
-                    main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");*/
+                    i, (int)pid, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+                    main_monitoring_data.descendants[i].peak_mb,
+                    main_monitoring_data.descendants[i].filename ? main_monitoring_data.descendants[i].filename : "unknown");*/
         break;
       }
     }
 
-    if (descendant_idx >= 0 && main_monitoring_data.compilations[descendant_idx].filename == NULL) {
-      // We already know about it and it wasn't relevant to us (as no filename was extracted)
+    if (descendant_idx >= 0 && !main_monitoring_data.descendants[descendant_idx].relevant) {
+      // We already know about this descendant
       return;
     }
 
@@ -1651,16 +1717,19 @@ static void find_child_descendants(pid_t parent_pid)
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
+      int profile_idx = main_monitoring_data.descendants[descendant_idx].idx;
+      const char *filename = "unknown";
+      if (profile_idx >= 0 && profile_idx < (int)memory_profile_count && memory_profiles[profile_idx].filename) {
+        filename = memory_profiles[profile_idx].filename;
+      }
       debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024,
-                  main_monitoring_data.compilations[descendant_idx].filename ?
-                      main_monitoring_data.compilations[descendant_idx].filename : "unknown");
+                  descendant_idx, (int)pid, rss_kb / 1024, filename);
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
       /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */
       if (add_compilation_entry(pid, rss_kb, 0, NULL))
         debug_write("[DEBUG] New irrelevant descendant[%d] PID %d: rss=%luKB (first time seen)\n",
-                    descendant_idx, (int)pid, rss_kb);
+                    main_monitoring_data.compile_count - 1, (int)pid, rss_kb);
     }
 
     /* Recursively find descendants of this descendant */
@@ -1752,44 +1821,36 @@ memory_monitor_thread_func (void *arg)
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
       FILE *stat_file;
+      int profile_idx = main_monitoring_data.descendants[i].idx;
 
       /* Calculate total current usage from main monitoring data */
-      total_current += main_monitoring_data.compilations[i].current_mb;
+      total_current += main_monitoring_data.descendants[i].current_mb;
 
       /* Check if this PID still exists */
-      snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.compilations[i].pid);
+      snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
       stat_file = fopen(stat_path, "r");
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
-        if (main_monitoring_data.compilations[i].current_mb > 1 && main_monitoring_data.compilations[i].filename) {
-          /*debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
-                      (int)main_monitoring_data.compilations[i].pid,
-                      main_monitoring_data.compilations[i].filename,
-                      main_monitoring_data.compilations[i].current_mb);*/
+        if (profile_idx >= 0 && profile_idx < (int)memory_profile_count &&
+            memory_profiles[profile_idx].filename &&
+            memory_profiles[profile_idx].peak_memory_mb > 1) {
 
           /* Release the reserved memory now that process has exited */
-          if (main_monitoring_data.compilations[i].old_peak_mb > 0) {
-            reserve_memory_mb(-(long)main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename);
+          if (memory_profiles[profile_idx].old_peak_mb > 0) {
+            reserve_memory_mb(-(long)memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename);
             debug_write("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
-                        main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename,
-                        main_monitoring_data.compilations[i].peak_mb);
+                        memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename,
+                        memory_profiles[profile_idx].peak_memory_mb);
           }
-          /* Record final memory usage for disk operations */
-          if (main_monitoring_data.compilations[i].filename) {
-            record_file_memory_usage(main_monitoring_data.compilations[i].filename, main_monitoring_data.compilations[i].current_mb, 1);  /* final=1 */
-          }
-        }
 
-        /* Free filename before removing entry */
-        if (main_monitoring_data.compilations[i].filename) {
-          free(main_monitoring_data.compilations[i].filename);
-          main_monitoring_data.compilations[i].filename = NULL;
+          /* Record final memory usage for disk operations */
+          record_file_memory_usage(profile_idx, NULL, main_monitoring_data.descendants[i].current_mb, 1);  /* final=1 */
         }
 
         /* Remove this entry by shifting remaining entries */
         if (i < main_monitoring_data.compile_count - 1) {
-          memmove(&main_monitoring_data.compilations[i], &main_monitoring_data.compilations[i + 1],
-                  (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.compilations[0]));
+          memmove(&main_monitoring_data.descendants[i], &main_monitoring_data.descendants[i + 1],
+                  (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.descendants[0]));
         }
         main_monitoring_data.compile_count--;
         i--;  /* Check this index again since we shifted */
@@ -1799,15 +1860,15 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Save memory profiles if they've been updated (check shared dirty flag) */
-    if (main_monitoring_data.memory_profiles_dirty) {
+    if (memory_profiles_dirty) {
       debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
       save_memory_profiles();
-      main_monitoring_data.memory_profiles_dirty = 0;
+      memory_profiles_dirty = 0;
       /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
     }
 
     /* Always update status display */
-    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count;);
+    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
 
     /* Update shared memory with total current usage (calculated in the loop above) */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)

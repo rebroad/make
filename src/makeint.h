@@ -776,6 +776,8 @@ struct file_memory_profile
 {
   char *filename;
   unsigned long peak_memory_mb;
+  unsigned long old_peak_mb;      /* Previous peak before this compilation */
+  unsigned int pid_count;         /* Number of active PIDs compiling this file */
   time_t last_used;  /* Unix timestamp of last compilation */
 };
 extern struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
