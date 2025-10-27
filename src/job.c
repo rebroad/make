@@ -1576,11 +1576,13 @@ start_job_command (struct child *child)
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
 
-      debug_write("[DEBUG] After child_execute_job: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
+      if (required_mb > 0)
+        debug_write("[DEBUG] After child_execute_job: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
 
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
-      debug_write("[DEBUG] After jobserver_post_child: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
+      if (required_mb > 0)
+        debug_write("[DEBUG] After jobserver_post_child: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
 
 #endif /* !VMS */
     }
