@@ -898,6 +898,9 @@ update_compilation_entry (int idx, unsigned long rss_kb)
   }
 }
 
+/* Forward declarations */
+static void record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final);
+
 /* Helper function to add a new compilation entry */
 static int
 add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
@@ -1464,10 +1467,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     (void)written;  /* Ignore errors - if it fails, next iteration will try again */
     status_line_shown = 1;
   }
-#endif
+}
 
 /* Non-blocking debug write helper - uses monitor's private fd! */
-#ifdef HAVE_PTHREAD_H
 void
 debug_write (const char *format, ...)
 {
@@ -1512,7 +1514,7 @@ debug_write (const char *format, ...)
 #endif
     }
 }
-#endif
+#endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
 static void find_child_descendants(pid_t parent_pid)
@@ -1707,12 +1709,12 @@ static void find_child_descendants(pid_t parent_pid)
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
       int profile_idx = main_monitoring_data.descendants[descendant_idx].idx;
-      const char *filename = "unknown";
+      const char *file_name = "unknown";
       if (profile_idx >= 0 && profile_idx < (int)memory_profile_count && memory_profiles[profile_idx].filename) {
-        filename = memory_profiles[profile_idx].filename;
+        file_name = memory_profiles[profile_idx].filename;
       }
       debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024, filename);
+                  descendant_idx, (int)pid, rss_kb / 1024, file_name);
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
       /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */
