@@ -898,8 +898,91 @@ update_compilation_entry (int idx, unsigned long rss_kb)
   }
 }
 
-/* Forward declarations */
-static void record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final);
+/* Record memory usage for a file (main make only)
+   idx: Index into memory_profiles array (-1 for new entry)
+   filepath: Filename (used only if idx == -1)
+   memory_mb: Memory usage in MB
+   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
+void
+record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final)
+{
+  time_t now;
+
+  now = time (NULL);
+
+  /* If idx is valid, update existing profile */
+  if (idx >= 0 && idx < (int)memory_profile_count)
+    {
+      if (final) {
+        /* Final update: decrement pid_count and only show message on last PID */
+        if (memory_profiles[idx].pid_count > 0) {
+          memory_profiles[idx].pid_count--;
+        }
+
+        /* Only show final peak message when this is the last PID for this file */
+        if (memory_profiles[idx].pid_count == 0) {
+          debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
+                      memory_profiles[idx].filename, memory_profiles[idx].old_peak_mb, memory_mb);
+          memory_profiles[idx].peak_memory_mb = memory_mb;
+        }
+      } else {
+        /* During compilation: update peak if this is higher */
+        if (memory_mb > memory_profiles[idx].peak_memory_mb) {
+          memory_profiles[idx].peak_memory_mb = memory_mb;
+        }
+      }
+      memory_profiles[idx].last_used = now;
+      memory_profiles_dirty = 1;
+      return;
+    }
+
+  /* idx == -1: Look for existing profile by filename */
+  if (filepath) {
+    unsigned int i;
+    for (i = 0; i < memory_profile_count; i++) {
+      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
+        if (final) {
+          /* Final update: decrement pid_count and only show message on last PID */
+          if (memory_profiles[i].pid_count > 0) {
+            memory_profiles[i].pid_count--;
+          }
+
+          /* Only show final peak message when this is the last PID for this file */
+          if (memory_profiles[i].pid_count == 0) {
+            debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
+                        filepath, memory_profiles[i].old_peak_mb, memory_mb);
+            memory_profiles[i].peak_memory_mb = memory_mb;
+          }
+        } else {
+          /* During compilation: update peak if this is higher */
+          if (memory_mb > memory_profiles[i].peak_memory_mb) {
+            memory_profiles[i].peak_memory_mb = memory_mb;
+          }
+        }
+        memory_profiles[i].last_used = now;
+        memory_profiles_dirty = 1;
+        return;
+      }
+    }
+  }
+
+  /* Add new profile if we have space */
+  if (memory_profile_count < MAX_MEMORY_PROFILES) {
+    memory_profiles[memory_profile_count].filename = xstrdup (filepath);
+    memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
+    memory_profiles[memory_profile_count].old_peak_mb = 0;  /* Will be set on first compilation */
+    memory_profiles[memory_profile_count].pid_count = final ? 0 : 1;  /* Start with 1 PID if during compilation */
+    memory_profiles[memory_profile_count].last_used = now;
+    memory_profile_count++;
+    memory_profiles_dirty = 1;
+    debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+                  filepath, memory_mb, memory_profile_count);
+    fflush (stderr);
+
+    /* New file added, recalculate statistics */
+    if (final) calculate_memory_stats (__FILE__, __LINE__);
+  }
+}
 
 /* Helper function to add a new compilation entry */
 static int
@@ -947,13 +1030,6 @@ add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_m
 
 /* Forward declarations */
 static int init_shared_memory (void);
-
-/* Set dirty flag (main process only) */
-void
-set_memory_profiles_dirty (void)
-{
-  memory_profiles_dirty = 1;
-}
 
 /* Initialize shared memory for inter-process communication */
 static int
@@ -1117,94 +1193,6 @@ save_memory_profiles (void)
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
-}
-
-/* Record memory usage for a file (main make only)
-   idx: Index into memory_profiles array (-1 for new entry)
-   filepath: Filename (used only if idx == -1)
-   memory_mb: Memory usage in MB
-   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
-void
-record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final)
-{
-  time_t now;
-
-  now = time (NULL);
-
-  /* If idx is valid, update existing profile */
-  if (idx >= 0 && idx < (int)memory_profile_count)
-    {
-      if (final) {
-        /* Final update: decrement pid_count and only show message on last PID */
-        if (memory_profiles[idx].pid_count > 0) {
-          memory_profiles[idx].pid_count--;
-        }
-
-        /* Only show final peak message when this is the last PID for this file */
-        if (memory_profiles[idx].pid_count == 0) {
-          debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
-                      memory_profiles[idx].filename, memory_profiles[idx].old_peak_mb, memory_mb);
-          memory_profiles[idx].peak_memory_mb = memory_mb;
-        }
-      } else {
-        /* During compilation: update peak if this is higher */
-        if (memory_mb > memory_profiles[idx].peak_memory_mb) {
-          memory_profiles[idx].peak_memory_mb = memory_mb;
-        }
-      }
-      memory_profiles[idx].last_used = now;
-      set_memory_profiles_dirty ();
-      return;
-    }
-
-  /* idx == -1: Look for existing profile by filename */
-  if (filepath) {
-      unsigned int i;
-      for (i = 0; i < memory_profile_count; i++) {
-          if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
-              if (final) {
-                /* Final update: decrement pid_count and only show message on last PID */
-                if (memory_profiles[i].pid_count > 0) {
-                  memory_profiles[i].pid_count--;
-                }
-
-                /* Only show final peak message when this is the last PID for this file */
-                if (memory_profiles[i].pid_count == 0) {
-                  debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
-                              filepath, memory_profiles[i].old_peak_mb, memory_mb);
-                  memory_profiles[i].peak_memory_mb = memory_mb;
-                }
-              } else {
-                /* During compilation: update peak if this is higher */
-                if (memory_mb > memory_profiles[i].peak_memory_mb) {
-                  memory_profiles[i].peak_memory_mb = memory_mb;
-                }
-              }
-              memory_profiles[i].last_used = now;
-              set_memory_profiles_dirty ();
-              return;
-          }
-      }
-  }
-
-  /* Add new profile if we have space */
-  if (memory_profile_count < MAX_MEMORY_PROFILES)
-    {
-      memory_profiles[memory_profile_count].filename = xstrdup (filepath);
-      memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-      memory_profiles[memory_profile_count].old_peak_mb = 0;  /* Will be set on first compilation */
-      memory_profiles[memory_profile_count].pid_count = final ? 0 : 1;  /* Start with 1 PID if during compilation */
-      memory_profiles[memory_profile_count].last_used = now;
-      memory_profile_count++;
-      set_memory_profiles_dirty ();  /* Signal main process to save */
-      debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-              filepath, memory_mb, memory_profile_count);
-      fflush (stderr);
-
-      /* New file added, recalculate statistics */
-      if (final)
-        calculate_memory_stats (__FILE__, __LINE__);
-    }
 }
 
 /* Get imminent memory usage (called from job.c before forking) */
