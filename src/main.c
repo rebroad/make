@@ -1294,35 +1294,32 @@ void
 reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  if (memory_aware_flag && shared_data == NULL)
-    {
+  unsigned long old_value;
+
+  if (memory_aware_flag && shared_data == NULL) {
       if (init_shared_memory () != 0)
         return; /* Fallback if shared memory fails */
-    }
+  }
 
-  if (shared_data)
-    {
-      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-      if (mb > 0)
-        {
-          /* Reserve memory */
-          unsigned long old_value = shared_data->reserved_memory_mb;
-          shared_data->reserved_memory_mb += mb;
-          debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid());
-        }
-      else if (mb < 0)
-        {
-          /* Release memory (ensure we don't go below zero) */
-          unsigned long release_mb = (unsigned long)(-mb);
-          unsigned long old_value = shared_data->reserved_memory_mb;
-          if (shared_data->reserved_memory_mb >= release_mb)
-            shared_data->reserved_memory_mb -= release_mb;
-          else
-            shared_data->reserved_memory_mb = 0;
-          debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid());
-        }
-      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+  if (shared_data) {
+    pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+    old_value = shared_data->reserved_memory_mb;
+    if (mb > 0) {
+      /* Reserve memory */
+      shared_data->reserved_memory_mb += mb;
+      debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid(), makelevel);
+    } else if (mb < 0) {
+      /* Release memory (ensure we don't go below zero) */
+      unsigned long release_mb = (unsigned long)(-mb);
+      if (shared_data->reserved_memory_mb >= release_mb)
+        shared_data->reserved_memory_mb -= release_mb;
+      else
+        shared_data->reserved_memory_mb = 0;
+      debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid(), makelevel);
     }
+    pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+  } else
+    debug_write("[DEBUG] Shared memory not initialized, cannot reserve/release memory\n");
 #endif
 }
 
