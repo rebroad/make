@@ -1483,94 +1483,83 @@ start_job_command (struct child *child)
 #else
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
-      if (memory_aware_flag)
+      if (memory_aware_flag) {
+        unsigned long required_mb = 0;
+        unsigned long free_mb;
+
+        /* Check if this is an "echo Compiling ..." command */
+        if (argv[0] && argv[1] && argv[2] &&
+            strcmp (argv[0], "echo") == 0 &&
+            strcmp (argv[1], "Compiling") == 0)
         {
-          unsigned long required_mb = 0;
-          unsigned long free_mb;
+          /* Extract filename from "Compiling src/foo/bar.cpp..." */
+          const char *filename = argv[2];
+          char *dot_pos;
 
-          /* Check if this is an "echo Compiling ..." command */
-          if (argv[0] && argv[1] && argv[2] &&
-              strcmp (argv[0], "echo") == 0 &&
-              strcmp (argv[1], "Compiling") == 0)
-          {
-            /* Extract filename from "Compiling src/foo/bar.cpp..." */
-            const char *filename = argv[2];
-            char *dot_pos;
+          /* Remove trailing "..." if present */
+          dot_pos = strstr (filename, "...");
+          if (dot_pos) {
+            size_t len = dot_pos - filename;
+            char *clean_filename = alloca (len + 1);
+            memcpy (clean_filename, filename, len);
+            clean_filename[len] = '\0';
+            filename = clean_filename;
+          }
 
-            /* Remove trailing "..." if present */
-            dot_pos = strstr (filename, "...");
-            if (dot_pos)
-              {
-                size_t len = dot_pos - filename;
-                char *clean_filename = alloca (len + 1);
-                memcpy (clean_filename, filename, len);
-                clean_filename[len] = '\0';
-                filename = clean_filename;
+          /* Look up memory requirement */
+          required_mb = get_file_memory_requirement (filename);
+
+          if (required_mb > 0) {
+            int waited = 0;
+
+            /* Wait loop: check if we have enough memory, accounting for imminent usage */
+            while (1) {
+              unsigned long imminent_mb;
+              unsigned long effective_free;
+
+              free_mb = get_memory_stats (NULL);
+              imminent_mb = get_imminent_memory_mb ();
+              effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
+
+              if (required_mb <= effective_free) {
+                if (waited) {
+                  debug_write("[PREDICT] PID=%d %s: memory available after %ds, proceeding\n",
+                            getpid(), filename, waited / 10);
+                  fflush (stderr);
+                } else {
+                  debug_write("[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
+                            getpid(), filename, required_mb, effective_free, imminent_mb);
+                  fflush (stderr);
+                }
+
+                /* We have enough memory! Reserve it and proceed */
+                reserve_memory_mb (required_mb, filename);
+
+                break;
               }
 
-            /* Look up memory requirement */
-            required_mb = get_file_memory_requirement (filename);
-
-            if (required_mb > 0)
-              {
-                int waited = 0;
-
-                /* Wait loop: check if we have enough memory, accounting for imminent usage */
-                while (1)
-                  {
-                    unsigned long imminent_mb;
-                    unsigned long effective_free;
-
-                    free_mb = get_memory_stats (NULL);
-                    imminent_mb = get_imminent_memory_mb ();
-                    effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
-
-                    if (required_mb <= effective_free)
-                      {
-                        if (waited)
-                          {
-                            debug_write("[PREDICT] PID=%d %s: memory available after %ds, proceeding\n",
-                                    getpid(), filename, waited / 10);
-                            fflush (stderr);
-                          }
-                        else
-                          {
-                            debug_write("[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
-                                    getpid(), filename, required_mb, effective_free, imminent_mb);
-                            fflush (stderr);
-                          }
-
-                        /* We have enough memory! Reserve it and proceed */
-                        reserve_memory_mb (required_mb, filename);
-
-                        break;
-                      }
-
-                    /* Not enough memory, wait */
-                    if (waited == 0)
-                      {
-                        debug_write("[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
-                                getpid(), filename, required_mb, effective_free, imminent_mb);
-                        fflush (stderr);
-                      }
-
-                    usleep (100000);  /* Sleep 100ms */
-                    waited++;
-                  }
-              }
-            else
-              {
-                /* No data available, just report current state */
-                unsigned long imminent_mb;
-
-                free_mb = get_memory_stats (NULL);
-                imminent_mb = get_imminent_memory_mb ();
-                debug_write("[PREDICT] PID=%d %s: no data yet, %luMB free (%luMB imminent)\n",
-                        getpid(), filename, free_mb, imminent_mb);
+              /* Not enough memory, wait */
+              if (waited == 0) {
+                debug_write("[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
+                        getpid(), filename, required_mb, effective_free, imminent_mb);
                 fflush (stderr);
               }
+
+              usleep (100000);  /* Sleep 100ms */
+              waited++;
+            }
+          } else {
+            /* No data available, just report current state */
+            unsigned long imminent_mb;
+
+            free_mb = get_memory_stats (NULL);
+            imminent_mb = get_imminent_memory_mb ();
+            debug_write("[PREDICT] PID=%d %s: no data yet, %luMB free (%luMB imminent)\n",
+                    getpid(), filename, free_mb, imminent_mb);
+            fflush (stderr);
           }
         }
+      }
 
       /* Now actually fork the child */
       jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
