@@ -884,12 +884,13 @@ static void
 update_compilation_entry (int idx, unsigned long rss_kb)
 { // TODO - do we actually need this wrapper at all?
   unsigned long current_mb = rss_kb / 1024;
+  int profile_idx;
 
   /* Store current memory usage for this specific PID */
   main_monitoring_data.descendants[idx].current_mb = current_mb;
 
   /* Update the memory profile peak if this is higher */
-  int profile_idx = main_monitoring_data.descendants[idx].idx;
+  profile_idx = main_monitoring_data.descendants[idx].idx;
   if (profile_idx >= 0 && profile_idx < (int)memory_profile_count) {
     if (current_mb > memory_profiles[profile_idx].peak_memory_mb) {
       memory_profiles[profile_idx].peak_memory_mb = current_mb;
@@ -904,6 +905,8 @@ add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_m
   // TODO - we we actually need this wrapper at all?
   int idx;
   int profile_idx = -1;
+
+  (void)old_peak_mb;  /* Parameter not used in current implementation */
 
   if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
     return 0;  /* No space available */
@@ -1463,20 +1466,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   }
 #endif
 
-#ifdef HAVE_PTHREAD_H
-static void
-clear_status_line (void)
-{
-  if (status_line_shown)
-    {
-      /* Simple newline to clear status line - no ANSI escape sequences that can mess up TTY */
-      ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
-      (void)written;
-      status_line_shown = 0;
-    }
-}
-#endif
-
 /* Non-blocking debug write helper - uses monitor's private fd! */
 #ifdef HAVE_PTHREAD_H
 void
@@ -1949,10 +1938,13 @@ stop_memory_monitor (void)
 #endif
 
   monitor_thread_running = 0;
-#ifdef HAVE_PTHREAD_H
   pthread_join (memory_monitor_thread, NULL);
-#endif
-  clear_status_line ();
+  /* Clear status line - simple newline to avoid ANSI escape sequences that can mess up TTY */
+  if (status_line_shown) {
+    ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
+    (void)written;
+    status_line_shown = 0;
+  }
 }
 #endif
 
