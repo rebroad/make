@@ -1813,10 +1813,10 @@ memory_monitor_thread_func (void *arg)
 
           /* Release the reserved memory now that process has exited */
           if (memory_profiles[profile_idx].old_peak_mb > 0) {
-            reserve_memory_mb(-(long)memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename);
-            debug_write("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
-                        memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename,
-                        memory_profiles[profile_idx].peak_memory_mb);
+            //reserve_memory_mb(-(long)memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename);
+            debug_write("[MEMORY] Process exited. old_peak=%luMB, new_peak=%luMB filename=%s\n",
+                        memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].peak_memory_mb,
+                        memory_profiles[profile_idx].filename);
           }
 
           /* Record final memory usage for disk operations */
