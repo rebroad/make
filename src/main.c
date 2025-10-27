@@ -1221,35 +1221,34 @@ void
 reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  if (memory_aware_flag && shared_data == NULL)
-    {
+  unsigned long old_value;
+
+  if (memory_aware_flag && shared_data == NULL) {
       if (init_shared_memory () != 0)
         return; /* Fallback if shared memory fails */
-    }
+  }
 
-  if (shared_data)
-    {
-      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-      if (mb > 0)
-        {
-          /* Reserve memory */
-          unsigned long old_value = shared_data->reserved_memory_mb;
-          shared_data->reserved_memory_mb += mb;
-          debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid());
-        }
-      else if (mb < 0)
-        {
-          /* Release memory (ensure we don't go below zero) */
-          unsigned long release_mb = (unsigned long)(-mb);
-          unsigned long old_value = shared_data->reserved_memory_mb;
-          if (shared_data->reserved_memory_mb >= release_mb)
-            shared_data->reserved_memory_mb -= release_mb;
-          else
-            shared_data->reserved_memory_mb = 0;
-          debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid());
-        }
-      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-    }
+  if (!shared_data) {
+    debug_write("[DEBUG] Shared memory not initialized, cannot reserve/release memory\n");
+    return;
+  }
+
+  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+  old_value = shared_data->reserved_memory_mb;
+  if (mb > 0) {
+    /* Reserve memory */
+    shared_data->reserved_memory_mb += mb;
+    debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid(), makelevel);
+  } else if (mb < 0) {
+    /* Release memory (ensure we don't go below zero) */
+    unsigned long release_mb = (unsigned long)(-mb);
+    if (shared_data->reserved_memory_mb >= release_mb)
+      shared_data->reserved_memory_mb -= release_mb;
+    else
+      shared_data->reserved_memory_mb = 0;
+    debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid(), makelevel);
+  }
+  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 #endif
 }
 
@@ -1394,24 +1393,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     (void)written;  /* Ignore errors - if it fails, next iteration will try again */
     status_line_shown = 1;
   }
-#endif
-
-#ifdef HAVE_PTHREAD_H
-static void
-clear_status_line (void)
-{
-  if (status_line_shown)
-    {
-      /* Simple newline to clear status line - no ANSI escape sequences that can mess up TTY */
-      ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
-      (void)written;
-      status_line_shown = 0;
-    }
 }
-#endif
 
 /* Non-blocking debug write helper - uses monitor's private fd! */
-#ifdef HAVE_PTHREAD_H
 void
 debug_write (const char *format, ...)
 {
@@ -1456,7 +1440,7 @@ debug_write (const char *format, ...)
 #endif
     }
 }
-#endif
+#endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
 static void find_child_descendants(pid_t parent_pid)
@@ -1806,7 +1790,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Always update status display */
-    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count;);
+    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
 
     /* Update shared memory with total current usage (calculated in the loop above) */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
@@ -1887,10 +1871,13 @@ stop_memory_monitor (void)
 #endif
 
   monitor_thread_running = 0;
-#ifdef HAVE_PTHREAD_H
   pthread_join (memory_monitor_thread, NULL);
-#endif
-  clear_status_line ();
+  /* Clear status line - simple newline to avoid ANSI escape sequences that can mess up TTY */
+  if (status_line_shown) {
+    ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
+    (void)written;
+    status_line_shown = 0;
+  }
 }
 #endif
 
