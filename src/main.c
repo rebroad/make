@@ -1659,17 +1659,12 @@ memory_monitor_thread_func (void *arg)
         /* Process exited - record final memory and release reservation */
         if (main_monitoring_data.descendants[i].current_mb > 1 && main_monitoring_data.descendants[i].filename) {
           debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
-                      (int)main_monitoring_data.descendants[i].pid,
-                      main_monitoring_data.descendants[i].filename,
-                      main_monitoring_data.descendants[i].current_mb);
+                      (int)main_monitoring_data.descendants[i].pid, main_monitoring_data.descendants[i].filename,
+                      main_monitoring_data.descendants[i].peak_mb);
 
           /* Release the reserved memory now that process has exited */
-          if (main_monitoring_data.descendants[i].old_peak_mb > 0) {
+          if (main_monitoring_data.descendants[i].old_peak_mb > 0)
             reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename);
-            debug_write("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
-                        main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename,
-                        main_monitoring_data.descendants[i].peak_mb);
-          }
           /* Record final memory usage for disk operations */
           if (main_monitoring_data.descendants[i].filename) {
             record_file_memory_usage(main_monitoring_data.descendants[i].filename, main_monitoring_data.descendants[i].current_mb, 1);  /* final=1 */
