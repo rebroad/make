@@ -93,7 +93,7 @@ struct shared_memory_data {
 The memory monitoring system is initialized only in the **top-level make process** (`makelevel == 0`):
 
 ```c
-if (memory_aware_flag && makelevel == 0 && job_slots > 0) {
+if (auto_adjust_jobs_flag && makelevel == 0) {
     start_memory_monitor();
 }
 ```
@@ -146,9 +146,9 @@ For each tracked process:
 
 Source files are tracked by:
 
-1. **Direct filename storage** in `memory_profiles` array (no more SHA1 hashing)
+1. **Direct filename storage** in `memory_profiles` array
 2. **PID-to-profile mapping** via `main_monitoring_data.descendants[idx]`
-3. **Memory requirements** recorded per source file with historical data
+3. **Memory requirements** recorded per source file
 4. **PID counting** to handle multiple concurrent compilations of the same file
 5. **Slot reuse** when processes exit and `pid_count` reaches 0
 
@@ -186,7 +186,7 @@ The system pauses job starts when memory is low and resumes when memory is avail
 
 **Key Insight**: Instead of adjusting the `-j` value, the system maintains the user's requested parallel job count and simply pauses/resumes job starts based on available memory. This provides more predictable behavior and better performance.
 
-### 8. TTY-Safe Visual Memory Display
+### 8. Visual Memory Display
 
 The system provides a real-time visual memory bar that shows:
 

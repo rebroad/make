@@ -47,7 +47,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #define DEBUG_MEMORY_MONITOR 0
 
 /* Memory monitoring for auto-adjust-jobs feature */
-#define MAX_TRACKED_COMPILATIONS 100    /* Max concurrent compilations to track */
+#define MAX_TRACKED_DESCENDANTS 100    /* Max concurrent compilations to track */
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -876,7 +876,7 @@ static struct {
     int idx;                // maps to the memory_profile entry
     unsigned long current_mb; /* Current memory usage for this specific PID */
     int relevant;           // true if this PID is compiling a tracked source file
-  } descendants[MAX_TRACKED_COMPILATIONS];
+  } descendants[MAX_TRACKED_DESCENDANTS];
 } main_monitoring_data = {0};
 
 /* Helper function to update an existing compilation entry */
@@ -976,7 +976,7 @@ record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb
     memory_profile_count++;
     memory_profiles_dirty = 1;
     debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-                  filepath, memory_mb, memory_profile_count);
+           filepath, memory_mb, memory_profile_count);
     fflush (stderr);
 
     /* New file added, recalculate statistics */
@@ -994,7 +994,7 @@ add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_m
 
   (void)old_peak_mb;  /* Parameter not used in current implementation */
 
-  if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
+  if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS)
     return 0;  /* No space available */
 
   /* Find or create memory profile for this file */
@@ -1469,10 +1469,6 @@ debug_write (const char *format, ...)
   static int eagain_count = 0;
 #endif
 
-  /* Only output debug info when --nomem is specified (disable_memory_display is true) */
-  if (disable_memory_display)
-    return;
-
   va_start (args, format);
   len = vsnprintf (buf, sizeof(buf), format, args);
   va_end (args);
@@ -1582,7 +1578,7 @@ static void find_child_descendants(pid_t parent_pid)
 
     if (descendant_idx < 0) {
       // This new descendant is not yet tracked
-      if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS) {
+      if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
         debug_write("[DEBUG] Max tracked compilations reached, skipping descendant PID %d\n",
                     (int)pid);
         return;
