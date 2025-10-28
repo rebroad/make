@@ -20,7 +20,7 @@
 /* Extract filename from process command line for memory profiling
    Returns malloc'd string (caller must free) or NULL if no filename found
    caller: "main" or "job" - used in temp file naming */
-char *extract_filename_from_cmdline (pid_t pid, int depth, const char *caller);
+char *extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const char *caller);
 
 /* Extract filename from argv array for memory profiling (before process starts)
    Returns malloc'd string (caller must free) or NULL if no filename found

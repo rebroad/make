@@ -1507,7 +1507,7 @@ static void find_child_descendants(pid_t parent_pid, int depth)
       }
 
       /* Extract filename for this new descendant */
-      strip_ptr = extract_filename_from_cmdline(pid, depth, "main");
+      strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main");
       if (strip_ptr) {
         /* Look up memory profile for this filename */
         for (i = 0; i < memory_profile_count; i++) {
