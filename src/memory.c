@@ -119,9 +119,9 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
         fprintf(tmp_file, "FOUND: %s\n", strip_ptr);
       }
 
-      /* Write everything except the final \0, then add CR */
+      /* Write everything except the final \0, then add LF */
       fwrite(text, 1, text_len - 1, tmp_file);
-      fputc('\r', tmp_file);
+      fputc('\n', tmp_file);
       fclose(tmp_file);
     }
   }
