@@ -103,7 +103,7 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
   }
 
   /* Create debug temp file if no filename found */
-  if (!result && text_len > 0) {
+  if ((!result || *strip_ptr == '"') && text_len > 0) {
     snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%s_%d.%s.txt", debug_prefix, timestamp, caller);
     tmp_file = fopen(tmp_filename, "w");
     if (tmp_file) {
