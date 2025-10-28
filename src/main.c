@@ -1429,7 +1429,7 @@ debug_write (const char *format, ...)
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static void find_child_descendants(pid_t parent_pid)
+static void find_child_descendants(pid_t parent_pid, int depth)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1507,32 +1507,32 @@ static void find_child_descendants(pid_t parent_pid)
       }
 
       /* Extract filename for this new descendant */
-      strip_ptr = extract_filename_from_cmdline(pid, "main");
+      strip_ptr = extract_filename_from_cmdline(pid, depth, "main");
       if (strip_ptr) {
         /* Look up memory profile for this filename */
         for (i = 0; i < memory_profile_count; i++) {
           if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
             profile_peak_mb = memory_profiles[i].peak_memory_mb;
-            debug_write("[DEBUG] PID=%d Found memory profile for %s: %luMB\n", (int)pid, strip_ptr, profile_peak_mb);
+            debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
             break;
           }
         }
         if (profile_peak_mb == 0)
-          debug_write("[DEBUG] PID=%d No memory profile found for '%s'\n", (int)pid, strip_ptr);
+          debug_write("[DEBUG] PID=%d (d:%d) No memory profile found for '%s'\n", (int)pid, depth, strip_ptr);
       }
     } // if new descendant
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
-      debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024, main_monitoring_data.descendants[descendant_idx].filename ?
+      debug_write("[DEBUG] Descendant[%d] PID %d (d:%d) memory increased: current_rss=%luMB (file: %s)\n",
+                  descendant_idx, (int)pid, depth, rss_kb / 1024, main_monitoring_data.descendants[descendant_idx].filename ?
                   main_monitoring_data.descendants[descendant_idx].filename : "unknown");
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
       /* Add new entry for this descendant */
       if (add_compilation_entry(pid, rss_kb, profile_peak_mb, strip_ptr))
-        debug_write("[DEBUG] New %sdescendant[%d] PID %d: rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
-                    strip_ptr == NULL ? "irrelevant " : "", main_monitoring_data.compile_count -1, (int)pid,
+        debug_write("[DEBUG] New %sdescendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
+                    strip_ptr == NULL ? "irrelevant " : "", main_monitoring_data.compile_count -1, (int)pid, depth,
                     rss_kb / 1024, profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
 
       /* Free the filename if we extracted it */
@@ -1543,7 +1543,7 @@ static void find_child_descendants(pid_t parent_pid)
     }
 
     /* Recursively find descendants of this descendant */
-    find_child_descendants(pid);
+    find_child_descendants(pid, depth + 1);
   } // while reading /proc/PID/status
 
   closedir(proc_dir);
@@ -1625,7 +1625,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    find_child_descendants(getpid());
+    find_child_descendants(getpid(), 0);
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
