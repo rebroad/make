@@ -1539,10 +1539,15 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
         update_compilation_entry(descendant_idx, total_rss_kb);
       } else {
         /* Add new entry for this descendant */
-        if (add_compilation_entry(pid, total_rss_kb, profile_peak_mb, strip_ptr))
-          debug_write("[DEBUG] New %sdescendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
-                      strip_ptr == NULL ? "irrelevant " : "", main_monitoring_data.compile_count -1, (int)pid, depth,
-                      total_rss_kb / 1024, profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
+        if (add_compilation_entry(pid, total_rss_kb, profile_peak_mb, strip_ptr)) {
+          if (strip_ptr)
+            debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s\n",
+                      main_monitoring_data.compile_count -1, (int)pid, depth,
+                      total_rss_kb / 1024, profile_peak_mb, strip_ptr);
+          else
+            debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB\n",
+                      main_monitoring_data.compile_count -1, (int)pid, depth, total_rss_kb / 1024);
+        }
 
         /* Free the filename if we extracted it */
         if (strip_ptr) {
