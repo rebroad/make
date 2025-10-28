@@ -1017,13 +1017,29 @@ cleanup_shared_memory (void)
     }
 
   /* Remove the shared memory object from the system */
-  if (shm_unlink (SHARED_MEMORY_NAME) == -1)
+  /* Only try to unlink if we actually created shared memory */
+  if (shared_memory_fd != -1)
     {
-      perror ("shm_unlink");
+      if (shm_unlink (SHARED_MEMORY_NAME) == -1)
+        {
+          /* Only report error if it's not "No such file" (ENOENT) */
+          if (errno != ENOENT)
+            {
+              perror ("shm_unlink");
+            }
+          else
+            {
+              debug_write("[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
+            }
+        }
+      else
+        {
+          debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+        }
     }
   else
     {
-      debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+      debug_write("[DEBUG] No shared memory to clean up (never created)\n");
     }
 #endif
 }
@@ -5062,7 +5078,9 @@ die (int status)
 
       if (makelevel == 0) {
         save_memory_profiles ();
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
         cleanup_shared_memory ();
+#endif
       }
 
       if (print_version_flag)
