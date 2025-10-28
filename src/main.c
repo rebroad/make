@@ -123,6 +123,7 @@ double atof ();
 static void clean_jobserver (int status);
 static void print_data_base (void);
 static void print_version (void);
+static void print_compiled_features (const char *precede);
 static void decode_switches (int argc, const char **argv,
                              enum variable_origin origin);
 static void decode_env_switches (const char *envar, size_t len,
@@ -4899,7 +4900,92 @@ print_version (void)
 %sThere is NO WARRANTY, to the extent permitted by law.\n"),
             precede, precede, precede);
 
+  /* Print compiled features for debugging */
+  print_compiled_features (precede);
+
   printed_version = 1;
+}
+
+/* Print compiled features for debugging purposes */
+static void
+print_compiled_features (const char *precede)
+{
+  printf ("%sCompiled features:\n", precede);
+
+  /* System headers */
+#ifdef HAVE_SYS_MMAN_H
+  printf ("%s  ✓ sys/mman.h (memory mapping)\n", precede);
+#else
+  printf ("%s  ✗ sys/mman.h (memory mapping)\n", precede);
+#endif
+
+#ifdef HAVE_PTHREAD_H
+  printf ("%s  ✓ pthread.h (POSIX threads)\n", precede);
+#else
+  printf ("%s  ✗ pthread.h (POSIX threads)\n", precede);
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
+  printf ("%s  ✓ sys/ioctl.h (terminal control)\n", precede);
+#else
+  printf ("%s  ✗ sys/ioctl.h (terminal control)\n", precede);
+#endif
+
+#ifdef HAVE_DIRENT_H
+  printf ("%s  ✓ dirent.h (directory operations)\n", precede);
+#else
+  printf ("%s  ✗ dirent.h (directory operations)\n", precede);
+#endif
+
+  /* Additional important features */
+#ifdef HAVE_SHM_OPEN
+  printf ("%s  ✓ shm_open (shared memory)\n", precede);
+#else
+  printf ("%s  ✗ shm_open (shared memory)\n", precede);
+#endif
+
+#ifdef HAVE_POSIX_SPAWN
+  printf ("%s  ✓ posix_spawn (process spawning)\n", precede);
+#else
+  printf ("%s  ✗ posix_spawn (process spawning)\n", precede);
+#endif
+
+#ifdef MAKE_JOBSERVER
+  printf ("%s  ✓ job server support\n", precede);
+#else
+  printf ("%s  ✗ job server support\n", precede);
+#endif
+
+#ifdef MAKE_LOAD
+  printf ("%s  ✓ load average support\n", precede);
+#else
+  printf ("%s  ✗ load average support\n", precede);
+#endif
+
+#ifdef MAKE_SYMLINKS
+  printf ("%s  ✓ symbolic link timestamp checking\n", precede);
+#else
+  printf ("%s  ✗ symbolic link timestamp checking\n", precede);
+#endif
+
+  /* Platform-specific features */
+#ifdef WINDOWS32
+  printf ("%s  ✓ Windows32 API\n", precede);
+#else
+  printf ("%s  ✗ Windows32 API\n", precede);
+#endif
+
+#ifdef VMS
+  printf ("%s  ✓ VMS support\n", precede);
+#else
+  printf ("%s  ✗ VMS support\n", precede);
+#endif
+
+#ifdef _AMIGA
+  printf ("%s  ✓ Amiga support\n", precede);
+#else
+  printf ("%s  ✗ Amiga support\n", precede);
+#endif
 }
 
 /* Print a bunch of information about this and that.  */
