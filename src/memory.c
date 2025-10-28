@@ -62,7 +62,7 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     else if (strncmp(ptr, ".c", 2) == 0 && (ptr[2] == ' ' || ptr[2] == '\0'))
       candidate_end = ptr + 1;
 
-    if (candidate_end) {
+    if (candidate_end && candidate_end[1] != '"') {
       /* Backtrack to previous space or start of text */
       candidate_start = ptr;
       while (candidate_start > text && candidate_start[-1] != ' ')
