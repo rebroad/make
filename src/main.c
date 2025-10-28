@@ -47,7 +47,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #define DEBUG_MEMORY_MONITOR 0
 
 /* Memory monitoring for auto-adjust-jobs feature */
-#define MAX_TRACKED_COMPILATIONS 100    /* Max concurrent compilations to track */
+#define MAX_TRACKED_DESCENDANTS 100    /* Max concurrent compilations to track */
 #ifdef _AMIGA
 # include <dos/dos.h>
 # include <proto/dos.h>
@@ -878,12 +878,20 @@ static struct {
     unsigned long peak_mb;
     unsigned long old_peak_mb;
     unsigned long current_mb;
-  } compilations[MAX_TRACKED_COMPILATIONS];
+  } descendants[MAX_TRACKED_DESCENDANTS];
 } main_monitoring_data = {0};
 
+/* Helper function to update an existing compilation entry */
+static void
+update_compilation_entry (int idx, unsigned long rss_kb)
+{
+  main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
+  if (main_monitoring_data.descendants[idx].current_mb > main_monitoring_data.descendants[idx].peak_mb)
+      main_monitoring_data.descendants[idx].peak_mb = main_monitoring_data.descendants[idx].current_mb;
+}
+
 /* Record memory usage for a file (main make only)
-   final=0: During compilation (only update if new_peak > old_peak)
-   final=1: On child exit (always update with measured value) */
+   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
 void
 record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
 {
@@ -926,30 +934,21 @@ record_file_memory_usage (const char *filepath, unsigned long memory_mb, int fin
   }
 }
 
-/* Helper function to update an existing compilation entry */
-static void
-update_compilation_entry (int idx, unsigned long rss_kb)
-{
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  if (main_monitoring_data.compilations[idx].current_mb > main_monitoring_data.compilations[idx].peak_mb)
-      main_monitoring_data.compilations[idx].peak_mb = main_monitoring_data.compilations[idx].current_mb;
-}
-
 /* Helper function to add a new compilation entry */
 static int
 add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
 {
   int idx;
 
-  if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS)
+  if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS)
     return 0;  /* No space available */
 
   idx = main_monitoring_data.compile_count;
-  main_monitoring_data.compilations[idx].pid = pid;
-  main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].peak_mb = rss_kb / 1024;
-  main_monitoring_data.compilations[idx].old_peak_mb = old_peak_mb;
-  main_monitoring_data.compilations[idx].filename = filepath ? xstrdup(filepath) : NULL;
+  main_monitoring_data.descendants[idx].pid = pid;
+  main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
+  main_monitoring_data.descendants[idx].peak_mb = rss_kb / 1024;
+  main_monitoring_data.descendants[idx].old_peak_mb = old_peak_mb;
+  main_monitoring_data.descendants[idx].filename = filepath ? xstrdup(filepath) : NULL;
   main_monitoring_data.compile_count++;
 
   return 1;  /* Success */
@@ -1496,25 +1495,25 @@ static void find_child_descendants(pid_t parent_pid)
 
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
-      if (main_monitoring_data.compilations[i].pid == pid) {
+      if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
         /*debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
-                    i, (int)pid, main_monitoring_data.compilations[i].old_peak_mb, rss_kb / 1024,
-                    main_monitoring_data.compilations[i].peak_mb,
-                    main_monitoring_data.compilations[i].filename ? main_monitoring_data.compilations[i].filename : "unknown");*/
+                    i, (int)pid, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+                    main_monitoring_data.descendants[i].peak_mb,
+                    main_monitoring_data.descendants[i].filename ? main_monitoring_data.descendants[i].filename : "unknown");*/
         break;
       }
     }
 
-    if (descendant_idx >= 0 && main_monitoring_data.compilations[descendant_idx].filename == NULL) {
+    if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].filename == NULL) {
       // We already know about it and it wasn't relevant to us (as no filename was extracted)
       return;
     }
 
     if (descendant_idx < 0) {
       // This new descendant is not yet tracked
-      if (main_monitoring_data.compile_count >= MAX_TRACKED_COMPILATIONS) {
-        debug_write("[DEBUG] Max tracked compilations reached, skipping descendant PID %d\n",
+      if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
+        debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n",
                     (int)pid);
         return;
       }
@@ -1620,8 +1619,8 @@ static void find_child_descendants(pid_t parent_pid)
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
       debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024, main_monitoring_data.compilations[descendant_idx].filename ?
-                  main_monitoring_data.compilations[descendant_idx].filename : "unknown");
+                  descendant_idx, (int)pid, rss_kb / 1024, main_monitoring_data.descendants[descendant_idx].filename ?
+                  main_monitoring_data.descendants[descendant_idx].filename : "unknown");
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
       /* Add new entry for this descendant */
@@ -1722,42 +1721,42 @@ memory_monitor_thread_func (void *arg)
       FILE *stat_file;
 
       /* Calculate total current usage from main monitoring data */
-      total_current += main_monitoring_data.compilations[i].current_mb;
+      total_current += main_monitoring_data.descendants[i].current_mb;
 
       /* Check if this PID still exists */
-      snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.compilations[i].pid);
+      snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
       stat_file = fopen(stat_path, "r");
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
-        if (main_monitoring_data.compilations[i].current_mb > 1 && main_monitoring_data.compilations[i].filename) {
+        if (main_monitoring_data.descendants[i].current_mb > 1 && main_monitoring_data.descendants[i].filename) {
           debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
-                      (int)main_monitoring_data.compilations[i].pid,
-                      main_monitoring_data.compilations[i].filename,
-                      main_monitoring_data.compilations[i].current_mb);
+                      (int)main_monitoring_data.descendants[i].pid,
+                      main_monitoring_data.descendants[i].filename,
+                      main_monitoring_data.descendants[i].current_mb);
 
           /* Release the reserved memory now that process has exited */
-          if (main_monitoring_data.compilations[i].old_peak_mb > 0) {
-            reserve_memory_mb(-(long)main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename);
+          if (main_monitoring_data.descendants[i].old_peak_mb > 0) {
+            reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename);
             debug_write("[MEMORY] Released %luMB reservation for %s (process exited, new peak was %luMB)\n",
-                        main_monitoring_data.compilations[i].old_peak_mb, main_monitoring_data.compilations[i].filename,
-                        main_monitoring_data.compilations[i].peak_mb);
+                        main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename,
+                        main_monitoring_data.descendants[i].peak_mb);
           }
           /* Record final memory usage for disk operations */
-          if (main_monitoring_data.compilations[i].filename) {
-            record_file_memory_usage(main_monitoring_data.compilations[i].filename, main_monitoring_data.compilations[i].current_mb, 1);  /* final=1 */
+          if (main_monitoring_data.descendants[i].filename) {
+            record_file_memory_usage(main_monitoring_data.descendants[i].filename, main_monitoring_data.descendants[i].current_mb, 1);  /* final=1 */
           }
         }
 
         /* Free filename before removing entry */
-        if (main_monitoring_data.compilations[i].filename) {
-          free(main_monitoring_data.compilations[i].filename);
-          main_monitoring_data.compilations[i].filename = NULL;
+        if (main_monitoring_data.descendants[i].filename) {
+          free(main_monitoring_data.descendants[i].filename);
+          main_monitoring_data.descendants[i].filename = NULL;
         }
 
         /* Remove this entry by shifting remaining entries */
         if (i < main_monitoring_data.compile_count - 1) {
-          memmove(&main_monitoring_data.compilations[i], &main_monitoring_data.compilations[i + 1],
-                  (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.compilations[0]));
+          memmove(&main_monitoring_data.descendants[i], &main_monitoring_data.descendants[i + 1],
+                  (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.descendants[0]));
         }
         main_monitoring_data.compile_count--;
         i--;  /* Check this index again since we shifted */
