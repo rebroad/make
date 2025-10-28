@@ -866,10 +866,12 @@ static int shared_memory_fd = -1;
 static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
 #endif
 
+/* Global dirty flag for memory profiles */
+static int memory_profiles_dirty = 0;
+
 /* Main-make-only monitoring data (not shared between processes) */
 static struct {
   unsigned int compile_count;
-  int memory_profiles_dirty;
   struct {
     pid_t pid;
     char *filename;         /* Direct filename storage */
@@ -879,15 +881,58 @@ static struct {
   } compilations[MAX_TRACKED_COMPILATIONS];
 } main_monitoring_data = {0};
 
+/* Record memory usage for a file (main make only)
+   final=0: During compilation (only update if new_peak > old_peak)
+   final=1: On child exit (always update with measured value) */
+void
+record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
+{
+  unsigned int i;
+  time_t now;
+
+  if (!filepath) return;
+
+  now = time (NULL);
+
+  /* Look for existing profile */
+  for (i = 0; i < memory_profile_count; i++) {
+    if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
+      if (memory_mb > memory_profiles[i].peak_memory_mb ||
+              (final && memory_mb != memory_profiles[i].peak_memory_mb)) {
+        debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
+              final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
+        fflush (stderr);
+        memory_profiles[i].peak_memory_mb = memory_mb;
+      }
+      memory_profiles[i].last_used = now;
+      memory_profiles_dirty = 1;
+      return;
+    }
+  }
+
+  /* Add new profile if we have space */
+  if (memory_profile_count < MAX_MEMORY_PROFILES) {
+    memory_profiles[memory_profile_count].filename = xstrdup (filepath);
+    memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
+    memory_profiles[memory_profile_count].last_used = now;
+    memory_profile_count++;
+    memory_profiles_dirty = 1;
+    debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+           filepath, memory_mb, memory_profile_count);
+    fflush (stderr);
+
+    /* New file added, recalculate statistics */
+    if (final) calculate_memory_stats (__FILE__, __LINE__);
+  }
+}
+
 /* Helper function to update an existing compilation entry */
 static void
 update_compilation_entry (int idx, unsigned long rss_kb)
 {
   main_monitoring_data.compilations[idx].current_mb = rss_kb / 1024;
   if (main_monitoring_data.compilations[idx].current_mb > main_monitoring_data.compilations[idx].peak_mb)
-    {
       main_monitoring_data.compilations[idx].peak_mb = main_monitoring_data.compilations[idx].current_mb;
-    }
 }
 
 /* Helper function to add a new compilation entry */
@@ -912,13 +957,6 @@ add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_m
 
 /* Forward declarations */
 static int init_shared_memory (void);
-
-/* Set dirty flag (main process only) */
-void
-set_memory_profiles_dirty (void)
-{
-  main_monitoring_data.memory_profiles_dirty = 1;
-}
 
 /* Initialize shared memory for inter-process communication */
 static int
@@ -1018,29 +1056,20 @@ cleanup_shared_memory (void)
 
   /* Remove the shared memory object from the system */
   /* Only try to unlink if we actually created shared memory */
-  if (shared_memory_fd != -1)
-    {
-      if (shm_unlink (SHARED_MEMORY_NAME) == -1)
-        {
-          /* Only report error if it's not "No such file" (ENOENT) */
-          if (errno != ENOENT)
-            {
-              perror ("shm_unlink");
-            }
-          else
-            {
-              debug_write("[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
-            }
-        }
-      else
-        {
-          debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
-        }
+  if (shared_memory_fd != -1) {
+    if (shm_unlink (SHARED_MEMORY_NAME) == -1) {
+      /* Only report error if it's not "No such file" (ENOENT) */
+      if (errno != ENOENT) {
+        perror ("shm_unlink");
+      } else {
+        debug_write("[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
+      }
+    } else {
+      debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
     }
-  else
-    {
-      debug_write("[DEBUG] No shared memory to clean up (never created)\n");
-    }
+  } else {
+    debug_write("[DEBUG] No shared memory to clean up (never created)\n");
+  }
 #endif
 }
 
@@ -1098,57 +1127,6 @@ save_memory_profiles (void)
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
-}
-
-/* Record memory usage for a file (main make only)
-   final=0: During compilation (only update if new_peak > old_peak)
-   final=1: On child exit (always update with measured value) */
-void
-record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
-{
-  unsigned int i;
-  time_t now;
-
-  if (!filepath)
-    return;
-
-  now = time (NULL);
-
-  /* Look for existing profile */
-  for (i = 0; i < memory_profile_count; i++)
-    {
-      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0)
-        {
-          if (memory_mb > memory_profiles[i].peak_memory_mb ||
-              (final && memory_mb != memory_profiles[i].peak_memory_mb))
-            {
-              debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
-                          final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
-              fflush (stderr);
-              memory_profiles[i].peak_memory_mb = memory_mb;
-            }
-          memory_profiles[i].last_used = now;
-          set_memory_profiles_dirty ();
-          return;
-        }
-    }
-
-  /* Add new profile if we have space */
-  if (memory_profile_count < MAX_MEMORY_PROFILES)
-    {
-      memory_profiles[memory_profile_count].filename = xstrdup (filepath);
-      memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-      memory_profiles[memory_profile_count].last_used = now;
-      memory_profile_count++;
-      set_memory_profiles_dirty ();  /* Signal main process to save */
-      debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-              filepath, memory_mb, memory_profile_count);
-      fflush (stderr);
-
-      /* New file added, recalculate statistics */
-      if (final)
-        calculate_memory_stats (__FILE__, __LINE__);
-    }
 }
 
 /* Get imminent memory usage (called from job.c before forking) */
@@ -1647,16 +1625,15 @@ static void find_child_descendants(pid_t parent_pid)
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
       debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024,
-                  main_monitoring_data.compilations[descendant_idx].filename ?
-                      main_monitoring_data.compilations[descendant_idx].filename : "unknown");
+                  descendant_idx, (int)pid, rss_kb / 1024, main_monitoring_data.compilations[descendant_idx].filename ?
+                  main_monitoring_data.compilations[descendant_idx].filename : "unknown");
       update_compilation_entry(descendant_idx, rss_kb);
     } else {
-      /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */ // TODO why no filename?
+      /* Add new entry for this descendant */
       if (add_compilation_entry(pid, rss_kb, profile_peak_mb, strip_ptr))
         debug_write("[DEBUG] New %sdescendant[%d] PID %d: rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
-                    strip_ptr == NULL ? "irrelevant " : "", descendant_idx, (int)pid, rss_kb / 1024,
-                    profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
+                    strip_ptr == NULL ? "irrelevant " : "", main_monitoring_data.compile_count -1, (int)pid,
+                    rss_kb / 1024, profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
     }
 
     /* Recursively find descendants of this descendant */
@@ -1795,10 +1772,10 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Save memory profiles if they've been updated (check shared dirty flag) */
-    if (main_monitoring_data.memory_profiles_dirty) {
+    if (memory_profiles_dirty) {
       debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
       save_memory_profiles();
-      main_monitoring_data.memory_profiles_dirty = 0;
+      memory_profiles_dirty = 0;
       /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
     }
 
