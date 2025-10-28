@@ -1403,10 +1403,6 @@ debug_write (const char *format, ...)
   static int eagain_count = 0;
 #endif
 
-  /* Only output debug info when --nomem is specified (disable_memory_display is true) */
-  if (disable_memory_display)
-    return;
-
   va_start (args, format);
   len = vsnprintf (buf, sizeof(buf), format, args);
   va_end (args);
