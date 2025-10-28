@@ -37,7 +37,14 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
 
   /* Get timestamp for unique temp file naming */
   gettimeofday(&tv, NULL);
-  timestamp = (int)(tv.tv_sec % 86400); /* HHMMSS */
+  {
+    time_t secs = tv.tv_sec % 86400;  /* seconds since midnight */
+    int hours = secs / 3600;
+    int minutes = (secs % 3600) / 60;
+    int seconds = secs % 60;
+    int milliseconds = tv.tv_usec / 1000;
+    timestamp = hours * 10000000 + minutes * 100000 + seconds * 1000 + milliseconds; /* HHMMSSms */
+  }
 
   /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
   end = NULL;
