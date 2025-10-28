@@ -23,7 +23,7 @@
 /* Common filename extraction logic - finds the last .cpp/.cc/.c file with "/" in the path
    Returns malloc'd string (caller must free) or NULL if no filename found */
 static char *
-extract_filename_common (const char *text, size_t text_len, const char *caller, const char *debug_prefix)
+extract_filename_common (const char *text, size_t text_len, const char *caller, int pid, const char *debug_prefix)
 {
   char source_filename[1024];
   char tmp_filename[64];
@@ -115,9 +115,10 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     tmp_file = fopen(tmp_filename, "w");
     if (tmp_file) {
       /* Prepend "FOUND: %s" if strip_ptr is not NULL */
-      if (strip_ptr) {
+      if (strip_ptr)
         fprintf(tmp_file, "FOUND: %s\n", strip_ptr);
-      }
+      if (pid)
+        fprintf(tmp_file, "PID: %d\n", pid);
 
       /* Write everything except the final \0, then add LF */
       fwrite(text, 1, text_len - 1, tmp_file);
@@ -160,7 +161,7 @@ extract_filename_from_cmdline (pid_t pid, const char *caller)
   cmdline_buf[cmdline_len] = '\0';
 
   /* Use common extraction logic */
-  return extract_filename_common(cmdline_buf, cmdline_len, caller, "cmdline");
+  return extract_filename_common(cmdline_buf, cmdline_len, caller, (int)pid, "cmdline");
 }
 
 /* Extract filename from argv array for memory profiling (before process starts)
@@ -191,5 +192,5 @@ extract_filename_from_argv (const char **argv, const char *caller)
   }
 
   /* Use common extraction logic */
-  return extract_filename_common(argv_buf, strlen(argv_buf), caller, "argv");
+  return extract_filename_common(argv_buf, strlen(argv_buf), caller, 0, "argv");
 }
