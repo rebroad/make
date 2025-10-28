@@ -1429,7 +1429,7 @@ debug_write (const char *format, ...)
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *gotfilename)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *gotfilename, int *found_filename)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1440,6 +1440,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
   pid_t pid, check_pid;
   unsigned long profile_peak_mb;
   unsigned int i;
+  int relevant = 0;
 
   //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1512,6 +1513,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
         /* Extract filename for this new descendant */
         strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main");
         if (strip_ptr) {
+          /* Set found_filename to true if we found a filename */
+          if (found_filename) *found_filename = 1;
           /* Look up memory profile for this filename */
           for (i = 0; i < memory_profile_count; i++) {
             if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
@@ -1528,7 +1531,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
     else strip_ptr = gotfilename;
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr);
+    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr, &relevant);
 
     if (!gotfilename) {
       if (descendant_idx >= 0) {
@@ -1544,7 +1547,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
             debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s\n",
                       main_monitoring_data.compile_count -1, (int)pid, depth,
                       total_rss_kb / 1024, profile_peak_mb, strip_ptr);
-          else
+          else if (!relevant)
             debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB\n",
                       main_monitoring_data.compile_count -1, (int)pid, depth, total_rss_kb / 1024);
         }
@@ -1639,7 +1642,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    find_child_descendants(getpid(), 0, NULL);
+    find_child_descendants(getpid(), 0, NULL, NULL);
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
