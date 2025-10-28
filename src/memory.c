@@ -110,11 +110,18 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
   }
 
   /* Create debug temp file if no filename found */
-  if ((!result || *strip_ptr == '"') && text_len > 0) {
+  if (text_len > 0) {
     snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%s_%d.%s.txt", debug_prefix, timestamp, caller);
     tmp_file = fopen(tmp_filename, "w");
     if (tmp_file) {
-      fwrite(text, 1, text_len, tmp_file);
+      /* Prepend "FOUND: %s" if strip_ptr is not NULL */
+      if (strip_ptr) {
+        fprintf(tmp_file, "FOUND: %s\n", strip_ptr);
+      }
+
+      /* Write everything except the final \0, then add CR */
+      fwrite(text, 1, text_len - 1, tmp_file);
+      fputc('\r', tmp_file);
       fclose(tmp_file);
     }
   }
