@@ -1603,8 +1603,7 @@ static void find_child_descendants(pid_t parent_pid)
               }
             } // len between 0 and 1000
           } // if (end)
-          if (source_filename[0] == '\0')
-          {
+          if ((strip_ptr == NULL || *strip_ptr == '"' || source_filename[0] == '\0') && rss_kb > 1023) {
             char tmp_filename[64];
             FILE *f;
             snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_cmdline_%d.txt", (int)pid);
