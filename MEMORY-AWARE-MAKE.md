@@ -81,7 +81,7 @@ struct hash_filename_map {
 The memory monitoring system is initialized only in the **top-level make process** (`makelevel == 0`):
 
 ```c
-if (auto_adjust_jobs_flag && makelevel == 0 && job_slots > 0) {
+if (auto_adjust_jobs_flag && makelevel == 0) {
     start_memory_monitor();
 }
 ```
@@ -127,10 +127,9 @@ For each tracked process:
 
 Source files are tracked by:
 
-1. **Generating SHA1 hash** of the filename
-2. **Storing hash-to-filename mapping** in main process
-3. **Recording memory requirements** per source file
-4. **Reusing slots** when processes exit
+1. **Direct filename storage** in `memory_profiles` array
+2. **Memory requirements** recorded per source file
+3. **Reusing slots** when processes exit
 
 ### 6. Optimized Process Discovery Implementation
 
@@ -186,6 +185,36 @@ The system provides a real-time visual memory bar that shows:
 - **Gray** (`.`) - Available memory
 - **Dynamic updates** - Refreshes every few seconds
 
+**TTY Safety Features:**
+- **Terminal width detection** using `ioctl(TIOCGWINSZ)` with state preservation
+- **Graceful degradation** - disables display if terminal width cannot be obtained
+- **Simple newline clearing** - avoids ANSI escape sequences that can corrupt TTY
+- **Non-blocking writes** - uses private file descriptor to prevent blocking
+- **State restoration** - saves and restores terminal state after width detection
+
+### 9. Debug System
+
+The system includes a comprehensive debug logging system:
+
+**`debug_write()` Function:**
+- **Thread-safe** non-blocking debug output
+- **Uses private file descriptor** to avoid blocking main process
+- **Consistent formatting** for all memory-related messages
+- **Filename context** included in memory reserve/release messages
+
+**Debug Message Types:**
+- `[DEBUG]` - General debugging information
+- `[MEMORY]` - Memory tracking and reservation messages
+- `[MONITOR]` - Memory monitor thread status
+- `[PREDICT]` - Memory prediction information
+
+**Example Debug Output:**
+```
+[DEBUG] Reserved memory: 0 MB -> 15 MB (+15 MB) for src/main.c (PID=12345)
+[MEMORY] Updated final peak for src/main.c: 15 -> 25MB
+[MONITOR] Using private fd=5 (dup of stderr=2), term_width=80
+```
+
 ## Memory Management
 
 ### Memory Reservation System
@@ -196,9 +225,17 @@ The system maintains a **reserved memory counter** to prevent overallocation:
 volatile unsigned long reserved_memory_mb;
 ```
 
-- **Reservations** are made when processes start
+**Reservation Process:**
+- **Reservations** are made when processes start using `reserve_memory_mb(mb, filepath)`
 - **Releases** are made when processes exit
+- **Filename context** is included in all reservation messages for better tracking
 - **Total reservations** should not exceed available memory
+
+**Example Reservation Messages:**
+```
+[DEBUG] Reserved memory: 0 MB -> 15 MB (+15 MB) for src/main.c (PID=12345)
+[DEBUG] Released memory: 15 MB -> 0 MB (-15 MB) for src/main.c (PID=12345)
+```
 
 ### Memory Profile Persistence
 
@@ -328,17 +365,36 @@ Enable debug output with:
 
 This provides detailed logging of:
 
-- Process discovery
-- Memory tracking
-- Slot allocation/deallocation
+- Process discovery and PID tracking
+- Memory tracking with filename context
+- Slot allocation/deallocation with PID counting
 - Thread synchronization
+- TTY-safe display operations
 
 ### Common Debug Messages
 
+**Memory Reservation Messages:**
 ```
-[MEMORY] Tracking descendant PID 12345 -> src/main.c (current: 25MB, predicted peak: 50MB)
-[MEMORY] Descendant PID 12345 exited, final peak for src/main.c: 45MB
-[MEMORY] Released 50MB reservation for src/main.c (process exited)
+[DEBUG] Reserved memory: 0 MB -> 15 MB (+15 MB) for src/main.c (PID=12345)
+[DEBUG] Released memory: 15 MB -> 0 MB (-15 MB) for src/main.c (PID=12345)
+```
+
+**Memory Tracking Messages:**
+```
+[MEMORY] Updated final peak for src/main.c: 15 -> 25MB
+[MEMORY] Released 15MB reservation for src/main.c (process exited, new peak was 25MB)
+```
+
+**Process Discovery Messages:**
+```
+[DEBUG] New descendant[2] PID 534794: rss=3408KB, profile_peak=15MB (file: src/main.c)
+[DEBUG] New irrelevant descendant[-1] PID 534776: rss=3396KB (first time seen)
+```
+
+**Monitor Status Messages:**
+```
+[MONITOR] Using private fd=5 (dup of stderr=2), term_width=80
+[MONITOR] Could not obtain terminal width, disabling memory display
 ```
 
 ## Future Improvements
@@ -358,7 +414,7 @@ This provides detailed logging of:
 
 ## Conclusion
 
-The memory-aware make system provides intelligent job pausing based on real-time memory usage monitoring. By using an optimized process discovery algorithm that starts with make's existing `children` list and performs targeted scanning, it efficiently tracks descendant processes and their memory requirements. This prevents system memory exhaustion while maintaining the user's requested parallel job count. The system includes a visual memory bar that provides real-time feedback on memory usage and build progress.
+The memory-aware make system provides intelligent job pausing based on real-time memory usage monitoring. By using an optimized process discovery algorithm that starts with make's existing `children` list and performs targeted scanning, it efficiently tracks descendant processes and their memory requirements. This prevents system memory exhaustion while maintaining the user's requested parallel job count. The system includes a TTY-safe visual memory bar that provides real-time feedback on memory usage and build progress.
 
 **Key Benefits of Job Pausing vs. Job Adjustment:**
 
