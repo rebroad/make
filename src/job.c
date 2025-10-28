@@ -1477,10 +1477,6 @@ start_job_command (struct child *child)
 
       child->remote = 0;
 
-#ifdef VMS
-      child->pid = child_execute_job ((struct childbase *)child, 1, argv);
-
-#else
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       if (memory_aware_flag) {
@@ -1560,6 +1556,11 @@ start_job_command (struct child *child)
           }
         }
       }
+
+#ifdef VMS
+      child->pid = child_execute_job ((struct childbase *)child, 1, argv);
+
+#else
 
       /* Now actually fork the child */
       jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));

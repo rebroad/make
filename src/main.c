@@ -25,6 +25,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "debug.h"
 #include "getopt.h"
 #include "shuffle.h"
+#include "memory.h"
 
 #include <assert.h>
 #ifdef HAVE_SYS_MMAN_H
@@ -1455,15 +1456,6 @@ static void find_child_descendants(pid_t parent_pid)
 
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
-    char cmdline_path[512];
-    FILE *cmdline_file;
-    char cmdline_buf[4096];
-    ssize_t cmdline_len;
-    char *ptr;
-    char *end;
-    char *start;
-    size_t len;
-    char source_filename[1000];
     char *strip_ptr = NULL;
 
     /* Skip non-numeric entries */
@@ -1519,101 +1511,18 @@ static void find_child_descendants(pid_t parent_pid)
       }
 
       /* Extract filename for this new descendant */
-      snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
-      cmdline_file = fopen(cmdline_path, "r");
-      if (cmdline_file) {
-        cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
-        fclose(cmdline_file);
-
-        if (cmdline_len > 0) {
-          /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-          for (i = 0; i < cmdline_len - 1; i++)
-            if (cmdline_buf[i] == '\0')
-              cmdline_buf[i] = ' ';
-          cmdline_buf[cmdline_len] = '\0';
-
-          /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
-          end = NULL;
-          ptr = cmdline_buf;
-          while (*ptr) {
-            char *candidate_end = NULL;
-            char *candidate_start;
-            int has_slash;
-
-            /* Check for file extensions */
-            if (strncmp(ptr, ".cpp", 4) == 0)
-              candidate_end = ptr + 3;
-            else if (strncmp(ptr, ".cc", 3) == 0)
-              candidate_end = ptr + 2;
-            else if (strncmp(ptr, ".c", 2) == 0 && (ptr[2] == ' ' || ptr[2] == '\0'))
-              candidate_end = ptr + 1;
-
-            if (candidate_end) {
-              /* Backtrack to previous space */
-              candidate_start = ptr;
-              while (candidate_start > cmdline_buf && candidate_start[-1] != ' ')
-                candidate_start--;
-
-              /* Check if this token contains "/" (i.e., it's a filepath) */
-              has_slash = 0;
-              start = candidate_start;
-              while (start <= candidate_end) {
-                if (*start == '/') {
-                  has_slash = 1;
-                  break;
-                }
-                start++;
-              }
-
-              /* Only keep candidates with "/" */
-              if (has_slash)
-                end = candidate_end;
-            }
-
-            ptr++;
+      strip_ptr = extract_filename_from_cmdline(pid, "main");
+      if (strip_ptr) {
+        /* Look up memory profile for this filename */
+        debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
+        for (i = 0; i < memory_profile_count; i++) {
+          if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
+            profile_peak_mb = memory_profiles[i].peak_memory_mb;
+            debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
+            break;
           }
-
-          source_filename[0] = '\0';
-          if (end) {
-            /* Backtrack to find start of filepath */
-            start = end;
-            while (start > cmdline_buf && start[-1] != ' ')
-              start--;
-
-            len = (end - start) + 1;
-            if (len < 1000 && len > 0) {
-              memcpy(source_filename, start, len);
-              source_filename[len] = '\0';
-
-              /* Strip leading "../" sequences */
-              strip_ptr = source_filename;
-              while (strncmp(strip_ptr, "../", 3) == 0)
-                strip_ptr += 3;
-
-              /* Store the filename mapped to THIS descendant PID */
-              /* Look up memory profile for this filename */
-              debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
-              for (i = 0; i < memory_profile_count; i++) {
-                if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
-                  profile_peak_mb = memory_profiles[i].peak_memory_mb;
-                  debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
-                  break;
-                }
-              }
-            } // len between 0 and 1000
-          } // if (end)
-          if ((strip_ptr == NULL || *strip_ptr == '"' || source_filename[0] == '\0') && rss_kb > 1023) {
-            char tmp_filename[64];
-            FILE *f;
-            snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_cmdline_%d.txt", (int)pid);
-            f = fopen(tmp_filename, "w");
-            if (f) {
-              fprintf(f, "%s", cmdline_buf);
-              fclose(f);
-            }
-          }
-        } // if (cmdline_len > 0)
-      } // if (cmdline_file)
+        }
+      }
     } // if new descendant
 
     if (descendant_idx >= 0) {
@@ -1628,6 +1537,12 @@ static void find_child_descendants(pid_t parent_pid)
         debug_write("[DEBUG] New %sdescendant[%d] PID %d: rss=%luMB last_peak=%luMB file=%s makelevel=%u (first time seen)\n",
                     strip_ptr == NULL ? "irrelevant " : "", main_monitoring_data.compile_count -1, (int)pid,
                     rss_kb / 1024, profile_peak_mb, strip_ptr == NULL ? "unknown" : strip_ptr, makelevel);
+
+      /* Free the filename if we extracted it */
+      if (strip_ptr) {
+        free(strip_ptr);
+        strip_ptr = NULL;
+      }
     }
 
     /* Recursively find descendants of this descendant */

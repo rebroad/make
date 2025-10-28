@@ -33,11 +33,11 @@ make_SRCS =	src/ar.c src/arscan.c src/commands.c src/commands.h \
 		src/file.c src/filedef.h src/function.c src/getopt.c \
 		src/getopt.h src/getopt1.c src/gettext.h src/guile.c \
 		src/hash.c src/hash.h src/implicit.c src/job.c src/job.h \
-		src/load.c src/loadapi.c src/main.c src/makeint.h src/misc.c \
-		src/mkcustom.h src/os.h src/output.c src/output.h src/read.c \
-		src/remake.c src/rule.c src/rule.h src/shuffle.h src/shuffle.c \
-		src/signame.c src/strcache.c src/variable.c src/variable.h \
-		src/version.c src/vpath.c
+		src/load.c src/loadapi.c src/main.c src/makeint.h src/memory.c \
+		src/memory.h src/misc.c src/mkcustom.h src/os.h src/output.c \
+		src/output.h src/read.c src/remake.c src/rule.c src/rule.h \
+		src/shuffle.h src/shuffle.c src/signame.c src/strcache.c \
+		src/variable.c src/variable.h src/version.c src/vpath.c
 
 w32_SRCS =	src/w32/pathstuff.c src/w32/w32os.c src/w32/compat/dirent.c \
 		src/w32/compat/posixfcn.c src/w32/include/dirent.h \
@@ -184,27 +184,27 @@ check-regression: tests/config-flags.pm
 	@if test -f '$(top_srcdir)/tests/run_make_tests'; then \
 	  ulimit -n 128; \
 	  if $(PERL) -v >/dev/null 2>&1; then \
-	    case `cd '$(top_srcdir)'; pwd` in `pwd`) : ;; \
-	      *) test -d tests || mkdir tests; \
+		case `cd '$(top_srcdir)'; pwd` in `pwd`) : ;; \
+		  *) test -d tests || mkdir tests; \
 		 rm -f srctests; \
 		 if ln -s '$(top_srcdir)/tests' srctests; then \
 		   for f in run_make_tests run_make_tests.pl test_driver.pl scripts thelp.pl; do \
-		     rm -f tests/$$f; ln -s ../srctests/$$f tests; \
+			 rm -f tests/$$f; ln -s ../srctests/$$f tests; \
 		   done; fi ;; \
-	    esac; \
-	    echo "cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make $(GMK_OUTDIR)/make$(EXEEXT) $(MAKETESTFLAGS)"; \
-	    (cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '$(GMK_OUTDIR)/make$(EXEEXT)' $(MAKETESTFLAGS); echo $$? >.test-result) 2>&1 | tee $(testlog); \
-	    er=$$(cat $(testresult)); if test "$$er" -ne 0; then \
-	      dirnm="$(errorpre)-$$($(rand_string))"; fnm="$$dirnm.tar.gz"; \
-	      rm -rf "$$dirnm"; mkdir "$$dirnm"; \
-	      $(AMTAR) chf - $(errordetails) | (cd "$$dirnm"; $(AMTAR) xf -); \
-	      $(AMTAR) chf - "$$dirnm" | eval GZIP= gzip $(GZIP_ENV) -c >"$$fnm"; \
-	      echo "*** Testing FAILED!  Details: $$fnm"; \
-	      echo '*** Please report to <$(PACKAGE_BUGREPORT)>'; echo; \
-	      exit $$er; \
-	    fi; \
+		esac; \
+		echo "cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make $(GMK_OUTDIR)/make$(EXEEXT) $(MAKETESTFLAGS)"; \
+		(cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '$(GMK_OUTDIR)/make$(EXEEXT)' $(MAKETESTFLAGS); echo $$? >.test-result) 2>&1 | tee $(testlog); \
+		er=$$(cat $(testresult)); if test "$$er" -ne 0; then \
+		  dirnm="$(errorpre)-$$($(rand_string))"; fnm="$$dirnm.tar.gz"; \
+		  rm -rf "$$dirnm"; mkdir "$$dirnm"; \
+		  $(AMTAR) chf - $(errordetails) | (cd "$$dirnm"; $(AMTAR) xf -); \
+		  $(AMTAR) chf - "$$dirnm" | eval GZIP= gzip $(GZIP_ENV) -c >"$$fnm"; \
+		  echo "*** Testing FAILED!  Details: $$fnm"; \
+		  echo '*** Please report to <$(PACKAGE_BUGREPORT)>'; echo; \
+		  exit $$er; \
+		fi; \
 	  else \
-	    echo "Can't find a working Perl ($(PERL)); the test suite requires Perl."; \
+		echo "Can't find a working Perl ($(PERL)); the test suite requires Perl."; \
 	  fi; \
 	else \
 	  echo "Can't find the $(PACKAGE_NAME) test suite ($(top_srcdir)/tests)."; \
