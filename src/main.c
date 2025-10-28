@@ -1230,19 +1230,14 @@ reserve_memory_mb (long mb, const char *filepath)
 
   pthread_mutex_lock (&shared_data->reserved_memory_mutex);
   old_value = shared_data->reserved_memory_mb;
-  if (mb > 0) {
-    /* Reserve memory */
-    shared_data->reserved_memory_mb += mb;
-    debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid(), makelevel);
-  } else if (mb < 0) {
-    /* Release memory (ensure we don't go below zero) */
+  if (mb > 0) shared_data->reserved_memory_mb += mb;
+  else if (mb < 0) {
     unsigned long release_mb = (unsigned long)(-mb);
-    if (shared_data->reserved_memory_mb >= release_mb)
-      shared_data->reserved_memory_mb -= release_mb;
-    else
-      shared_data->reserved_memory_mb = 0;
-    debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid(), makelevel);
+    if (shared_data->reserved_memory_mb >= release_mb) shared_data->reserved_memory_mb -= release_mb;
+    else shared_data->reserved_memory_mb = 0;
   }
+  debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
+       shared_data->reserved_memory_mb, mb > 0 ? "+" : "", mb, filepath ? filepath : "unknown", getpid(), makelevel);
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 #endif
 }
