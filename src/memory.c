@@ -20,20 +20,16 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-/* Extract filename from process command line for memory profiling
-   Returns malloc'd string (caller must free) or NULL if no filename found
-   caller: "main" or "job" - used in temp file naming */
-char *
-extract_filename_from_cmdline (pid_t pid, const char *caller)
+/* Common filename extraction logic - finds the last .cpp/.cc/.c file with "/" in the path
+   Returns malloc'd string (caller must free) or NULL if no filename found */
+static char *
+extract_filename_common (const char *text, size_t text_len, const char *caller, const char *debug_prefix)
 {
-  char cmdline_path[64];
-  char cmdline_buf[4096];
   char source_filename[1024];
   char tmp_filename[64];
-  FILE *cmdline_file, *tmp_file;
-  size_t cmdline_len;
+  FILE *tmp_file;
   char *ptr, *start, *end;
-  int i, len;
+  int len;
   char *strip_ptr = NULL;
   char *result = NULL;
   struct timeval tv;
@@ -43,28 +39,10 @@ extract_filename_from_cmdline (pid_t pid, const char *caller)
   gettimeofday(&tv, NULL);
   timestamp = (int)(tv.tv_sec % 86400); /* HHMMSS */
 
-  snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
-  cmdline_file = fopen(cmdline_path, "r");
-  if (!cmdline_file)
-    return NULL;
-
-  cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
-  fclose(cmdline_file);
-
-  if (cmdline_len == 0) {
-    return NULL;
-  }
-
-  /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-  for (i = 0; i < (int)cmdline_len - 1; i++)
-    if (cmdline_buf[i] == '\0')
-      cmdline_buf[i] = ' ';
-  cmdline_buf[cmdline_len] = '\0';
-
   /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
   end = NULL;
-  ptr = cmdline_buf;
-  while (*ptr) {
+  ptr = (char *)text;
+  while (*ptr && (size_t)(ptr - text) < text_len) {
     char *candidate_end = NULL;
     char *candidate_start;
     int has_slash;
@@ -78,9 +56,9 @@ extract_filename_from_cmdline (pid_t pid, const char *caller)
       candidate_end = ptr + 1;
 
     if (candidate_end) {
-      /* Backtrack to previous space */
+      /* Backtrack to previous space or start of text */
       candidate_start = ptr;
-      while (candidate_start > cmdline_buf && candidate_start[-1] != ' ')
+      while (candidate_start > text && candidate_start[-1] != ' ')
         candidate_start--;
 
       /* Check if this token contains "/" (i.e., it's a filepath) */
@@ -106,111 +84,7 @@ extract_filename_from_cmdline (pid_t pid, const char *caller)
   if (end) {
     /* Backtrack to find start of filepath */
     start = end;
-    while (start > cmdline_buf && start[-1] != ' ')
-      start--;
-
-    len = (end - start) + 1;
-    if (len < 1000 && len > 0) {
-      memcpy(source_filename, start, len);
-      source_filename[len] = '\0';
-
-      /* Strip leading "../" sequences */
-      strip_ptr = source_filename;
-      while (strncmp(strip_ptr, "../", 3) == 0)
-        strip_ptr += 3;
-
-      /* Return malloc'd copy of the filename */
-      result = xstrdup(strip_ptr);
-    }
-  }
-
-  /* Create debug temp file if no filename found and process uses significant memory */
-  if (!result && cmdline_len > 0) {
-    snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_cmdline_%d.%s.txt", timestamp, caller);
-    tmp_file = fopen(tmp_filename, "w");
-    if (tmp_file) {
-      fprintf(tmp_file, "%s", cmdline_buf);
-      fclose(tmp_file);
-    }
-  }
-
-  return result;
-}
-
-/* Extract filename from argv array for memory profiling (before process starts)
-   Returns malloc'd string (caller must free) or NULL if no filename found
-   caller: "main" or "job" - used in temp file naming */
-char *
-extract_filename_from_argv (const char **argv, const char *caller)
-{
-  char source_filename[1024];
-  char tmp_filename[64];
-  FILE *tmp_file;
-  char *ptr, *start, *end;
-  int i, len;
-  char *strip_ptr = NULL;
-  char *result = NULL;
-  struct timeval tv;
-  int timestamp;
-  int argc = 0;
-
-  /* Count arguments */
-  while (argv[argc]) argc++;
-
-  /* Get timestamp for unique temp file naming */
-  gettimeofday(&tv, NULL);
-  timestamp = (int)(tv.tv_sec % 86400); /* HHMMSS */
-
-  /* Find ALL .cpp/.cc/.c occurrences in argv, keep the LAST one with a "/" */
-  end = NULL;
-  for (i = 0; i < argc; i++) {
-    if (!argv[i]) continue;
-
-    ptr = (char *)argv[i];
-    while (*ptr) {
-      char *candidate_end = NULL;
-      char *candidate_start;
-      int has_slash;
-
-      /* Check for file extensions */
-      if (strncmp(ptr, ".cpp", 4) == 0)
-        candidate_end = ptr + 3;
-      else if (strncmp(ptr, ".cc", 3) == 0)
-        candidate_end = ptr + 2;
-      else if (strncmp(ptr, ".c", 2) == 0 && (ptr[2] == '\0' || ptr[2] == ' '))
-        candidate_end = ptr + 1;
-
-      if (candidate_end) {
-        /* Backtrack to previous space or start of string */
-        candidate_start = ptr;
-        while (candidate_start > (char *)argv[i] && candidate_start[-1] != ' ')
-          candidate_start--;
-
-        /* Check if this token contains "/" (i.e., it's a filepath) */
-        has_slash = 0;
-        start = candidate_start;
-        while (start <= candidate_end) {
-          if (*start == '/') {
-            has_slash = 1;
-            break;
-          }
-          start++;
-        }
-
-        /* Only keep candidates with "/" */
-        if (has_slash)
-          end = candidate_end;
-      }
-
-      ptr++;
-    }
-  }
-
-  source_filename[0] = '\0';
-  if (end) {
-    /* Backtrack to find start of filepath */
-    start = end;
-    while (start > (char *)argv[0] && start[-1] != ' ')
+    while (start > text && start[-1] != ' ')
       start--;
 
     len = (end - start) + 1;
@@ -229,18 +103,79 @@ extract_filename_from_argv (const char **argv, const char *caller)
   }
 
   /* Create debug temp file if no filename found */
-  if (!result && argc > 0) {
-    snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_argv_%d.%s.txt", timestamp, caller);
+  if (!result && text_len > 0) {
+    snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%s_%d.%s.txt", debug_prefix, timestamp, caller);
     tmp_file = fopen(tmp_filename, "w");
     if (tmp_file) {
-      for (i = 0; i < argc; i++) {
-        if (argv[i]) {
-          fprintf(tmp_file, "%s ", argv[i]);
-        }
-      }
+      fwrite(text, 1, text_len, tmp_file);
       fclose(tmp_file);
     }
   }
 
   return result;
+}
+
+/* Extract filename from process command line for memory profiling
+   Returns malloc'd string (caller must free) or NULL if no filename found
+   caller: "main" or "job" - used in temp file naming */
+char *
+extract_filename_from_cmdline (pid_t pid, const char *caller)
+{
+  char cmdline_path[64];
+  char cmdline_buf[4096];
+  FILE *cmdline_file;
+  size_t cmdline_len;
+  int i;
+
+  snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
+  cmdline_file = fopen(cmdline_path, "r");
+  if (!cmdline_file)
+    return NULL;
+
+  cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
+  fclose(cmdline_file);
+
+  if (cmdline_len == 0) {
+    return NULL;
+  }
+
+  /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
+  for (i = 0; i < (int)cmdline_len - 1; i++)
+    if (cmdline_buf[i] == '\0')
+      cmdline_buf[i] = ' ';
+  cmdline_buf[cmdline_len] = '\0';
+
+  /* Use common extraction logic */
+  return extract_filename_common(cmdline_buf, cmdline_len, caller, "cmdline");
+}
+
+/* Extract filename from argv array for memory profiling (before process starts)
+   Returns malloc'd string (caller must free) or NULL if no filename found
+   caller: "main" or "job" - used in temp file naming */
+char *
+extract_filename_from_argv (const char **argv, const char *caller)
+{
+  char argv_buf[4096];
+  int argc = 0;
+  int i;
+  size_t total_len = 0;
+
+  /* Count arguments and calculate total length needed */
+  while (argv[argc]) {
+    total_len += strlen(argv[argc]) + 1; /* +1 for space */
+    argc++;
+  }
+
+  if (argc == 0 || total_len >= sizeof(argv_buf))
+    return NULL;
+
+  /* Concatenate all arguments with spaces */
+  argv_buf[0] = '\0';
+  for (i = 0; i < argc; i++) {
+    if (i > 0) strcat(argv_buf, " ");
+    strcat(argv_buf, argv[i]);
+  }
+
+  /* Use common extraction logic */
+  return extract_filename_common(argv_buf, strlen(argv_buf), caller, "argv");
 }
