@@ -1443,7 +1443,7 @@ static void find_child_descendants(pid_t parent_pid)
   char line[512];
   unsigned long rss_kb = 0;
   pid_t pid, check_pid;
-  unsigned long profile_peak_mb = 0;
+  unsigned long profile_peak_mb;
   unsigned int i;
 
   //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
@@ -1499,29 +1499,31 @@ static void find_child_descendants(pid_t parent_pid)
 
     if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].filename == NULL) {
       // We already know about it and it wasn't relevant to us (as no filename was extracted)
-      return;
+      continue;
     }
 
+    profile_peak_mb = 0;
     if (descendant_idx < 0) {
       // This new descendant is not yet tracked
       if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
         debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n",
                     (int)pid);
-        return;
+        continue;
       }
 
       /* Extract filename for this new descendant */
       strip_ptr = extract_filename_from_cmdline(pid, "main");
       if (strip_ptr) {
         /* Look up memory profile for this filename */
-        debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
         for (i = 0; i < memory_profile_count; i++) {
           if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
             profile_peak_mb = memory_profiles[i].peak_memory_mb;
-            debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
+            debug_write("[DEBUG] PID=%d Found memory profile for %s: %luMB\n", (int)pid, strip_ptr, profile_peak_mb);
             break;
           }
         }
+        if (profile_peak_mb == 0)
+          debug_write("[DEBUG] PID=%d No memory profile found for '%s'\n", (int)pid, strip_ptr);
       }
     } // if new descendant
 
