@@ -1435,7 +1435,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
       for (i = 0; i < main_monitoring_data.compile_count; i++) {
         if (main_monitoring_data.descendants[i].pid == pid) {
           descendant_idx = i;
-          debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB total_rss=%luMB (file: %s)\n",
+          debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB total_rss=%luMB peak=%luMB (file: %s)\n",
                       i, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
                       main_monitoring_data.descendants[i].peak_mb,
                       main_monitoring_data.descendants[i].profile_idx >= 0 ?
