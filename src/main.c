@@ -896,10 +896,6 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
   if (memory_mb <= memory_profiles[profile_idx].peak_memory_mb && !final) return;
 
   now = time (NULL);
-
-  debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
-            final ? "final " : "", memory_profiles[profile_idx].filename,
-            memory_profiles[profile_idx].peak_memory_mb, memory_mb);
   fflush (stderr);
   memory_profiles[profile_idx].peak_memory_mb = memory_mb;
   memory_profiles[profile_idx].last_used = now;
@@ -1379,7 +1375,7 @@ debug_write (const char *format, ...)
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, int gotfilename, int *found_filename, unsigned int *total_pids)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int profile_idx, int *found_filename, unsigned int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1390,7 +1386,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int got
   pid_t pid, check_pid;
   unsigned int i;
   int relevant = 0;
-  int profile_idx = -1;  /* Default: not found */
 
   //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1453,21 +1448,19 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int got
       continue;
     }
 
-    if (descendant_idx < 0) {
-      // This new descendant is not yet tracked
+    if (descendant_idx < 0) { // This new descendant is not yet tracked
       if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
         debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n",
                     (int)pid);
         continue;
       }
 
-      if (!gotfilename) {
+      if (profile_idx < 0) { // The parent PID is not tracked either
         /* Extract filename for this new descendant */
         strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main");
         if (strip_ptr) {
           /* Set found_filename to true if we found a filename */
           if (found_filename) *found_filename = 1; // Send up to the parent
-          gotfilename = 1; // Send down to the child
           /* Look up memory profile for this filename */
           for (i = 0; i < memory_profile_count; i++) {
             if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
@@ -1495,11 +1488,11 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int got
             }
           }
         } // if strip_ptr
-      } // if !gotfilename
+      } // if no profile_idx
     } // if new descendant
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, gotfilename, &relevant, total_pids);
+    total_rss_kb += find_child_descendants(pid, depth + 1, profile_idx, &relevant, total_pids);
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
@@ -1629,7 +1622,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, 0, NULL, &total_pids);
+    total_make_mem = find_child_descendants(getpid(), 0, -1, NULL, &total_pids);
     if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
       debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
       last_total_make_mem = total_make_mem;
@@ -1655,10 +1648,12 @@ memory_monitor_thread_func (void *arg)
                            memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
         if ((main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)
                 && main_monitoring_data.descendants[i].profile_idx >= 0) {
-          debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
+          debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB -> %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid,
                       memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename,
+                      memory_profiles[main_monitoring_data.descendants[i].profile_idx].peak_memory_mb,
                       main_monitoring_data.descendants[i].peak_mb);
+
           /* Record final memory usage for disk operations using direct profile update */
           record_file_memory_usage_by_index(main_monitoring_data.descendants[i].profile_idx, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
         }
