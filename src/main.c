@@ -1327,6 +1327,12 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     if (written < 0 && (errno == EPIPE || errno == EBADF)) {
       int saved_errno = errno;
       write_monitor_debug_file ("display_memory_status (broken pipe detected)", saved_errno);
+      /* Pipe broken (e.g., less exited) - reset terminal and stop monitoring */
+      reset_terminal_state ();
+      status_line_shown = 0;
+      monitor_thread_running = 0;  /* Stop the monitor thread */
+      write_monitor_debug_file ("display_memory_status (monitor stopped)", saved_errno);
+      return;
     }
     status_line_shown = 1;
   }
@@ -1760,7 +1766,7 @@ start_memory_monitor (void)
 static void
 reset_terminal_state (void)
 {
-  const char reset_seq[] = "\r\033[K\033[u";
+  const char reset_seq[] = "\r\033[K\033[u\n";  /* Reset cursor, clear line, restore position, newline */
   ssize_t written;
   int tty_fd = -1;
 
@@ -1834,15 +1840,9 @@ stop_memory_monitor (void)
 
   saved_errno = errno;  /* Capture errno after join */
 
-  /* Clear status line - simple newline to avoid ANSI escape sequences that can mess up TTY */
-  if (status_line_shown) {
-    ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
-    if (written < 0) {
-      saved_errno = errno;  /* Capture errno from failed write */
-      write_monitor_debug_file ("stop_memory_monitor (write failed)", saved_errno);
-    }
-    status_line_shown = 0;
-  }
+  /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
+  reset_terminal_state ();
+  status_line_shown = 0;
 
   write_monitor_debug_file ("stop_memory_monitor (exit)", saved_errno);
 }
