@@ -1358,7 +1358,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
   int term_width = cached_term_width > 0 ? cached_term_width : 80;
   size_t max_cmdline_len = term_width > 100 ? (size_t)(term_width - 100) : 20;  /* Leave room for message prefix, min 20 */
 
-  //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
+  debug_write("[EXTRA] run find_child_descendants parent_pid=%d (depth=%d, parent_idx=%d)\n", (int)parent_pid, depth, parent_idx);
 
   proc_dir = opendir("/proc");
   if (!proc_dir) {
@@ -1417,7 +1417,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d,p:%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
+        debug_write("[DEBUG] Found existing descendant[%d] p_idx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
                     i, parent_idx, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
                     *total_pids, main_monitoring_data.descendants[i].peak_mb,
                     main_monitoring_data.descendants[i].profile_idx >= 0 ?
@@ -1472,7 +1472,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     } // if new descendant and parent not tracked
 
     /* Recursively find descendants of this descendant */
-    debug_write("[EXTRA] find_child_descendants(pid=%d, ppid=%d, depth=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth + 1, parent_idx, profile_idx, send_idx);
+    debug_write("[EXTRA] call find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
     total_rss_kb += child_rss_kb;
     (*total_pids) += child_pids;
