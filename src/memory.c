@@ -171,9 +171,7 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
     if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
       /* Truncate and add "..." */
       *cmdline_out = xmalloc(max_cmdline_len + 1);
-      strncpy(*cmdline_out, cmdline_buf, max_cmdline_len - 3);
-      (*cmdline_out)[max_cmdline_len - 3] = '\0';
-      strcat(*cmdline_out, "...");
+      snprintf(*cmdline_out, max_cmdline_len + 1, "%.*s...", (int)(max_cmdline_len - 3), cmdline_buf);
     } else {
       *cmdline_out = xstrdup(cmdline_buf);
     }
