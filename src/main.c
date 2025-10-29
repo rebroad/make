@@ -1494,7 +1494,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
                       main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
                       total_rss_kb / 1024, total_pids ? *total_pids : 0, profile_peak_mb, strip_ptr);
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
-      }
+      } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
       /* Free the filename and cmdline if we extracted them */
       if (strip_ptr) {
