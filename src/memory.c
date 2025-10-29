@@ -19,6 +19,40 @@
 #include "debug.h"
 #include <sys/time.h>
 #include <unistd.h>
+#include <stdarg.h>
+
+/* Non-blocking debug write helper - defined in memory.c for use across the codebase */
+void
+debug_write (const char *format, ...)
+{
+  char buf[300];
+  int len;
+  ssize_t written;
+  va_list args;
+  struct timeval tv;
+  time_t secs;
+  int milliseconds;
+
+  /* Get current time for timestamp */
+  gettimeofday(&tv, NULL);
+  secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
+  milliseconds = tv.tv_usec / 1000;  /* convert microseconds to milliseconds */
+
+  va_start (args, format);
+  /* Format message with timestamp prefix in one go */
+  len = snprintf(buf, sizeof(buf), "%02ld%03d ", (long)secs, milliseconds);
+  if (len > 0 && len < (int)sizeof(buf) - 1)
+    {
+      int msg_len = vsnprintf(buf + len, sizeof(buf) - len, format, args);
+      if (msg_len > 0 && (len + msg_len) < (int)sizeof(buf))
+        {
+          int total_len = len + msg_len;
+          written = write (STDERR_FILENO, buf, total_len);
+          (void)written;  /* Ignore return value for debug output */
+        }
+    }
+  va_end (args);
+}
 
 /* Common filename extraction logic - finds the last .cpp/.cc/.c file with "/" in the path
    Returns malloc'd string (caller must free) or NULL if no filename found */
@@ -149,13 +183,18 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
 
   snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
   cmdline_file = fopen(cmdline_path, "r");
-  if (!cmdline_file)
+  if (!cmdline_file) {
+    /* Debug: can't open cmdline file */
+    debug_write("[DEBUG] extract_filename_from_cmdline: failed to open %s for PID %d\n", cmdline_path, (int)pid);
     return NULL;
+  }
 
   cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
   fclose(cmdline_file);
 
   if (cmdline_len == 0) {
+    /* Debug: empty cmdline */
+    debug_write("[DEBUG] extract_filename_from_cmdline: empty cmdline for PID %d\n", (int)pid);
     return NULL;
   }
 
