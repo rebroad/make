@@ -1191,6 +1191,7 @@ reserve_memory_mb (long mb, const char *filepath)
 /* Forward declaration for non-blocking debug output */
 #ifdef HAVE_PTHREAD_H
 void debug_write (const char *format, ...);
+static void write_monitor_debug_file (const char *function_name, int saved_errno);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
@@ -1326,7 +1327,21 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
     /* write() to monitor's private non-blocking fd - never blocks! */
     written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
-    (void)written;  /* Ignore errors - if it fails, next iteration will try again */
+    if (written < 0 && (errno == EPIPE || errno == EBADF)) {
+      /* Pipe broken (e.g., less exited) - clean up terminal and stop monitoring */
+      int saved_errno = errno;
+      write_monitor_debug_file ("display_memory_status (broken pipe detected)", saved_errno);
+
+      if (status_line_shown) {
+        const char reset_seq[] = "\r\033[K\033[u";
+        ssize_t reset_written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, reset_seq, sizeof(reset_seq) - 1);
+        (void)reset_written;  /* Ignore errors - pipe may be broken */
+        status_line_shown = 0;
+      }
+      monitor_thread_running = 0;  /* Stop the monitor thread */
+      write_monitor_debug_file ("display_memory_status (monitor stopped)", saved_errno);
+      return;
+    }
     status_line_shown = 1;
   }
 }
@@ -1750,38 +1765,70 @@ start_memory_monitor (void)
 }
 #endif
 
+/* Write debug info to file (works even when stderr is broken) */
+static void
+write_monitor_debug_file (const char *function_name, int saved_errno)
+{
+  FILE *debug_file = fopen ("/tmp/make_monitor_debug.txt", "a");
+  if (debug_file) {
+    fprintf (debug_file, "[%ld] %s called: PID=%d, makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
+             (long)time(NULL), function_name, (int)getpid(), makelevel,
+             saved_errno, saved_errno ? strerror(saved_errno) : "0",
+             status_line_shown, monitor_thread_running);
+    fclose (debug_file);
+  }
+}
+
 /* Stop the memory monitoring thread */
 #ifdef HAVE_PTHREAD_H
 static void
 stop_memory_monitor (void)
 {
+  int saved_errno = errno;  /* Save errno at entry */
+
   if (!memory_aware_flag || !monitor_thread_running)
     return;
 
+  write_monitor_debug_file ("stop_memory_monitor", saved_errno);
   debug_write ("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
 
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
+
+  saved_errno = errno;  /* Capture errno after join */
+
   /* Clear status line - simple newline to avoid ANSI escape sequences that can mess up TTY */
   if (status_line_shown) {
     ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
-    (void)written;
+    if (written < 0) {
+      saved_errno = errno;  /* Capture errno from failed write */
+      write_monitor_debug_file ("stop_memory_monitor (write failed)", saved_errno);
+    }
     status_line_shown = 0;
   }
+
+  write_monitor_debug_file ("stop_memory_monitor (exit)", saved_errno);
 }
 
 /* Immediate stop for signal handlers - don't wait for thread join */
 void
 stop_memory_monitor_immediate (void)
 {
+  int saved_errno = errno;  /* Save errno at entry */
+
   if (!memory_aware_flag || !monitor_thread_running)
     return;
+
+  write_monitor_debug_file ("stop_memory_monitor_immediate (entry)", saved_errno);
 
   /* DEBUG: Show we're stopping (from signal handler) */
   debug_write ("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
 
   /* Just set the flag - don't pthread_join in a signal handler! */
   monitor_thread_running = 0;
+
+  saved_errno = errno;  /* Capture errno after setting flag */
+  write_monitor_debug_file ("stop_memory_monitor_immediate (exit)", saved_errno);
 
   /* Give thread a moment to see the flag and exit */
   usleep (10000);  /* 10ms */
