@@ -1080,7 +1080,7 @@ unsigned long
 get_imminent_memory_mb (void)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long total_current = 0;
+  unsigned long total_tracked_mb = 0;
   unsigned long result = 0;
   unsigned long reserved_mb = 0;
 
@@ -1099,18 +1099,18 @@ get_imminent_memory_mb (void)
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 
       pthread_mutex_lock (&shared_data->current_usage_mutex);
-      total_current = shared_data->current_compile_usage_mb;
+      total_tracked_mb = shared_data->current_compile_usage_mb;
       pthread_mutex_unlock (&shared_data->current_usage_mutex);
-      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
+      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_tracked_mb, getpid());
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
   /*debug_write("[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   debug_write("  Reserved memory (active processes): %luMB\n", reserved_mb);
-  debug_write("  Current compile usage: %luMB\n", total_current);*/
+  debug_write("  Current compile usage: %luMB\n", total_tracked_mb);*/
 
   /* Imminent = reserved peak memory - current usage */
-  result = reserved_mb > total_current ? reserved_mb - total_current : 0;
+  result = reserved_mb > total_tracked_mb ? reserved_mb - total_tracked_mb : 0;
 
   //fprintf (stderr, "  Final result: %luMB\n", result);
 
@@ -1375,14 +1375,14 @@ debug_write (const char *format, ...)
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *gotfilename, int *found_filename)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *gotfilename, int *found_filename, unsigned int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
   char stat_path[512];
   FILE *stat_file;
   char line[512];
-  unsigned long rss_kb = 0, total_rss_kb = 0;
+  unsigned long total_rss_kb = 0;
   pid_t pid, check_pid;
   unsigned long profile_peak_mb;
   unsigned int i;
@@ -1400,6 +1400,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
     char *strip_ptr = NULL;
+    unsigned long rss_kb;
 
     /* Skip non-numeric entries */
     if (!isdigit(entry->d_name[0])) continue;
@@ -1429,15 +1430,15 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
     /* Found a descendant! Track its memory */
 
     total_rss_kb += rss_kb;
-
+    if (total_pids) (*total_pids)++;
     if (!gotfilename) {
       // Do we already know about this descendant?
       for (i = 0; i < main_monitoring_data.compile_count; i++) {
         if (main_monitoring_data.descendants[i].pid == pid) {
           descendant_idx = i;
-          debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB total_rss=%luMB peak=%luMB (file: %s)\n",
+          debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB total_rss=%luMB (pids=%u) peak=%luMB (file: %s)\n",
                       i, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
-                      main_monitoring_data.descendants[i].peak_mb,
+                      *total_pids, main_monitoring_data.descendants[i].peak_mb,
                       main_monitoring_data.descendants[i].profile_idx >= 0 ?
                       memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
           break;
@@ -1495,7 +1496,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
     else strip_ptr = gotfilename;
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr, &relevant);
+    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr, &relevant, total_pids);
 
     if (!gotfilename) {
       if (descendant_idx >= 0) {
@@ -1522,12 +1523,13 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
           main_monitoring_data.compile_count++;
 
           if (strip_ptr)
-            debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s\n",
-                      main_monitoring_data.compile_count -1, (int)pid, depth,
-                      total_rss_kb / 1024, profile_peak_mb, strip_ptr);
+            debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u) last_peak=%luMB file=%s\n",
+                      main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
+                      total_rss_kb / 1024, total_pids ? *total_pids : 0, profile_peak_mb, strip_ptr);
           else if (!relevant)
-            debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB\n",
-                      main_monitoring_data.compile_count -1, (int)pid, depth, total_rss_kb / 1024);
+            debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u)\n",
+                      main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
+                      total_rss_kb / 1024, total_pids ? *total_pids : 0);
         } else {
           debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
         }
@@ -1609,7 +1611,9 @@ memory_monitor_thread_func (void *arg)
   }
 
   while (monitor_thread_running) {
-    unsigned long total_current = 0;
+    unsigned long total_tracked_mb = 0;
+    unsigned long total_make_mem = 0;
+    unsigned int total_pids = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
@@ -1622,7 +1626,8 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    find_child_descendants(getpid(), 0, NULL, NULL);
+    total_make_mem = find_child_descendants(getpid(), 0, NULL, NULL, &total_pids);
+    debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
@@ -1630,7 +1635,7 @@ memory_monitor_thread_func (void *arg)
       FILE *stat_file;
 
       /* Calculate total current usage from main monitoring data */
-      total_current += main_monitoring_data.descendants[i].current_mb;
+      total_tracked_mb += main_monitoring_data.descendants[i].current_mb;
 
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
@@ -1678,7 +1683,7 @@ memory_monitor_thread_func (void *arg)
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
     if (shared_data) {
       pthread_mutex_lock (&shared_data->current_usage_mutex);
-      shared_data->current_compile_usage_mb = total_current;
+      shared_data->current_compile_usage_mb = total_tracked_mb;
       pthread_mutex_unlock (&shared_data->current_usage_mutex);
     }
 #endif
