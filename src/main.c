@@ -1554,7 +1554,7 @@ memory_monitor_thread_func (void *arg)
   unsigned long free_mb;
   unsigned int i;
 
-  debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
+  //debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
   time_t now;
@@ -1723,7 +1723,7 @@ start_memory_monitor (void)
   /* Load existing memory profiles from cache */
   load_memory_profiles ();
 
-  debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
+  //debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
 
 #ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
@@ -1746,10 +1746,7 @@ stop_memory_monitor (void)
   if (!memory_aware_flag || !monitor_thread_running)
     return;
 
-  /* DEBUG: Show we're stopping */
-#if DEBUG_MEMORY_MONITOR
-  debug_write ("\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
-#endif
+  debug_write ("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
 
   monitor_thread_running = 0;
   pthread_join (memory_monitor_thread, NULL);
@@ -1760,10 +1757,8 @@ stop_memory_monitor (void)
     status_line_shown = 0;
   }
 }
-#endif
 
 /* Immediate stop for signal handlers - don't wait for thread join */
-#ifdef HAVE_PTHREAD_H
 void
 stop_memory_monitor_immediate (void)
 {
@@ -1771,7 +1766,7 @@ stop_memory_monitor_immediate (void)
     return;
 
   /* DEBUG: Show we're stopping (from signal handler) */
-  debug_write ("\n[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+  debug_write ("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
 
   /* Just set the flag - don't pthread_join in a signal handler! */
   monitor_thread_running = 0;
@@ -1800,7 +1795,6 @@ stop_memory_monitor_immediate (void)
   /* No-op on non-POSIX systems */
 }
 #endif
-
 
 static void
 decode_debug_flags (void)
