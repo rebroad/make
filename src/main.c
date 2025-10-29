@@ -1188,6 +1188,7 @@ reserve_memory_mb (long mb, const char *filepath)
 #ifdef HAVE_PTHREAD_H
 void debug_write (const char *format, ...);
 static void write_monitor_debug_file (const char *function_name, int saved_errno);
+static void reset_terminal_state (void);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
@@ -1746,6 +1747,47 @@ start_memory_monitor (void)
 }
 #endif
 
+/* Reset terminal state - tries multiple methods to ensure it works */
+static void
+reset_terminal_state (void)
+{
+  const char reset_seq[] = "\r\033[K\033[u";
+  ssize_t written;
+  int tty_fd = -1;
+
+  /* Try the monitor's stderr fd first if available */
+  if (monitor_stderr_fd >= 0) {
+    written = write(monitor_stderr_fd, reset_seq, sizeof(reset_seq) - 1);
+    if (written >= 0) {
+      write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd success)", 0);
+      return;
+    }
+    write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd failed)", errno);
+  }
+
+  /* Fallback: try /dev/tty directly */
+  tty_fd = open("/dev/tty", O_WRONLY);
+  if (tty_fd >= 0) {
+    written = write(tty_fd, reset_seq, sizeof(reset_seq) - 1);
+    close(tty_fd);
+    if (written >= 0) {
+      write_monitor_debug_file ("reset_terminal_state (/dev/tty success)", 0);
+      return;
+    }
+    write_monitor_debug_file ("reset_terminal_state (/dev/tty failed)", errno);
+  } else {
+    write_monitor_debug_file ("reset_terminal_state (/dev/tty open failed)", errno);
+  }
+
+  /* Last resort: try stderr */
+  written = write(STDERR_FILENO, reset_seq, sizeof(reset_seq) - 1);
+  if (written >= 0) {
+    write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO success)", 0);
+  } else {
+    write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO failed)", errno);
+  }
+}
+
 /* Write debug info to file (works even when stderr is broken) */
 static void
 write_monitor_debug_file (const char *function_name, int saved_errno)
@@ -1814,12 +1856,8 @@ stop_memory_monitor_immediate (void)
   monitor_thread_running = 0;
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  if (monitor_stderr_fd >= 0) {
-    const char reset_seq[] = "\r\033[K\033[u";
-    ssize_t reset_written = write(monitor_stderr_fd, reset_seq, sizeof(reset_seq) - 1);
-    (void)reset_written;  /* Ignore errors in signal handler */
-    status_line_shown = 0;
-  }
+  reset_terminal_state ();
+  status_line_shown = 0;
 
   saved_errno = errno;  /* Capture errno after setting flag */
   write_monitor_debug_file ("stop_memory_monitor_immediate (exit)", saved_errno);
