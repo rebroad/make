@@ -1750,12 +1750,17 @@ start_memory_monitor (void)
 static void
 write_monitor_debug_file (const char *function_name, int saved_errno)
 {
-  FILE *debug_file = fopen ("/tmp/make_monitor_debug.txt", "a");
+  FILE *debug_file = fopen ("/tmp/make_monitor_debug.txt", "w");
   if (debug_file) {
-    fprintf (debug_file, "[%ld] %s called: PID=%d, makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
-             (long)time(NULL), function_name, (int)getpid(), makelevel,
-             saved_errno, saved_errno ? strerror(saved_errno) : "0",
-             status_line_shown, monitor_thread_running);
+      time_t now = time(NULL);
+      struct tm *tm_info = localtime(&now);
+      char buf[16];
+      if (tm_info) strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
+      else strncpy(buf, "??:??:??", sizeof(buf));
+      fprintf (debug_file, "[%s] %s called: PID=%d, makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
+               buf, function_name, (int)getpid(), makelevel,
+               saved_errno, saved_errno ? strerror(saved_errno) : "0",
+               status_line_shown, monitor_thread_running);
     fclose (debug_file);
   }
 }
