@@ -1480,9 +1480,10 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
         continue;
       }
 
+      /* Extract cmdline for debug purposes (always for new descendants) */
+      strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main", &cmdline, max_cmdline_len);
+
       if (profile_idx < 0) { // The parent PID is not tracked either
-        /* Extract filename and cmdline for this new descendant */
-        strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main", &cmdline, max_cmdline_len);
         if (strip_ptr) {
           /* Set found_filename to true if we found a filename */
           if (found_filename) *found_filename = 1; // Send up to the parent
