@@ -1820,7 +1820,11 @@ reset_terminal_state (void)
 static void
 write_monitor_debug_file (const char *function_name, int saved_errno)
 {
-  FILE *debug_file = fopen ("/tmp/make_monitor_debug.txt", "w");
+  char debug_filename[64];
+  FILE *debug_file;
+
+  snprintf(debug_filename, sizeof(debug_filename), "/tmp/make_monitor_debug_%d.txt", (int)getpid());
+  debug_file = fopen (debug_filename, "a");
   if (debug_file) {
       time_t now = time(NULL);
       struct tm *tm_info = localtime(&now);
