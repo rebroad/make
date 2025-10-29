@@ -305,8 +305,6 @@ init_memory_monitoring_env (void)
       else
         memory_aware_flag = 1;  /* Default: ON */
     }
-
-
 }
 
 /* List of directories given with -C switches.  */
@@ -2963,15 +2961,7 @@ main (int argc, char **argv, char **envp)
   init_memory_monitoring_env ();
 
   /* Start memory monitoring thread if memory-aware mode is enabled (top-level only) */
-  if (memory_aware_flag && makelevel == 0)
-    {
-      char msg[256];
-      sprintf (msg, _("Memory-aware job pausing enabled (starting with -j%u)"), job_slots);
-      OS (message, 0, "%s", msg);
-
-      /* Start the background monitoring thread */
-      start_memory_monitor ();
-    }
+  if (memory_aware_flag && makelevel == 0) start_memory_monitor ();
 
   /* The extra indirection through $(MAKE_COMMAND) is done
      for hysterical raisins.  */
