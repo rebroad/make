@@ -879,65 +879,37 @@ static struct {
     unsigned long peak_mb;
     unsigned long old_peak_mb;
     unsigned long current_mb;
+    int profile_idx;        /* Index into memory_profiles array, -1 if not found */
   } descendants[MAX_TRACKED_DESCENDANTS];
 } main_monitoring_data = {0};
 
-/* Helper function to update an existing compilation entry */
-static void
-update_compilation_entry (int idx, unsigned long rss_kb)
-{
-  main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
-  if (main_monitoring_data.descendants[idx].current_mb > main_monitoring_data.descendants[idx].peak_mb)
-      main_monitoring_data.descendants[idx].peak_mb = main_monitoring_data.descendants[idx].current_mb;
-}
 
-/* Record memory usage for a file (main make only)
+/* Record memory usage for a file using profile index (main make only)
    final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
 void
-record_file_memory_usage (const char *filepath, unsigned long memory_mb, int final)
+record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int final)
 {
-  unsigned int i;
   time_t now;
 
-  if (!filepath) return;
+  /* Only update if we have a valid profile index */
+  if (profile_idx < 0 || (unsigned int)profile_idx >= memory_profile_count) return;
+
+  if (memory_mb <= memory_profiles[profile_idx].peak_memory_mb && !final) return;
 
   now = time (NULL);
 
-  /* Look for existing profile */
-  for (i = 0; i < memory_profile_count; i++) {
-    if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
-      if (memory_mb > memory_profiles[i].peak_memory_mb ||
-              (final && memory_mb != memory_profiles[i].peak_memory_mb)) {
-        debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
-              final ? "final " : "", filepath, memory_profiles[i].peak_memory_mb, memory_mb);
-        fflush (stderr);
-        memory_profiles[i].peak_memory_mb = memory_mb;
-      }
-      memory_profiles[i].last_used = now;
-      memory_profiles_dirty = 1;
-      return;
-    }
-  }
-
-  /* Add new profile if we have space */
-  if (memory_profile_count < MAX_MEMORY_PROFILES) {
-    memory_profiles[memory_profile_count].filename = xstrdup (filepath);
-    memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-    memory_profiles[memory_profile_count].last_used = now;
-    memory_profile_count++;
-    memory_profiles_dirty = 1;
-    debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-           filepath, memory_mb, memory_profile_count);
-    fflush (stderr);
-
-    /* New file added, recalculate statistics */
-    if (final) calculate_memory_stats (__FILE__, __LINE__);
-  }
+  debug_write("[MEMORY] Updated %speak for %s: %lu -> %luMB\n",
+            final ? "final " : "", memory_profiles[profile_idx].filename,
+            memory_profiles[profile_idx].peak_memory_mb, memory_mb);
+  fflush (stderr);
+  memory_profiles[profile_idx].peak_memory_mb = memory_mb;
+  memory_profiles[profile_idx].last_used = now;
+  memory_profiles_dirty = 1;
 }
 
 /* Helper function to add a new compilation entry */
 static int
-add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
+add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath, int profile_idx)
 {
   int idx;
 
@@ -950,6 +922,7 @@ add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_m
   main_monitoring_data.descendants[idx].peak_mb = rss_kb / 1024;
   main_monitoring_data.descendants[idx].old_peak_mb = old_peak_mb;
   main_monitoring_data.descendants[idx].filename = filepath ? xstrdup(filepath) : NULL;
+  main_monitoring_data.descendants[idx].profile_idx = profile_idx;
   main_monitoring_data.compile_count++;
 
   return 1;  /* Success */
@@ -1436,6 +1409,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
   unsigned long profile_peak_mb;
   unsigned int i;
   int relevant = 0;
+  int profile_idx = -1;  /* Default: not found */
 
   //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1514,6 +1488,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
           for (i = 0; i < memory_profile_count; i++) {
             if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
               profile_peak_mb = memory_profiles[i].peak_memory_mb;
+              profile_idx = i;  /* Remember the profile index */
               debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
               break;
             }
@@ -1534,10 +1509,15 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
         debug_write("[DEBUG] Descendant[%d] PID %d (d:%d) memory increased: current_rss=%luMB (file: %s)\n",
                     descendant_idx, (int)pid, depth, total_rss_kb / 1024, main_monitoring_data.descendants[descendant_idx].filename ?
                     main_monitoring_data.descendants[descendant_idx].filename : "unknown");
-        update_compilation_entry(descendant_idx, total_rss_kb);
+        /* Update memory tracking inline */
+        main_monitoring_data.descendants[descendant_idx].current_mb = total_rss_kb / 1024;
+        if (main_monitoring_data.descendants[descendant_idx].current_mb > main_monitoring_data.descendants[descendant_idx].peak_mb) {
+          main_monitoring_data.descendants[descendant_idx].peak_mb = main_monitoring_data.descendants[descendant_idx].current_mb;
+          record_file_memory_usage_by_index(main_monitoring_data.descendants[descendant_idx].profile_idx, main_monitoring_data.descendants[descendant_idx].peak_mb, 0);
+        }
       } else {
         /* Add new entry for this descendant */
-        if (add_compilation_entry(pid, total_rss_kb, profile_peak_mb, strip_ptr)) {
+        if (add_compilation_entry(pid, total_rss_kb, profile_peak_mb, strip_ptr, profile_idx)) {
           if (strip_ptr)
             debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB last_peak=%luMB file=%s\n",
                       main_monitoring_data.compile_count -1, (int)pid, depth,
@@ -1659,8 +1639,8 @@ memory_monitor_thread_func (void *arg)
           debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid, main_monitoring_data.descendants[i].filename,
                       main_monitoring_data.descendants[i].peak_mb);
-          /* Record final memory usage for disk operations */
-          record_file_memory_usage(main_monitoring_data.descendants[i].filename, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
+          /* Record final memory usage for disk operations using direct profile update */
+          record_file_memory_usage_by_index(main_monitoring_data.descendants[i].profile_idx, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
         }
 
         /* Free filename before removing entry */
