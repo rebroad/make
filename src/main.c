@@ -1614,6 +1614,8 @@ memory_monitor_thread_func (void *arg)
     unsigned long total_tracked_mb = 0;
     unsigned long total_make_mem = 0;
     unsigned int total_pids = 0;
+    static unsigned long last_total_make_mem = 0;
+    static unsigned int last_total_pids = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
@@ -1627,7 +1629,11 @@ memory_monitor_thread_func (void *arg)
 
     /* Update peak memory by finding descendants starting from our PID */
     total_make_mem = find_child_descendants(getpid(), 0, NULL, NULL, &total_pids);
-    debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
+    if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
+      debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
+      last_total_make_mem = total_make_mem;
+      last_total_pids = total_pids;
+    }
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
