@@ -1339,7 +1339,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_pids)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1369,6 +1369,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     pid_t pid, check_pid = 0;
     int send_idx = parent_idx;
     int profile_idx = -1;
+    unsigned long child_rss_kb = 0;
+    int child_pids = 0;
 
     cmdline = NULL;  /* Reset cmdline for each PID */
 
@@ -1403,13 +1405,13 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 
     /* Found a descendant! Track its memory */
 
-    total_rss_kb += rss_kb;
-    if (total_pids) (*total_pids)++;
+    total_rss_kb += rss_kb; // Add this descendant's RSS to the total
+    if (total_pids) (*total_pids)++; // Increment the total PID count
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB total_rss=%luMB (pids=%u) peak=%luMB (file: %s)\n",
+        debug_write("[DEBUG] Found existing descendant[%d] PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
                     i, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
                     *total_pids, main_monitoring_data.descendants[i].peak_mb,
                     main_monitoring_data.descendants[i].profile_idx >= 0 ?
@@ -1439,7 +1441,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
             profile_peak_mb = memory_profiles[i].peak_memory_mb;
             profile_idx = i;  /* Remember the profile index */
-            debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
+            //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
             break;
           }
         }
@@ -1464,16 +1466,18 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     } // if new descendant and parent not tracked
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, send_idx, total_pids);
+    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
+    total_rss_kb += child_rss_kb;
+    (*total_pids) += child_pids;
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
-      debug_write("[DEBUG] Descendant[%d] PID %d (d:%d) memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, depth, total_rss_kb / 1024,
-                  main_monitoring_data.descendants[descendant_idx].profile_idx >= 0 ?
+      debug_write("[DEBUG] Existing descendant[%d] PID %d (d:%d) old_rss=%luMB rss=%luMB child_rss=%luMB (child_pids=%u) tot_rss=%luMB (file: %s)\n",
+                  descendant_idx, (int)pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, rss_kb / 1024, child_rss_kb / 1024,
+                  child_pids, (rss_kb + child_rss_kb) / 1024, main_monitoring_data.descendants[descendant_idx].profile_idx >= 0 ?
                   memory_profiles[main_monitoring_data.descendants[descendant_idx].profile_idx].filename : "unknown");
       /* Update memory tracking inline */
-      main_monitoring_data.descendants[descendant_idx].current_mb = total_rss_kb / 1024;
+      main_monitoring_data.descendants[descendant_idx].current_mb = (rss_kb + child_rss_kb) / 1024;
       if (main_monitoring_data.descendants[descendant_idx].current_mb > main_monitoring_data.descendants[descendant_idx].peak_mb) {
         main_monitoring_data.descendants[descendant_idx].peak_mb = main_monitoring_data.descendants[descendant_idx].current_mb;
         record_file_memory_usage_by_index(main_monitoring_data.descendants[descendant_idx].profile_idx, main_monitoring_data.descendants[descendant_idx].peak_mb, 0);
@@ -1484,15 +1488,15 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         if (main_monitoring_data.compile_count < MAX_TRACKED_DESCENDANTS) {
           int idx = main_monitoring_data.compile_count;
           main_monitoring_data.descendants[idx].pid = pid;
-          main_monitoring_data.descendants[idx].current_mb = total_rss_kb / 1024;
-          main_monitoring_data.descendants[idx].peak_mb = total_rss_kb / 1024;
+          main_monitoring_data.descendants[idx].current_mb = (rss_kb + child_rss_kb) / 1024;
+          main_monitoring_data.descendants[idx].peak_mb = (rss_kb + child_rss_kb) / 1024;
           main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
-          debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u) last_peak=%luMB file=%s\n",
-                      main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
-                      total_rss_kb / 1024, total_pids ? *total_pids : 0, profile_peak_mb, strip_ptr);
+          debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB c_rss=%luMB (c_pids=%u) tot_rss=%luMB (file: %s)\n",
+                      main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024, child_rss_kb / 1024,
+                      child_pids, (rss_kb + child_rss_kb) / 1024, strip_ptr);
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
@@ -1578,9 +1582,9 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running) {
     unsigned long total_tracked_mb = 0;
     unsigned long total_make_mem = 0;
-    unsigned int total_pids = 0;
+    int total_pids = 0;
     static unsigned long last_total_make_mem = 0;
-    static unsigned int last_total_pids = 0;
+    static int last_total_pids = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
@@ -1595,7 +1599,7 @@ memory_monitor_thread_func (void *arg)
     /* Update peak memory by finding descendants starting from our PID */
     total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids);
     if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
-      debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
+      debug_write("[DEBUG] Total PIDs found: %d, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
       last_total_make_mem = total_make_mem;
       last_total_pids = total_pids;
     }
