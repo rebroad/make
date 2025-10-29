@@ -1100,30 +1100,25 @@ save_memory_profiles (void)
       return;
     }
 
-  for (i = 0; i < memory_profile_count; i++)
-    {
-      fprintf (f, "%lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);
-      /*debug_write("[MEMORY] Wrote: %lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);*/
-    }
+  for (i = 0; i < memory_profile_count; i++) {
+    /* Skip entries with peak_memory_mb=0 to avoid saving useless data */
+    if (memory_profiles[i].peak_memory_mb == 0) continue;
+
+    fprintf (f, "%lu %ld %s\n",
+            memory_profiles[i].peak_memory_mb,
+            (long)memory_profiles[i].last_used,
+            memory_profiles[i].filename);
+  }
 
   fclose (f);
 
   /* Atomic file replacement: rename temp file (automatically replaces existing file) */
-  if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1)
-    {
-      perror ("rename .make_memory_cache.tmp");
-      debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
-    }
-  else
-    {
-      debug_write("[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
-    }
+  if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1) {
+    perror ("rename .make_memory_cache.tmp");
+    debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
+  } else {
+    debug_write("[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
+  }
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
@@ -1657,18 +1652,15 @@ memory_monitor_thread_func (void *arg)
       stat_file = fopen(stat_path, "r");
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
-        if (main_monitoring_data.descendants[i].current_mb > 1 && main_monitoring_data.descendants[i].filename) {
+        if (main_monitoring_data.descendants[i].old_peak_mb > 0)
+          reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename);
+        if ((main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)
+                && main_monitoring_data.descendants[i].filename) {
           debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid, main_monitoring_data.descendants[i].filename,
                       main_monitoring_data.descendants[i].peak_mb);
-
-          /* Release the reserved memory now that process has exited */
-          if (main_monitoring_data.descendants[i].old_peak_mb > 0)
-            reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].filename);
           /* Record final memory usage for disk operations */
-          if (main_monitoring_data.descendants[i].filename) {
-            record_file_memory_usage(main_monitoring_data.descendants[i].filename, main_monitoring_data.descendants[i].current_mb, 1);  /* final=1 */
-          }
+          record_file_memory_usage(main_monitoring_data.descendants[i].filename, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
         }
 
         /* Free filename before removing entry */
