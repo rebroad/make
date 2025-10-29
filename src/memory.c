@@ -132,15 +132,20 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
 
 /* Extract filename from process command line for memory profiling
    Returns malloc'd string (caller must free) or NULL if no filename found
+   If cmdline_out is not NULL, *cmdline_out will be set to a malloc'd copy of the cmdline (caller must free)
+   max_cmdline_len: maximum length for cmdline_out (0 = no limit)
    caller: "main" or "job" - used in temp file naming */
 char *
-extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const char *caller)
+extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const char *caller, char **cmdline_out, size_t max_cmdline_len)
 {
   char cmdline_path[64];
   char cmdline_buf[4096];
   FILE *cmdline_file;
   size_t cmdline_len;
   int i;
+
+  if (cmdline_out)
+    *cmdline_out = NULL;
 
   snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
   cmdline_file = fopen(cmdline_path, "r");
@@ -158,7 +163,21 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
   for (i = 0; i < (int)cmdline_len - 1; i++)
     if (cmdline_buf[i] == '\0')
       cmdline_buf[i] = ' ';
-  cmdline_buf[cmdline_len] = '\0';
+  cmdline_buf[cmdline_len - 1] = '\0';
+
+  /* Return cmdline if requested */
+  if (cmdline_out) {
+    size_t result_len = strlen(cmdline_buf);
+    if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
+      /* Truncate and add "..." */
+      *cmdline_out = xmalloc(max_cmdline_len + 1);
+      strncpy(*cmdline_out, cmdline_buf, max_cmdline_len - 3);
+      (*cmdline_out)[max_cmdline_len - 3] = '\0';
+      strcat(*cmdline_out, "...");
+    } else {
+      *cmdline_out = xstrdup(cmdline_buf);
+    }
+  }
 
   /* Use common extraction logic */
   return extract_filename_common(cmdline_buf, cmdline_len, caller, (int)pid, (int)parent_pid, depth, "cmdline");
