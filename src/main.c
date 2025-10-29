@@ -1342,42 +1342,55 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 void
 debug_write (const char *format, ...)
 {
-  char buf[512];
+  char buf[300];
   int len;
   ssize_t written;
   va_list args;
   int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
+  struct timeval tv;
+  time_t secs;
+  int milliseconds;
 #if DEBUG_MEMORY_MONITOR
   static int eagain_count = 0;
 #endif
 
+  /* Get current time for timestamp */
+  gettimeofday(&tv, NULL);
+  secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
+  milliseconds = tv.tv_usec / 1000;  /* convert microseconds to milliseconds */
+
   va_start (args, format);
-  len = vsnprintf (buf, sizeof(buf), format, args);
-  va_end (args);
-
-  if (len > 0 && len < (int)sizeof(buf))
+  /* Format message with timestamp prefix in one go */
+  len = snprintf(buf, sizeof(buf), "%02ld%03d ", (long)secs, milliseconds);
+  if (len > 0 && len < (int)sizeof(buf) - 1)
     {
-      written = write (fd, buf, len);
-#if DEBUG_MEMORY_MONITOR
-      if (written < 0 && errno == EAGAIN)
+      int msg_len = vsnprintf(buf + len, sizeof(buf) - len, format, args);
+      if (msg_len > 0 && (len + msg_len) < (int)sizeof(buf))
         {
-          eagain_count++;
-          /* Every 100 EAGAIN errors, try to report it (might fail too!) */
-          if (eagain_count % 100 == 0)
+          int total_len = len + msg_len;
+          written = write (fd, buf, total_len);
+#if DEBUG_MEMORY_MONITOR
+          if (written < 0 && errno == EAGAIN)
             {
-              char eagain_msg[64];
-              int eagain_len;
-              ssize_t eagain_written;
+              eagain_count++;
+              /* Every 100 EAGAIN errors, try to report it (might fail too!) */
+              if (eagain_count % 100 == 0)
+                {
+                  char eagain_msg[64];
+                  int eagain_len;
+                  ssize_t eagain_written;
 
-              eagain_len = snprintf (eagain_msg, sizeof(eagain_msg), "[EAGAIN x%d]", eagain_count);
-              eagain_written = write (fd, eagain_msg, eagain_len);
-              (void)eagain_written;  /* Ignore - this is a best-effort debug message */
+                  eagain_len = snprintf (eagain_msg, sizeof(eagain_msg), "[EAGAIN x%d]", eagain_count);
+                  eagain_written = write (fd, eagain_msg, eagain_len);
+                  (void)eagain_written;  /* Ignore - this is a best-effort debug message */
+                }
             }
-        }
 #else
-      (void)written;
+          (void)written;
 #endif
+        }
     }
+  va_end (args);
 }
 #endif // HAVE_PTHREAD_H
 
