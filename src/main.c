@@ -1379,7 +1379,7 @@ debug_write (const char *format, ...)
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *gotfilename, int *found_filename, unsigned int *total_pids)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int gotfilename, int *found_filename, unsigned int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1466,7 +1466,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
         strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main");
         if (strip_ptr) {
           /* Set found_filename to true if we found a filename */
-          if (found_filename) *found_filename = 1;
+          if (found_filename) *found_filename = 1; // Send up to the parent
+          gotfilename = 1; // Send down to the child
           /* Look up memory profile for this filename */
           for (i = 0; i < memory_profile_count; i++) {
             if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
@@ -1495,11 +1496,10 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
           }
         } // if strip_ptr
       } // if !gotfilename
-      else strip_ptr = gotfilename;
     } // if new descendant
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr, &relevant, total_pids);
+    total_rss_kb += find_child_descendants(pid, depth + 1, gotfilename, &relevant, total_pids);
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
@@ -1629,7 +1629,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, NULL, NULL, &total_pids);
+    total_make_mem = find_child_descendants(getpid(), 0, 0, NULL, &total_pids);
     if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
       debug_write("[DEBUG] Total PIDs found: %u, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
       last_total_make_mem = total_make_mem;
