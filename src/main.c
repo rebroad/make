@@ -1798,8 +1798,8 @@ write_monitor_debug_file (const char *function_name, int saved_errno)
       char buf[16];
       if (tm_info) strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
       else strncpy(buf, "??:??:??", sizeof(buf));
-      fprintf (debug_file, "[%s] %s called: PID=%d, makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
-               buf, function_name, (int)getpid(), makelevel,
+      fprintf (debug_file, "[%s] %s called: PID=%d (PPID=%d), makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
+               buf, function_name, (int)getpid(), (int)getppid(), makelevel,
                saved_errno, saved_errno ? strerror(saved_errno) : "0",
                status_line_shown, monitor_thread_running);
     fclose (debug_file);
