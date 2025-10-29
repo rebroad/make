@@ -1387,6 +1387,9 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
   pid_t pid, check_pid;
   unsigned int i;
   int relevant = 0;
+  char *cmdline = NULL;  /* Cmdline for current PID being processed */
+  int term_width = cached_term_width > 0 ? cached_term_width : 80;
+  size_t max_cmdline_len = term_width > 100 ? (size_t)(term_width - 100) : 20;  /* Leave room for message prefix, min 20 */
 
   //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
 
@@ -1401,6 +1404,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
     char *strip_ptr = NULL;
     unsigned long rss_kb;
     unsigned long profile_peak_mb = 0;
+
+    cmdline = NULL;  /* Reset cmdline for each PID */
 
     /* Skip non-numeric entries */
     if (!isdigit(entry->d_name[0])) continue;
@@ -1457,8 +1462,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
       }
 
       if (profile_idx < 0) { // The parent PID is not tracked either
-        /* Extract filename for this new descendant */
-        strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main");
+        /* Extract filename and cmdline for this new descendant */
+        strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main", &cmdline, max_cmdline_len);
         if (strip_ptr) {
           /* Set found_filename to true if we found a filename */
           if (found_filename) *found_filename = 1; // Send up to the parent
@@ -1523,17 +1528,21 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
                     main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
                     total_rss_kb / 1024, total_pids ? *total_pids : 0, profile_peak_mb, strip_ptr);
         else if (!relevant)
-          debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u)\n",
+          debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u) %s\n",
                     main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
-                    total_rss_kb / 1024, total_pids ? *total_pids : 0);
+                    total_rss_kb / 1024, total_pids ? *total_pids : 0, cmdline ? cmdline : "");
       } else {
         debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       }
 
-      /* Free the filename if we extracted it */
+      /* Free the filename and cmdline if we extracted them */
       if (strip_ptr) {
         free(strip_ptr);
         strip_ptr = NULL;
+      }
+      if (cmdline) {
+        free(cmdline);
+        cmdline = NULL;
       }
     }
   } // while reading /proc/PID/status
