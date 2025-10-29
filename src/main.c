@@ -1779,7 +1779,7 @@ start_memory_monitor (void)
 static void
 reset_terminal_state (void)
 {
-  const char reset_seq[] = "\r\033[K\033[u\n";  /* Reset cursor, clear line, restore position, newline */
+  const char reset_seq[] = "\r\033[K\n";  /* Reset cursor, clear line, newline - simple and reliable */
   ssize_t written;
   int tty_fd = -1;
 
