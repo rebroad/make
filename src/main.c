@@ -1499,7 +1499,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, char *g
     } // if new descendant
 
     /* Recursively find descendants of this descendant */
-    total_rss_kb += find_child_descendants(pid, depth + 1, gotfilename, &relevant, total_pids);
+    total_rss_kb += find_child_descendants(pid, depth + 1, strip_ptr, &relevant, total_pids);
 
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
