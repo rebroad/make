@@ -1580,8 +1580,8 @@ memory_monitor_thread_func (void *arg)
    * in child processes with "write error". Instead, we rely on write() being fast. */
   monitor_stderr_fd = dup(STDERR_FILENO);
   if (monitor_stderr_fd >= 0) {
-    debug_write("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d\n",
-                monitor_stderr_fd, STDERR_FILENO, cached_term_width);
+    debug_write("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
+                monitor_stderr_fd, STDERR_FILENO, cached_term_width, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
   } else {
     debug_write("[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
   }
@@ -1798,10 +1798,10 @@ write_monitor_debug_file (const char *function_name, int saved_errno)
       char buf[16];
       if (tm_info) strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
       else strncpy(buf, "??:??:??", sizeof(buf));
-      fprintf (debug_file, "[%s] %s called: PID=%d (PPID=%d), makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d\n",
+      fprintf (debug_file, "[%s] %s called: PID=%d (PPID=%d), makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
                buf, function_name, (int)getpid(), (int)getppid(), makelevel,
                saved_errno, saved_errno ? strerror(saved_errno) : "0",
-               status_line_shown, monitor_thread_running);
+               status_line_shown, monitor_thread_running, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
     fclose (debug_file);
   }
 }
