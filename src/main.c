@@ -1486,16 +1486,16 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
         int idx = main_monitoring_data.compile_count;
         main_monitoring_data.descendants[idx].pid = pid;
         main_monitoring_data.descendants[idx].current_mb = total_rss_kb / 1024;
-        main_monitoring_data.descendants[idx].peak_mb = total_rss_kb / 1024;
-        main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
-        main_monitoring_data.descendants[idx].profile_idx = profile_idx;
+        main_monitoring_data.descendants[idx].peak_mb = strip_ptr ? total_rss_kb / 1024 : 0;
+        main_monitoring_data.descendants[idx].old_peak_mb = strip_ptr ? profile_peak_mb : 0;
+        main_monitoring_data.descendants[idx].profile_idx = strip_ptr ? profile_idx : -1;
         main_monitoring_data.compile_count++;
 
         if (strip_ptr)
           debug_write("[DEBUG] New descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u) last_peak=%luMB file=%s\n",
                     main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
                     total_rss_kb / 1024, total_pids ? *total_pids : 0, profile_peak_mb, strip_ptr);
-        else if (!relevant)
+        else if (profile_idx < 0)
           debug_write("[DEBUG] New irrelevant descendant[%d] PID %d (d:%d): rss=%luMB total_rss=%luMB (pids=%u) %s\n",
                     main_monitoring_data.compile_count -1, (int)pid, depth, rss_kb / 1024,
                     total_rss_kb / 1024, total_pids ? *total_pids : 0, cmdline ? cmdline : "");
