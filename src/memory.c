@@ -193,8 +193,28 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
   fclose(cmdline_file);
 
   if (cmdline_len == 0) {
-    /* Debug: empty cmdline */
-    debug_write("[DEBUG] extract_filename_from_cmdline: empty cmdline for PID %d\n", (int)pid);
+    /* Debug: empty cmdline - check if process still exists */
+    char status_path[64];
+    FILE *status_file;
+    char status_line[256];
+    int is_zombie = 0;
+
+    snprintf(status_path, sizeof(status_path), "/proc/%d/status", (int)pid);
+    status_file = fopen(status_path, "r");
+    if (status_file) {
+      while (fgets(status_line, sizeof(status_line), status_file)) {
+        if (strncmp(status_line, "State:", 6) == 0) {
+          if (strstr(status_line, "Z")) {
+            is_zombie = 1;
+          }
+          break;
+        }
+      }
+      fclose(status_file);
+    }
+
+    debug_write("[DEBUG] extract_filename_from_cmdline: empty cmdline for PID %d (zombie=%d)\n",
+                (int)pid, is_zombie);
     return NULL;
   }
 

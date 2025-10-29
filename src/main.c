@@ -1348,7 +1348,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
   FILE *stat_file;
   char line[512];
   unsigned long total_rss_kb = 0;
-  pid_t pid, check_pid;
   unsigned int i;
   int relevant = 0;
   char *cmdline = NULL;  /* Cmdline for current PID being processed */
@@ -1366,8 +1365,10 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
     char *strip_ptr = NULL;
-    unsigned long rss_kb;
+    unsigned long rss_kb = 0;
     unsigned long profile_peak_mb = 0;
+    char state = '?';
+    pid_t pid, check_pid = 0;
 
     cmdline = NULL;  /* Reset cmdline for each PID */
 
@@ -1382,16 +1383,20 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int pro
     stat_file = fopen(stat_path, "r");
     if (!stat_file) continue;
 
-    check_pid = 0;
-    rss_kb = 0;
-
     while (fgets(line, sizeof(line), stat_file)) {
       sscanf(line, "PPid: %d", &check_pid);
       sscanf(line, "VmRSS: %lu kB", &rss_kb);
+      sscanf(line, "State: %c", &state);
 
       if (check_pid > 0 && rss_kb > 0) break;
     }
     fclose(stat_file);
+
+    /* Skip zombie processes - they're not actually running */
+    if (state == 'Z') {
+      debug_write("[DEBUG] Skipping zombie process PID %d (state=%c)\n", (int)pid, state);
+      continue;
+    }
 
     /* Check if this process is a direct descendant of our parent */
     if (check_pid != parent_pid) continue;
