@@ -1187,6 +1187,7 @@ reserve_memory_mb (long mb, const char *filepath)
 void debug_write (const char *format, ...);
 static void write_monitor_debug_file (const char *function_name, int saved_errno);
 static void reset_terminal_state (void);
+static void terminal_cleanup_atexit (void);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
@@ -1709,6 +1710,9 @@ start_memory_monitor (void)
   /* Load existing memory profiles from cache */
   load_memory_profiles ();
 
+  /* Register terminal cleanup function for atexit() - runs when process exits */
+  atexit(terminal_cleanup_atexit);
+
   //debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
 
 #ifdef HAVE_PTHREAD_H
@@ -1762,6 +1766,17 @@ reset_terminal_state (void)
     write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO success)", 0);
   } else {
     write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO failed)", errno);
+  }
+}
+
+/* Terminal cleanup function for atexit() - runs when process exits */
+static void
+terminal_cleanup_atexit (void)
+{
+  /* Only try to reset if we were showing status lines */
+  if (status_line_shown) {
+    write_monitor_debug_file ("terminal_cleanup_atexit", errno);
+    reset_terminal_state();
   }
 }
 
