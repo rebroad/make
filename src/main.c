@@ -1491,20 +1491,20 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         record_file_memory_usage_by_index(main_monitoring_data.descendants[descendant_idx].profile_idx, main_monitoring_data.descendants[descendant_idx].peak_mb, 0);
       }
     } else {
-      if (parent_idx < 0 && profile_idx >= 0) {
+      if (parent_idx < 0) {
         // Add new entry for this compilation process
         if (main_monitoring_data.compile_count < MAX_TRACKED_DESCENDANTS) {
           int idx = main_monitoring_data.compile_count;
           main_monitoring_data.descendants[idx].pid = pid;
-          main_monitoring_data.descendants[idx].current_mb = (rss_kb + child_rss_kb) / 1024;
-          main_monitoring_data.descendants[idx].peak_mb = (rss_kb + child_rss_kb) / 1024;
+          main_monitoring_data.descendants[idx].current_mb = profile_idx >=0 ? (rss_kb + child_rss_kb) / 1024 : 0;
+          main_monitoring_data.descendants[idx].peak_mb = profile_idx >=0 ? (rss_kb + child_rss_kb) / 1024 : 0;
           main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
           debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%dPID=%d PPID=%d (d:%d): rss=%luMB c_rss=%luMB (c_pids=%u) tot_rss=%luMB (file: %s)\n",
                       main_monitoring_data.compile_count -1, profile_idx, parent_idx, (int)pid, (int)parent_pid, depth, rss_kb / 1024, child_rss_kb / 1024,
-                      child_pids, (rss_kb + child_rss_kb) / 1024, strip_ptr);
+                      child_pids, (rss_kb + child_rss_kb) / 1024, strip_ptr ? strip_ptr : "unknown");
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
