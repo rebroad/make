@@ -1309,7 +1309,13 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
   /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-  output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+  /* CRITICAL: Only use cursor save/restore if stderr is a TTY - otherwise we corrupt output */
+  if (isatty(STDERR_FILENO)) {
+    output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+  } else {
+    /* Not a TTY - just use simple newline to avoid corrupting piped output */
+    output_len = snprintf(output_buf, sizeof(output_buf), "%s\n", status);
+  }
 
   if (output_len > 0 && output_len < (int)sizeof(output_buf)) {
     write_count++;
@@ -1769,8 +1775,8 @@ reset_terminal_state (void)
 static void
 terminal_cleanup_atexit (void)
 {
-  /* Only try to reset if we were showing status lines */
-  if (status_line_shown) {
+  /* Only try to reset if we were showing status lines AND stderr is a TTY */
+  if (status_line_shown && isatty(STDERR_FILENO)) {
     write_monitor_debug_file ("terminal_cleanup_atexit", errno);
     reset_terminal_state();
   }
@@ -1818,8 +1824,13 @@ stop_memory_monitor (void)
   saved_errno = errno;  /* Capture errno after join */
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  reset_terminal_state ();
-  status_line_shown = 0;
+  /* But only if stderr is a TTY - don't try to reset if we're piped */
+  if (isatty(STDERR_FILENO)) {
+    reset_terminal_state ();
+    status_line_shown = 0;
+  } else {
+    status_line_shown = 0;  /* Clear the flag anyway */
+  }
 
   write_monitor_debug_file ("stop_memory_monitor (exit)", saved_errno);
 }
@@ -1842,8 +1853,13 @@ stop_memory_monitor_immediate (void)
   monitor_thread_running = 0;
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  reset_terminal_state ();
-  status_line_shown = 0;
+  /* But only if stderr is a TTY - don't try to reset if we're piped */
+  if (isatty(STDERR_FILENO)) {
+    reset_terminal_state ();
+    status_line_shown = 0;
+  } else {
+    status_line_shown = 0;  /* Clear the flag anyway */
+  }
 
   saved_errno = errno;  /* Capture errno after setting flag */
   write_monitor_debug_file ("stop_memory_monitor_immediate (exit)", saved_errno);
