@@ -1309,11 +1309,11 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
   /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-  /* CRITICAL: Only use cursor save/restore if stderr is a TTY - otherwise we corrupt output */
-  if (isatty(STDERR_FILENO)) {
+  /* CRITICAL: Only use cursor save/restore if stderr AND stdout are TTYs - avoid corruption when piped */
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
     output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
   } else {
-    /* Not a TTY - just use simple newline to avoid corrupting piped output */
+    /* Not a TTY or being piped - just use simple newline to avoid corrupting piped output */
     output_len = snprintf(output_buf, sizeof(output_buf), "%s\n", status);
   }
 
@@ -1472,7 +1472,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     } // if new descendant and parent not tracked
 
     /* Recursively find descendants of this descendant */
-    debug_write("[EXTRA] find_child_descendants(pid=%d, depth=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, depth + 1, parent_idx, profile_idx, send_idx);
+    debug_write("[EXTRA] find_child_descendants(pid=%d, ppid=%d, depth=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth + 1, parent_idx, profile_idx, send_idx);
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
     total_rss_kb += child_rss_kb;
     (*total_pids) += child_pids;
@@ -1776,8 +1776,8 @@ reset_terminal_state (void)
 static void
 terminal_cleanup_atexit (void)
 {
-  /* Only try to reset if we were showing status lines AND stderr is a TTY */
-  if (status_line_shown && isatty(STDERR_FILENO)) {
+  /* Only try to reset if we were showing status lines AND both stdout/stderr are TTYs */
+  if (status_line_shown && isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
     write_monitor_debug_file ("terminal_cleanup_atexit", errno);
     reset_terminal_state();
   }
@@ -1825,8 +1825,8 @@ stop_memory_monitor (void)
   saved_errno = errno;  /* Capture errno after join */
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  /* But only if stderr is a TTY - don't try to reset if we're piped */
-  if (isatty(STDERR_FILENO)) {
+  /* But only if both stdout/stderr are TTYs - don't try to reset if we're piped */
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
     reset_terminal_state ();
     status_line_shown = 0;
   } else {
@@ -1854,8 +1854,8 @@ stop_memory_monitor_immediate (void)
   monitor_thread_running = 0;
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  /* But only if stderr is a TTY - don't try to reset if we're piped */
-  if (isatty(STDERR_FILENO)) {
+  /* But only if both stdout/stderr are TTYs - don't try to reset if we're piped */
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
     reset_terminal_state ();
     status_line_shown = 0;
   } else {
