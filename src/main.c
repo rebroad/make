@@ -1480,13 +1480,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       } // if strip_ptr
     } // if new descendant and parent not tracked
 
-    /* Recursively find descendants of this descendant */
-    //debug_write("[EXTRA] before find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
-    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
-    //debug_write("[EXTRA] after find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
-    total_rss_kb += child_rss_kb;
-    (*total_pids) += child_pids;
-
     if (descendant_idx >= 0) {
       // Existing descendant - update memory tracking
       debug_write("[DEBUG] Existing descendant[%d] PID %d (d:%d) old_rss=%luMB rss=%luMB child_rss=%luMB (child_pids=%u) tot_rss=%luMB (file: %s)\n",
@@ -1527,6 +1520,13 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         cmdline = NULL;
       }
     } // descendant_idx < 0
+
+    /* Recursively find descendants of this descendant */
+    //debug_write("[EXTRA] before find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
+    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
+    //debug_write("[EXTRA] after find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
+    total_rss_kb += child_rss_kb;
+    (*total_pids) += child_pids;
   } // while reading /proc/PID/status
 
   closedir(proc_dir);
