@@ -1670,7 +1670,7 @@ memory_monitor_thread_func (void *arg)
 
   /* If we exit the loop, show why */
 #if DEBUG_MEMORY_MONITOR
-  debug_write ("\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
+  debug_write ("[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
 #endif
 
   /* Close our private stderr fd */
