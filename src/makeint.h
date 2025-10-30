@@ -771,7 +771,7 @@ extern void calculate_memory_stats (const char *caller_file, int caller_line);
 extern int memory_aware_flag;
 
 /* Memory profiling structures */
-#define MAX_MEMORY_PROFILES 10000
+#define MAX_MEMORY_PROFILES 20000
 struct file_memory_profile
 {
   char *filename;
