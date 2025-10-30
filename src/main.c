@@ -1496,9 +1496,9 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
-          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d) rss=%luMB (%s: %s)\n",
-                      main_monitoring_data.compile_count -1, profile_idx, parent_idx, (int)pid,
-                      (int)parent_pid, depth, rss_kb / 1024, strip_ptr ? "file" : "cmd",
+          debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (%s: %s)\n",
+                      main_monitoring_data.compile_count -1, (int)pid, (int)parent_pid, depth,
+                      profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr ? "file" : "cmd",
                       strip_ptr ? strip_ptr : (cmdline ? cmdline : ""));
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
