@@ -1156,7 +1156,7 @@ void
 reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long old_value;
+  unsigned long old_value, new_value;
 
   if (memory_aware_flag && shared_data == NULL) {
       if (init_shared_memory () != 0)
@@ -1176,9 +1176,10 @@ reserve_memory_mb (long mb, const char *filepath)
     if (shared_data->reserved_memory_mb >= release_mb) shared_data->reserved_memory_mb -= release_mb;
     else shared_data->reserved_memory_mb = 0;
   }
-  debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
-       shared_data->reserved_memory_mb, mb > 0 ? "+" : "", mb, filepath ? filepath : "unknown", getpid(), makelevel);
+  new_value = shared_data->reserved_memory_mb;
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+  debug_write("[MEMORY] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
+       new_value, mb > 0 ? "+" : "", mb, filepath ? filepath : "?", getpid(), makelevel);
 #endif
 }
 
@@ -1371,7 +1372,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
     unsigned long profile_peak_mb = 0;
-    char state = '?';
     pid_t pid, check_pid = 0;
     int send_idx = parent_idx;
     int profile_idx = -1;
@@ -1394,17 +1394,17 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     while (fgets(line, sizeof(line), stat_file)) {
       sscanf(line, "PPid: %d", &check_pid);
       sscanf(line, "VmRSS: %lu kB", &rss_kb);
-      sscanf(line, "State: %c", &state);
+      //sscanf(line, "State: %c", &state);
 
       if (check_pid > 0 && rss_kb > 0) break;
     }
     fclose(stat_file);
 
     /* Skip zombie processes - they're not actually running */
-    if (state == 'Z') {
+    /*if (state == 'Z') {
       debug_write("[DEBUG] Skipping zombie process PID %d (state=%c)\n", (int)pid, state);
       continue;
-    }
+    }*/
 
     /* Check if this process is a direct descendant of our parent */
     if (check_pid != parent_pid) continue;
@@ -1420,7 +1420,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
                     i, parent_idx, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
                     *total_pids, main_monitoring_data.descendants[i].peak_mb, main_monitoring_data.descendants[i].profile_idx >= 0 ?
-                    memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
+                    memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "");
         break;
       }
     }
@@ -1480,29 +1480,23 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
-          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d) rss=%luMB (file: %s)\n",
+          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d) rss=%luMB (%s: %s)\n",
                       main_monitoring_data.compile_count -1, profile_idx, parent_idx, (int)pid,
-                      (int)parent_pid, depth, rss_kb / 1024, strip_ptr ? strip_ptr : "unknown");
+                      (int)parent_pid, depth, rss_kb / 1024, strip_ptr ? "file" : "cmd",
+                      strip_ptr ? strip_ptr : (cmdline ? cmdline : ""));
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
       /* Free the filename and cmdline if we extracted them */
-      if (strip_ptr) {
-        free(strip_ptr);
-        strip_ptr = NULL;
-      }
-      if (cmdline) {
-        free(cmdline);
-        cmdline = NULL;
-      }
+      if (strip_ptr) free(strip_ptr);
+      if (cmdline) free(cmdline);
+      strip_ptr = cmdline = NULL;
     } // descendant_idx < 0
 
     /* Recursively find descendants of this descendant */
-    //debug_write("[EXTRA] before find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
-    //debug_write("[EXTRA] after find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
     total_rss_kb += child_rss_kb;
-    (*total_pids) += child_pids;
+    *total_pids += child_pids;
 
     if (descendant_idx >= 0 && profile_idx >= 0) {
       long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
