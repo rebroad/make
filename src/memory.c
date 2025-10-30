@@ -96,7 +96,7 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     else if (strncmp(ptr, ".c", 2) == 0 && (ptr[2] == ' ' || ptr[2] == '\0'))
       candidate_end = ptr + 1;
 
-    if (candidate_end && candidate_end[1] != '"') {
+    if (candidate_end) {
       /* Backtrack to previous space or start of text */
       candidate_start = ptr;
       while (candidate_start > text && candidate_start[-1] != ' ')
@@ -125,7 +125,7 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
   if (end) {
     /* Backtrack to find start of filepath */
     start = end;
-    while (start > text && start[-1] != ' ')
+    while (start > text && !(start[-1] == ' ' || start[-1] == '"'))
       start--;
 
     len = (end - start) + 1;
@@ -143,7 +143,7 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     }
   }
 
-  /* Create debug temp file if no filename found */
+  /* Create debug temp file of the full cmdline */
   if (text_len > 0) {
     snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%s_%d.%s.txt", debug_prefix, timestamp, caller);
     tmp_file = fopen(tmp_filename, "w");
