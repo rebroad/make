@@ -1358,7 +1358,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
   int term_width = cached_term_width > 0 ? cached_term_width : 80;
   size_t max_cmdline_len = term_width > 100 ? (size_t)(term_width - 100) : 20;  /* Leave room for message prefix, min 20 */
 
-  debug_write("[EXTRA] run find_child_descendants parent_pid=%d (depth=%d, parent_idx=%d)\n", (int)parent_pid, depth, parent_idx);
+  //debug_write("[EXTRA] run find_child_descendants parent_pid=%d (depth=%d, parent_idx=%d)\n", (int)parent_pid, depth, parent_idx);
 
   proc_dir = opendir("/proc");
   if (!proc_dir) {
@@ -1420,13 +1420,14 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       if (main_monitoring_data.descendants[i].pid == parent_pid) {
         found_parent = i;
         found_ppidx = main_monitoring_data.descendants[i].profile_idx;
+        send_idx = found_ppidx;
         debug_write("[DEBUG] Found parent PID %d in descendants[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)parent_pid, i,
                     parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");
       }
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
-                    i, parent_idx, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
+        debug_write("[DEBUG] Found existing descendant[%d] fppidx=%d ppidx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
+                    i, found_ppidx, parent_idx, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
                     *total_pids, main_monitoring_data.descendants[i].peak_mb,
                     main_monitoring_data.descendants[i].profile_idx >= 0 ?
                     memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
@@ -1439,7 +1440,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       continue;
     }*/
 
-    if (descendant_idx < 0 && parent_idx < 0) { // Might need to track this new descendant
+    if (descendant_idx < 0 && found_ppidx < 0) { // Might need to track this new descendant
       if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
         debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n",
                     (int)pid);
@@ -1480,9 +1481,9 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     } // if new descendant and parent not tracked
 
     /* Recursively find descendants of this descendant */
-    debug_write("[EXTRA] before find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
+    //debug_write("[EXTRA] before find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
-    debug_write("[EXTRA] after find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
+    //debug_write("[EXTRA] after find_child_descendants(pid=%d, ppid=%d, depth=%d+1=%d, parent_idx=%d, profile_idx=%d, send_idx=%d)\n", pid, parent_pid, depth, depth + 1, parent_idx, profile_idx, send_idx);
     total_rss_kb += child_rss_kb;
     (*total_pids) += child_pids;
 
@@ -1499,7 +1500,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         record_file_memory_usage_by_index(main_monitoring_data.descendants[descendant_idx].profile_idx, main_monitoring_data.descendants[descendant_idx].peak_mb, 0);
       }
     } else {
-      if (parent_idx < 0) {
+      if (found_ppidx < 0) {
         // Add new entry for this compilation process
         if (main_monitoring_data.compile_count < MAX_TRACKED_DESCENDANTS) {
           int idx = main_monitoring_data.compile_count;
@@ -1510,11 +1511,11 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
-          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d): rss=%luMB c_rss=%luMB (c_pids=%u) tot_rss=%luMB (file: %s)\n",
-                      main_monitoring_data.compile_count -1, profile_idx, parent_idx, (int)pid, (int)parent_pid, depth, rss_kb / 1024, child_rss_kb / 1024,
+          debug_write("[DEBUG] New descendant[%d] pidx=%d PID=%d PPID=%d (d:%d): rss=%luMB c_rss=%luMB (c_pids=%u) tot_rss=%luMB (file: %s)\n",
+                      main_monitoring_data.compile_count -1, profile_idx, (int)pid, (int)parent_pid, depth, rss_kb / 1024, child_rss_kb / 1024,
                       child_pids, (rss_kb + child_rss_kb) / 1024, strip_ptr ? strip_ptr : "unknown");
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
-      } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
+      } // TODO - we could "else" track related descendants (found_ppidx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
       /* Free the filename and cmdline if we extracted them */
       if (strip_ptr) {
