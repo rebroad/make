@@ -1375,7 +1375,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
     int found_ppidx = parent_idx;
-    int send_idx = parent_idx;
+    int send_idx;
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
     unsigned long profile_peak_mb = 0;
@@ -1423,7 +1423,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.descendants[i].pid == parent_pid) {
         found_ppidx = main_monitoring_data.descendants[i].profile_idx;
-        send_idx = found_ppidx;
         /*debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Found parent descendant[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)pid, (int)parent_pid, depth, i,
                     parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");*/
       }
@@ -1482,7 +1481,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           } else
             debug_write("[DEBUG] PID=%d (d:%d) Max memory profiles reached, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
         }
-        send_idx = profile_idx;
       } // if strip_ptr
     } // if new descendant and parent not tracked
 
@@ -1511,6 +1509,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       strip_ptr = cmdline = NULL;
     } // descendant_idx < 0
 
+    if (profile_idx >=0) send_idx = profile_idx;
+    else send_idx = parent_idx;
     /* Recursively find descendants of this descendant */
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
     total_rss_kb += child_rss_kb;
