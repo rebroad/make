@@ -1497,9 +1497,12 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.compile_count++;
           new_descendant = 1;
 
-          debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (%s: %s)\n",
-                      idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024,
-                      strip_ptr ? "file" : "cmd", strip_ptr ? strip_ptr : (cmdline ? cmdline : ""));
+          if (strip_ptr)
+            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (file: %s)\n",
+                        idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr);
+          else
+            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d rss=%luMB (cmd: %s)\n",
+                        idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, rss_kb / 1024, cmdline ? cmdline : "");
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
@@ -1629,8 +1632,10 @@ memory_monitor_thread_func (void *arg)
       char stat_path[512];
       FILE *stat_file;
 
-      /* Calculate total current usage from main monitoring data */
-      total_tracked_mb += main_monitoring_data.descendants[i].current_mb;
+      /* Calculate total current usage from main monitoring data for imminent memory calculation */
+      total_tracked_mb += (main_monitoring_data.descendants[i].current_mb < main_monitoring_data.descendants[i].old_peak_mb)
+                          ? main_monitoring_data.descendants[i].current_mb
+                          : main_monitoring_data.descendants[i].old_peak_mb;
 
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
@@ -1665,6 +1670,15 @@ memory_monitor_thread_func (void *arg)
       }
     }
 
+    /* Update shared memory with total current usage (calculated in the loop above) */
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
+    if (shared_data) {
+      pthread_mutex_lock (&shared_data->current_usage_mutex);
+      shared_data->current_compile_usage_mb = total_tracked_mb;
+      pthread_mutex_unlock (&shared_data->current_usage_mutex);
+    }
+#endif
+
     /* Save memory profiles if they've been updated (check shared dirty flag) */
     if (memory_profiles_dirty) {
       debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
@@ -1675,15 +1689,6 @@ memory_monitor_thread_func (void *arg)
 
     /* Always update status display */
     display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
-
-    /* Update shared memory with total current usage (calculated in the loop above) */
-#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-    if (shared_data) {
-      pthread_mutex_lock (&shared_data->current_usage_mutex);
-      shared_data->current_compile_usage_mb = total_tracked_mb;
-      pthread_mutex_unlock (&shared_data->current_usage_mutex);
-    }
-#endif
 
   } /* while (monitor_thread_running) */
 
