@@ -1421,7 +1421,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         found_parent = i;
         found_ppidx = main_monitoring_data.descendants[i].profile_idx;
         send_idx = found_ppidx;
-        debug_write("[DEBUG] PID=%d Found parent PPID=%d in descendants[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)pid, (int)parent_pid, i,
+        debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Found parent descendant[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)pid, (int)parent_pid, depth, i,
                     parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");
       }
       if (main_monitoring_data.descendants[i].pid == pid) {
@@ -1487,6 +1487,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           int idx = main_monitoring_data.compile_count;
           descendant_idx = idx;
           main_monitoring_data.descendants[idx].pid = pid;
+          main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
           main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
@@ -1519,8 +1520,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb) {
-        debug_write("[DEBUG] Memory increase[%d] PID %d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
-                  descendant_idx, (int)pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
+        debug_write("[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
+                  descendant_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
                   rss_kb / 1024, child_rss_kb / 1024, child_pids, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
         main_monitoring_data.descendants[descendant_idx].current_mb = new_current_mb;
         if (new_current_mb > main_monitoring_data.descendants[descendant_idx].peak_mb) {
