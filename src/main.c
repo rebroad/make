@@ -1608,6 +1608,7 @@ memory_monitor_thread_func (void *arg)
     int total_pids = 0;
     static unsigned long last_total_make_mem = 0;
     static int last_total_pids = 0;
+    static time_t last_save_time = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
@@ -1679,12 +1680,17 @@ memory_monitor_thread_func (void *arg)
     }
 #endif
 
-    /* Save memory profiles if they've been updated (check shared dirty flag) */
+    /* Save memory profiles if they've been updated (check shared dirty flag)
+     * Rate limit to once every 10 seconds */
     if (memory_profiles_dirty) {
-      debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
-      save_memory_profiles();
-      memory_profiles_dirty = 0;
-      /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
+      time_t current_time = time(NULL);
+      if (current_time - last_save_time >= 10) {
+        debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
+        save_memory_profiles();
+        last_save_time = current_time;
+        memory_profiles_dirty = 0;
+        /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
+      }
     }
 
     /* Always update status display */
