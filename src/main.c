@@ -1374,11 +1374,12 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
+    int found_ppidx = parent_idx;
+    int send_idx = parent_idx;
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
     unsigned long profile_peak_mb = 0;
     pid_t pid, check_pid = 0;
-    int send_idx = parent_idx;
     int profile_idx = -1;
     unsigned long child_rss_kb = 0;
     int child_pids = 0;
@@ -1420,15 +1421,21 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (total_pids) (*total_pids)++; // Increment the total PID count
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
+      if (main_monitoring_data.descendants[i].pid == parent_pid) {
+        found_ppidx = main_monitoring_data.descendants[i].profile_idx;
+        send_idx = found_ppidx;
+        /*debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Found parent descendant[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)pid, (int)parent_pid, depth, i,
+                    parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");*/
+      }
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
-                    i, parent_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+                    i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
                     main_monitoring_data.descendants[i].profile_idx >= 0 ?
                     memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "");
-        break;
       }
+      if (descendant_idx >= 0 && found_ppidx >= 0) break;
     }
 
     /*if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].profile_idx < 0) {
