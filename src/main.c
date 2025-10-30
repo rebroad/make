@@ -1368,6 +1368,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 
   while ((entry = readdir(proc_dir)) != NULL) {
     int descendant_idx = -1;
+    int found_parent = -1;
+    int found_ppidx = -1;
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
     unsigned long profile_peak_mb = 0;
@@ -1415,6 +1417,12 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (total_pids) (*total_pids)++; // Increment the total PID count
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
+      if (main_monitoring_data.descendants[i].pid == parent_pid) {
+        found_parent = i;
+        found_ppidx = main_monitoring_data.descendants[i].profile_idx;
+        debug_write("[DEBUG] Found parent PID %d in descendants[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)parent_pid, i,
+                    parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");
+      }
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
         debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
@@ -1422,8 +1430,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
                     *total_pids, main_monitoring_data.descendants[i].peak_mb,
                     main_monitoring_data.descendants[i].profile_idx >= 0 ?
                     memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
-        break;
       }
+      if (found_parent >= 0 && descendant_idx >= 0) break;
     }
 
     /*if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].profile_idx < 0) {
