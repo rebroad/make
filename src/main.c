@@ -1480,9 +1480,9 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
 
-          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d) (file: %s)\n",
+          debug_write("[DEBUG] New descendant[%d] pidx=%d ppidx=%d PID=%d PPID=%d (d:%d) rss=%luMB (file: %s)\n",
                       main_monitoring_data.compile_count -1, profile_idx, parent_idx, (int)pid,
-                      (int)parent_pid, depth, strip_ptr ? strip_ptr : "unknown");
+                      (int)parent_pid, depth, rss_kb / 1024, strip_ptr ? strip_ptr : "unknown");
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
@@ -1504,7 +1504,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     total_rss_kb += child_rss_kb;
     (*total_pids) += child_pids;
 
-    if (descendant_idx >= 0) {
+    if (descendant_idx >= 0 && profile_idx >= 0) {
       long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb) {
