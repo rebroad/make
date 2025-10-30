@@ -887,14 +887,21 @@ void
 record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int final)
 {
   time_t now;
+  unsigned long prev_peak_mb;
 
   /* Only update if we have a valid profile index */
   if (profile_idx < 0 || (unsigned int)profile_idx >= memory_profile_count) return;
 
-  if (memory_mb <= memory_profiles[profile_idx].peak_memory_mb && !final) return;
+  prev_peak_mb = memory_profiles[profile_idx].peak_memory_mb;
+
+  if (memory_mb <= prev_peak_mb && !final) return;
 
   now = time (NULL);
   fflush (stderr);
+  debug_write("[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
+              prev_peak_mb, memory_mb, final,
+              memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
+
   memory_profiles[profile_idx].peak_memory_mb = memory_mb;
   memory_profiles[profile_idx].last_used = now;
   memory_profiles_dirty = 1;
