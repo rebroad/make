@@ -881,8 +881,7 @@ static struct {
 } main_monitoring_data = {0};
 
 
-/* Record memory usage for a file using profile index (main make only)
-   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
+/* Record memory usage for a file using profile index (main make only) */
 void
 record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int final)
 {
@@ -1373,6 +1372,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
   }
 
   while ((entry = readdir(proc_dir)) != NULL) {
+    int new_descendant = 0;
     int descendant_idx = -1;
     int found_ppidx = parent_idx;
     int send_idx;
@@ -1495,11 +1495,11 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
           main_monitoring_data.descendants[idx].profile_idx = profile_idx;
           main_monitoring_data.compile_count++;
+          new_descendant = 1;
 
           debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (%s: %s)\n",
-                      main_monitoring_data.compile_count -1, (int)pid, (int)parent_pid, depth,
-                      profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr ? "file" : "cmd",
-                      strip_ptr ? strip_ptr : (cmdline ? cmdline : ""));
+                      idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024,
+                      strip_ptr ? "file" : "cmd", strip_ptr ? strip_ptr : (cmdline ? cmdline : ""));
         } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
@@ -1519,7 +1519,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (descendant_idx >= 0 && profile_idx >= 0) {
       long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
       // Existing descendant - update memory tracking
-      if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb) {
+      if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
         debug_write("[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
                   descendant_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
                   rss_kb / 1024, child_rss_kb / 1024, child_pids, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
