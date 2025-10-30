@@ -1429,15 +1429,19 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       }
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+        profile_idx = main_monitoring_data.descendants[i].profile_idx;
+        if (parent_idx != found_ppidx)
+          debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
                     i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
-                    main_monitoring_data.descendants[i].profile_idx >= 0 ?
-                    memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "");
+                    profile_idx >= 0 ? memory_profiles[profile_idx].filename : "");
       }
       if (descendant_idx >= 0 && found_ppidx >= 0) break;
     }
-    parent_idx = found_ppidx; // No idea why we're having to do this!!
+    if (descendant_idx < 0 && parent_idx != found_ppidx) {
+      debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Parent index mismatch: parent_idx=%d != found_ppidx=%d\n", (int)pid, (int)parent_pid, depth, parent_idx, found_ppidx);
+      parent_idx = found_ppidx; // No idea why we're having to do this!! (done after debugging above so we capture the oddity)
+    }
 
     /*if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].profile_idx < 0) {
       // We already know about it and it wasn't relevant to us (as no filename was extracted)
