@@ -1061,8 +1061,6 @@ save_memory_profiles (void)
   if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1) {
     perror ("rename .make_memory_cache.tmp");
     debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
-  } else {
-    debug_write("[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
   }
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
@@ -1417,9 +1415,10 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.descendants[i].pid == pid) {
         descendant_idx = i;
-        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d (d:%d): old_peak=%luMB, rss=%luMB tot_rss=%luMB (tot_pids=%u) peak=%luMB (file: %s)\n",
-                    i, parent_idx, (int)pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024, total_rss_kb / 1024,
-                    *total_pids, main_monitoring_data.descendants[i].peak_mb, main_monitoring_data.descendants[i].profile_idx >= 0 ?
+        debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+                    i, parent_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+                    main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
+                    main_monitoring_data.descendants[i].profile_idx >= 0 ?
                     memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "");
         break;
       }
