@@ -1437,6 +1437,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       }
       if (descendant_idx >= 0 && found_ppidx >= 0) break;
     }
+    parent_idx = found_ppidx; // No idea why we're having to do this!!
 
     /*if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].profile_idx < 0) {
       // We already know about it and it wasn't relevant to us (as no filename was extracted)
