@@ -23,7 +23,7 @@
 
 /* Non-blocking debug write helper - defined in memory.c for use across the codebase */
 void
-debug_write (const char *format, ...)
+debug_write (int log_level, const char *format, ...)
 {
   char buf[300];
   int len;
@@ -32,6 +32,10 @@ debug_write (const char *format, ...)
   struct timeval tv;
   time_t secs;
   int milliseconds;
+
+  /* Check if this log level should be printed */
+  if (log_level > memory_debug_level || memory_debug_level == MEM_DEBUG_NONE)
+    return;
 
   /* Get current time for timestamp */
   gettimeofday(&tv, NULL);
@@ -185,7 +189,7 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
   cmdline_file = fopen(cmdline_path, "r");
   if (!cmdline_file) {
     /* Debug: can't open cmdline file */
-    debug_write("[DEBUG] extract_filename_from_cmdline: failed to open %s for PID %d\n", cmdline_path, (int)pid);
+    debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] extract_filename_from_cmdline: failed to open %s for PID %d\n", cmdline_path, (int)pid);
     return NULL;
   }
 

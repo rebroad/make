@@ -278,6 +278,9 @@ double default_load_average = -1.0;
 /* Memory-aware job adjustment */
 int memory_aware_flag = -1;  /* -1 = not set, will check env */
 
+/* Memory debug level (0 = no debug output, higher = more verbose) */
+int memory_debug_level = MEM_DEBUG_NONE;
+
 /* Memory profiling variables */
 struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
 unsigned int memory_profile_count = 0;
@@ -561,6 +564,7 @@ static struct command_switch switches[] =
     { CHAR_MAX+13, flag, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
     { CHAR_MAX+14, flag_off, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
     { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
+    { CHAR_MAX+16, positive_int, &memory_debug_level, 1, 1, 0, 0, 0, 0, "memdebug", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
@@ -897,7 +901,7 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
 
   now = time (NULL);
   fflush (stderr);
-  debug_write("[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
+  debug_write(MEM_DEBUG_INFO, "[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
               prev_peak_mb, memory_mb, final,
               memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
 
@@ -953,7 +957,7 @@ init_shared_memory (void)
       pthread_mutexattr_t mutex_attr;
       shared_data->reserved_memory_mb = 0;
       shared_data->current_compile_usage_mb = 0;
-      debug_write("[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Created NEW shared memory: reserved_memory_mb=0, current_compile_usage_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
       pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
@@ -966,7 +970,7 @@ init_shared_memory (void)
       /* Only top-level make should reset shared memory to prevent stale data */
       if (makelevel == 0)
         {
-          debug_write("[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+          debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
           shared_data->reserved_memory_mb = 0;
           shared_data->current_compile_usage_mb = 0;
         }
@@ -986,12 +990,12 @@ cleanup_shared_memory (void)
   /* Safety check: only run in main make process */
   if (makelevel > 0)
     {
-      debug_write("[MEMORY] WARNING: cleanup_shared_memory() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      debug_write(MEM_DEBUG_ERROR, "[MEMORY] WARNING: cleanup_shared_memory() called in sub-make (makelevel=%u), ignoring\n", makelevel);
       fflush (stderr);
       return;
     }
 
-  debug_write("[DEBUG] cleanup_shared_memory() called (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+  debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] cleanup_shared_memory() called (PID=%d, makelevel=%u)\n", getpid(), makelevel);
 
   if (shared_data != NULL && shared_data != MAP_FAILED)
     {
@@ -1013,13 +1017,13 @@ cleanup_shared_memory (void)
       if (errno != ENOENT) {
         perror ("shm_unlink");
       } else {
-        debug_write("[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
+        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
       }
     } else {
-      debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
     }
   } else {
-    debug_write("[DEBUG] No shared memory to clean up (never created)\n");
+    debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] No shared memory to clean up (never created)\n");
   }
 #endif
 }
@@ -1034,7 +1038,7 @@ save_memory_profiles (void)
   /* Safety check: only run in main make process */
   if (makelevel > 0)
     {
-      debug_write("[MEMORY] WARNING: save_memory_profiles() called in sub-make (makelevel=%u), ignoring\n", makelevel);
+      debug_write(MEM_DEBUG_ERROR, "[MEMORY] WARNING: save_memory_profiles() called in sub-make (makelevel=%u), ignoring\n", makelevel);
       fflush (stderr);
       return;
     }
@@ -1046,7 +1050,7 @@ save_memory_profiles (void)
   f = fopen (".make_memory_cache.tmp", "w");
   if (!f)
     {
-      debug_write("[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
+      debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: Failed to open .make_memory_cache for writing\n");
       fflush (stderr);
       return;
     }
@@ -1066,7 +1070,7 @@ save_memory_profiles (void)
   /* Atomic file replacement: rename temp file (automatically replaces existing file) */
   if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1) {
     perror ("rename .make_memory_cache.tmp");
-    debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: Failed to rename temp file to cache file\n");
   }
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
@@ -1168,7 +1172,7 @@ reserve_memory_mb (long mb, const char *filepath)
   }
 
   if (!shared_data) {
-    debug_write("[DEBUG] Shared memory not initialized, cannot reserve/release memory\n");
+    debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Shared memory not initialized, cannot reserve/release memory\n");
     return;
   }
 
@@ -1182,14 +1186,14 @@ reserve_memory_mb (long mb, const char *filepath)
   }
   new_value = shared_data->reserved_memory_mb;
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-  debug_write("[MEMORY] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
+  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
        new_value, mb > 0 ? "+" : "", mb, filepath ? filepath : "?", getpid(), makelevel);
 #endif
 }
 
 /* Forward declaration for non-blocking debug output */
 #ifdef HAVE_PTHREAD_H
-void debug_write (const char *format, ...);
+void debug_write (int log_level, const char *format, ...);
 static void write_monitor_debug_file (const char *function_name, int saved_errno);
 static void reset_terminal_state (void);
 static void terminal_cleanup_atexit (void);
@@ -1367,7 +1371,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 
   proc_dir = opendir("/proc");
   if (!proc_dir) {
-    debug_write("[ERROR] Failed to open /proc directory\n");
+    debug_write(MEM_DEBUG_ERROR, "[ERROR] Failed to open /proc directory\n");
     return 0;
   }
 
@@ -1423,7 +1427,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         descendant_idx = i;
         profile_idx = main_monitoring_data.descendants[i].profile_idx;
         if (parent_idx != found_ppidx)
-          debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+          debug_write(MEM_DEBUG_MAX, "[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
                     i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
                     profile_idx >= 0 ? memory_profiles[profile_idx].filename : "");
@@ -1431,13 +1435,13 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       if (descendant_idx >= 0 && found_ppidx >= 0) break;
     }
     if (descendant_idx < 0 && parent_idx != found_ppidx) {
-      debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Parent index mismatch: parent_idx=%d != found_ppidx=%d\n", (int)pid, (int)parent_pid, depth, parent_idx, found_ppidx);
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d PPID=%d (d:%d) Parent index mismatch: parent_idx=%d != found_ppidx=%d\n", (int)pid, (int)parent_pid, depth, parent_idx, found_ppidx);
       parent_idx = found_ppidx; // No idea why we're having to do this!! (done after debugging above so we capture the oddity)
     }
 
     if (descendant_idx < 0 && parent_idx < 0) { // We'll need to track this new descendant
       if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
-        debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
+        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
         continue;
       }
 
@@ -1455,7 +1459,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           }
         }
         if (profile_idx < 0) {
-          debug_write("[DEBUG] PID=%d (d:%d) No memory profile found for '%s'\n", (int)pid, depth, strip_ptr);
+          debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d (d:%d) No memory profile found for '%s'\n", (int)pid, depth, strip_ptr);
           /* Create new memory profile if we have space */
           if (memory_profile_count < MAX_MEMORY_PROFILES) {
             memory_profiles[memory_profile_count].filename = xstrdup(strip_ptr);
@@ -1463,11 +1467,11 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
             memory_profiles[memory_profile_count].last_used = time(NULL);
             profile_idx = memory_profile_count;  /* Set the profile index for this new profile */
             memory_profile_count++;
-            debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+            debug_write(MEM_DEBUG_INFO, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
                        strip_ptr, 0, memory_profile_count);
             fflush(stderr);
           } else
-            debug_write("[DEBUG] PID=%d (d:%d) Max memory profiles reached, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
+            debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d (d:%d) Max memory profiles reached, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
         }
       } // if strip_ptr
     } // if new descendant and parent not tracked
@@ -1486,12 +1490,12 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           new_descendant = 1;
 
           if (strip_ptr)
-            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (file: %s)\n",
+            debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (file: %s)\n",
                         idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr);
           else
-            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d rss=%luMB (cmd: %s)\n",
+            debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d rss=%luMB (cmd: %s)\n",
                         idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, rss_kb / 1024, cmdline ? cmdline : "");
-        } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
+        } else debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
       /* Free the filename and cmdline if we extracted them */
@@ -1511,7 +1515,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       unsigned long new_current_mb = (rss_kb + child_rss_kb) / 1024;
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
-        debug_write("[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
+        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
                   descendant_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
                   rss_kb / 1024, child_rss_kb / 1024, child_pids, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
         main_monitoring_data.descendants[descendant_idx].current_mb = new_current_mb;
@@ -1568,13 +1572,13 @@ memory_monitor_thread_func (void *arg)
     /* If we couldn't get terminal width, disable memory display */
     if (!cached_term_width) {
       disable_memory_display = 1;
-      debug_write("[MONITOR] Could not obtain terminal width, disabling memory display\n");
+      debug_write(MEM_DEBUG_VERBOSE, "[MONITOR] Could not obtain terminal width, disabling memory display\n");
     }
   }
 #else
   /* No ioctl support, disable memory display */
   disable_memory_display = 1;
-  debug_write("[MONITOR] No ioctl support, disabling memory display\n");
+  debug_write(MEM_DEBUG_VERBOSE, "[MONITOR] No ioctl support, disabling memory display\n");
 #endif
 
   /* Use dup() to create private fd for monitor thread
@@ -1583,10 +1587,10 @@ memory_monitor_thread_func (void *arg)
    * in child processes with "write error". Instead, we rely on write() being fast. */
   monitor_stderr_fd = dup(STDERR_FILENO);
   if (monitor_stderr_fd >= 0) {
-    debug_write("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
+    debug_write(MEM_DEBUG_VERBOSE, "[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
                 monitor_stderr_fd, STDERR_FILENO, cached_term_width, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
   } else {
-    debug_write("[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
+    debug_write(MEM_DEBUG_ERROR, "[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
   }
 
   while (monitor_thread_running) {
@@ -1603,14 +1607,14 @@ memory_monitor_thread_func (void *arg)
     free_mb = get_memory_stats(&mem_percent);
 
     if (mem_percent == 0) {
-      debug_write("[ERROR] Could not determine memory usage!\n");
+      debug_write(MEM_DEBUG_ERROR, "[ERROR] Could not determine memory usage!\n");
       return NULL;
     }
 
     /* Update peak memory by finding descendants starting from our PID */
     total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids) / 1024;
     if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
-      debug_write("[DEBUG] Total PIDs found: %u, total make memory: %uMB\n", total_pids, total_make_mem);
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Total PIDs found: %u, total make memory: %uMB\n", total_pids, total_make_mem);
       last_total_make_mem = total_make_mem;
       last_total_pids = total_pids;
     }
@@ -1635,7 +1639,7 @@ memory_monitor_thread_func (void *arg)
           reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
                            profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");*/
         if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
-          debug_write("[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
+          debug_write(MEM_DEBUG_INFO, "[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid, memory_profiles[profile_idx].filename,
                       main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].peak_mb);
 
@@ -1666,7 +1670,7 @@ memory_monitor_thread_func (void *arg)
     if (memory_profiles_dirty) {
       time_t current_time = time(NULL);
       if (current_time - last_save_time >= 10) {
-        debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
+        debug_write(MEM_DEBUG_INFO, "[MEMORY] Dirty flag detected, saving profiles...\n");
         save_memory_profiles();
         last_save_time = current_time;
         memory_profiles_dirty = 0;
@@ -1823,9 +1827,9 @@ stop_memory_monitor (int immediate)
   write_monitor_debug_file(immediate ? "stop_memory_monitor_immediate (entry)" : "stop_memory_monitor", saved_errno);
 
   if (immediate)
-    debug_write("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+    debug_write(MEM_DEBUG_VERBOSE, "[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
   else
-    debug_write("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
+    debug_write(MEM_DEBUG_VERBOSE, "[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
 
   monitor_thread_running = 0;
   if (!immediate)
@@ -2789,7 +2793,7 @@ main (int argc, char **argv, char **envp)
       char *top_cwd = getcwd(NULL, 0);
       define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
                               top_cwd, o_env, 0, NILF);
-      debug_write("[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
     }
 
   /* Initialize shared memory for inter-process communication (only if memory monitoring is enabled) */
