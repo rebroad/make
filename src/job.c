@@ -3956,7 +3956,7 @@ load_memory_profiles (void)
   /* Check if already loaded */
   if (memory_profiles_loaded)
     {
-      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Memory profiles already loaded, skipping\n", getpid());
+      debug_write(MEM_DEBUG_INFO, "[DEBUG] PID=%d Memory profiles already loaded, skipping\n", getpid());
       return;
     }
 
@@ -3972,12 +3972,12 @@ load_memory_profiles (void)
           /* Change back to original directory */
           if (chdir(cwd) != 0)
             {
-              debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Warning: Failed to restore original directory\n", getpid());
+              debug_write(MEM_DEBUG_INFO, "[DEBUG] PID=%d Warning: Failed to restore original directory\n", getpid());
             }
         }
       else
         {
-          debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Failed to change to top-level directory, using current directory\n", getpid());
+          debug_write(makelevel > 0 ? MEM_DEBUG_ERROR : MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Failed to change to top-level directory, using current directory\n", getpid());
           f = fopen(".make_memory_cache", "r");
         }
     }
@@ -3985,13 +3985,13 @@ load_memory_profiles (void)
     {
       /* Fallback to current directory if environment variable not available */
       if (makelevel != 0)
-        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
+        debug_write(MEM_DEBUG_ERROR, "[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
       f = fopen (".make_memory_cache", "r");
     }
 
   if (!f)
     {
-      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] PID=%d Memory cache file not found, marking as loaded\n", getpid());
+      debug_write(MEM_DEBUG_INFO, "[DEBUG] PID=%d Memory cache file not found, marking as loaded\n", getpid());
       memory_profiles_loaded = 1; /* Mark as loaded even if no cache */
       free(cwd);
       return; /* No cache yet */
