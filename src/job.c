@@ -1099,12 +1099,17 @@ reap_children (int block, int err)
 
       /* Release reserved memory for this file if any was reserved */
       if (c->file->profile_idx >= 0) {
-        unsigned long peak_mb = memory_profiles[c->file->profile_idx].peak_memory_mb;
-        const char *profile_filename = memory_profiles[c->file->profile_idx].filename;
-        if (peak_mb > 0) {
-          reserve_memory_mb(-(long)peak_mb, profile_filename ? profile_filename : c->file->name);
-          debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed)\n",
-                      peak_mb, profile_filename ? profile_filename : c->file->name);
+        if (memory_profiles == NULL) {
+          debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: reap_children: memory_profiles is NULL but profile_idx=%d\n",
+                      c->file->profile_idx);
+        } else {
+          unsigned long peak_mb = memory_profiles[c->file->profile_idx].peak_memory_mb;
+          const char *profile_filename = memory_profiles[c->file->profile_idx].filename;
+          if (peak_mb > 0) {
+            reserve_memory_mb(-(long)peak_mb, profile_filename ? profile_filename : c->file->name);
+            debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed)\n",
+                        peak_mb, profile_filename ? profile_filename : c->file->name);
+          }
         }
         c->file->profile_idx = -1;
       }
@@ -1520,9 +1525,16 @@ start_job_command (struct child *child)
           profile_idx = get_file_profile_idx (filename);
 
           if (profile_idx >= 0) {
-            /* Get memory requirement from profile */
-            required_mb = memory_profiles[profile_idx].peak_memory_mb;
-          } else {
+            if (memory_profiles == NULL) {
+              debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: start_job_command: memory_profiles is NULL but profile_idx=%d\n",
+                          profile_idx);
+              /* Fall through to estimation */
+            } else {
+              /* Get memory requirement from profile */
+              required_mb = memory_profiles[profile_idx].peak_memory_mb;
+            }
+          }
+          if (profile_idx < 0 || memory_profiles == NULL) {
             /* No profile - estimate using heuristics */
             required_mb = get_file_memory_estimate (filename);
           }
@@ -4053,10 +4065,16 @@ calculate_memory_stats (const char *caller_file, int caller_line)
 
   //debug_write("[DEBUG] PID=%d calculate_memory_stats() called from %s:%d\n", getpid(), caller_file, caller_line);
 
+  if (memory_profile_count == 0) return;  /* No profiles loaded yet */
+  if (memory_profiles == NULL) {
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: calculate_memory_stats called but memory_profiles is NULL (count=%u)\n",
+                memory_profile_count);
+    return;
+  }
+
   /* Allocate array for median calculation */
   ratios = (unsigned long *)malloc (memory_profile_count * sizeof(unsigned long));
-  if (!ratios)
-    return;
+  if (!ratios) return;
 
   for (i = 0; i < memory_profile_count; i++)
     {
@@ -4110,10 +4128,15 @@ get_file_profile_idx (const char *filename)
     return -1;
 
   /* Lazy loading: load memory profiles if not already loaded */
-  if (!memory_profiles_loaded)
-    {
-      load_memory_profiles ();
+  if (!memory_profiles_loaded) load_memory_profiles ();
+
+  if (memory_profiles == NULL) {
+    if (memory_profile_count > 0) {
+      debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: get_file_profile_idx: memory_profiles is NULL but memory_profile_count=%u\n",
+                  memory_profile_count);
     }
+    return -1;  /* Array not allocated yet */
+  }
 
   /* Look up the file in our profiles */
   for (i = 0; i < memory_profile_count; i++)

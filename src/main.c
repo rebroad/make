@@ -934,6 +934,11 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
 
   /* Only update if we have a valid profile index */
   if (profile_idx < 0 || (unsigned int)profile_idx >= memory_profile_count) return;
+  if (memory_profiles == NULL) {
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: record_file_memory_usage_by_index called but memory_profiles is NULL (profile_idx=%d, count=%u)\n",
+                profile_idx, memory_profile_count);
+    return;
+  }
 
   prev_peak_mb = memory_profiles[profile_idx].peak_memory_mb;
 
@@ -1094,6 +1099,13 @@ save_memory_profiles (void)
       fflush (stderr);
       return;
     }
+
+  if (memory_profiles == NULL) {
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: save_memory_profiles called but memory_profiles is NULL (count=%u)\n",
+                memory_profile_count);
+    fclose (f);
+    return;
+  }
 
   for (i = 0; i < memory_profile_count; i++) {
     /* Skip entries with peak_memory_mb=0 to avoid saving useless data */
@@ -1490,13 +1502,19 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 
       if (strip_ptr) {
         /* Look up memory profile for this filename */
-        for (i = 0; i < memory_profile_count; i++) {
-          if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
-            profile_peak_mb = memory_profiles[i].peak_memory_mb;
-            profile_idx = i;  /* Remember the profile index */
-            //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %uMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
-            break;
+        if (memory_profiles != NULL) {
+          for (i = 0; i < memory_profile_count; i++) {
+            if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
+              profile_peak_mb = memory_profiles[i].peak_memory_mb;
+              profile_idx = i;  /* Remember the profile index */
+              //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %uMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
+              break;
+            }
           }
+        } else if (memory_profile_count > 0) {
+          /* Error: we have profiles but array not allocated */
+          debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: memory_profiles is NULL but memory_profile_count=%u (PID=%d)\n",
+                      memory_profile_count, (int)getpid());
         }
         if (profile_idx < 0) {
           /* Grow array if needed */
