@@ -1415,7 +1415,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_pids)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_jobs)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1447,7 +1447,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     pid_t pid, check_pid = 0;
     int profile_idx = -1;
     unsigned long child_rss_kb = 0;
-    unsigned int child_pids = 0;
+    unsigned int child_jobs = 0;
 
     cmdline = NULL;  /* Reset cmdline for each PID */
 
@@ -1476,7 +1476,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     /* Found a descendant! Track its memory */
 
     total_rss_kb += rss_kb; // Add this descendant's RSS to the total
-    if (total_pids) (*total_pids)++; // Increment the total PID count
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       if (main_monitoring_data.descendants[i].pid == parent_pid) {
@@ -1584,17 +1583,18 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (profile_idx >=0) send_idx = profile_idx;
     else send_idx = parent_idx;
     /* Recursively find descendants of this descendant */
-    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
+    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_jobs);
     total_rss_kb += child_rss_kb;
-    *total_pids += child_pids;
+    *total_jobs += child_jobs;
 
     if (descendant_idx >= 0 && profile_idx >= 0) {
       unsigned long new_current_mb = (rss_kb + child_rss_kb) / 1024;
+      if (total_jobs) (*total_jobs)++; // Increment the total job count
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
-        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
+        debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_jobs=%u (file: %s)\n",
                   descendant_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
-                  rss_kb / 1024, child_rss_kb / 1024, child_pids, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
+                  rss_kb / 1024, child_rss_kb / 1024, child_jobs, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
         main_monitoring_data.descendants[descendant_idx].current_mb = new_current_mb;
         if (new_current_mb > main_monitoring_data.descendants[descendant_idx].peak_mb) {
           main_monitoring_data.descendants[descendant_idx].peak_mb = new_current_mb;
@@ -1673,9 +1673,9 @@ memory_monitor_thread_func (void *arg)
   while (monitor_thread_running) {
     unsigned long total_tracked_mb = 0;
     unsigned int total_make_mem = 0;
-    unsigned int total_pids = 0;
+    unsigned int total_jobs = 0;
     static unsigned int last_total_make_mem = 0;
-    static unsigned int last_total_pids = 0;
+    static unsigned int last_total_jobs = 0;
     static time_t last_save_time = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
@@ -1689,11 +1689,11 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids) / 1024;
-    if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
-      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Total PIDs found: %u, total make memory: %uMB\n", total_pids, total_make_mem);
+    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_jobs) / 1024;
+    if (total_make_mem != last_total_make_mem || total_jobs != last_total_jobs) {
+      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Total jobs found: %u, total make memory: %uMB\n", total_jobs, total_make_mem);
       last_total_make_mem = total_make_mem;
-      last_total_pids = total_pids;
+      last_total_jobs = total_jobs;
     }
 
     /* Check for exited descendants and calculate total current usage in one loop */
