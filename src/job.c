@@ -1098,7 +1098,7 @@ reap_children (int block, int err)
 
       /* Release reserved memory for this file if any was reserved */
       if (c->file->reserved_mb > 0) {
-        reserve_memory_mb(-(long)c->file->reserved_mb, c->file->name);
+        //reserve_memory_mb(-(long)c->file->reserved_mb, c->file->name);
         debug_write("[MEMORY] Released %luMB reservation for %s (job completed)\n",
                     c->file->reserved_mb, c->file->name);
         c->file->reserved_mb = 0;
@@ -1481,18 +1481,14 @@ start_job_command (struct child *child)
     {
       /* Fork the child process.  */
     run_local:
-      unsigned long required_mb = 0;
       block_sigs ();
 
       child->remote = 0;
 
-#ifdef VMS
-      child->pid = child_execute_job ((struct childbase *)child, 1, argv);
-
-#else
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       if (memory_aware_flag) {
+        unsigned long required_mb = 0;
         unsigned long free_mb;
 
         /* Check if this is an "echo Compiling ..." command */
@@ -1570,19 +1566,18 @@ start_job_command (struct child *child)
         }
       }
 
+#ifdef VMS
+      child->pid = child_execute_job ((struct childbase *)child, 1, argv);
+
+#else
+
       /* Now actually fork the child */
       jobserver_pre_child (ANY_SET (flags, COMMANDS_RECURSE));
 
       child->pid = child_execute_job ((struct childbase *)child,
                                       child->good_stdin, argv);
 
-      if (required_mb > 0)
-        debug_write("[DEBUG] After child_execute_job: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
-
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
-
-      if (required_mb > 0)
-        debug_write("[DEBUG] After jobserver_post_child: Child PID=%d command=%s reserved=%luMB\n", child->pid, argv[0], required_mb);
 
 #endif /* !VMS */
     }

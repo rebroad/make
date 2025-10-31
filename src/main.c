@@ -25,6 +25,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "debug.h"
 #include "getopt.h"
 #include "shuffle.h"
+#include "memory.h"
 
 #include <assert.h>
 #ifdef HAVE_SYS_MMAN_H
@@ -123,6 +124,7 @@ double atof ();
 static void clean_jobserver (int status);
 static void print_data_base (void);
 static void print_version (void);
+static void print_compiled_features (const char *precede);
 static void decode_switches (int argc, const char **argv,
                              enum variable_origin origin);
 static void decode_env_switches (const char *envar, size_t len,
@@ -303,8 +305,6 @@ init_memory_monitoring_env (void)
       else
         memory_aware_flag = 1;  /* Default: ON */
     }
-
-
 }
 
 /* List of directories given with -C switches.  */
@@ -873,159 +873,37 @@ static struct {
   unsigned int compile_count;
   struct {
     pid_t pid;
-    int idx;                // maps to the memory_profile entry
-    unsigned long current_mb; /* Current memory usage for this specific PID */
-    int relevant;           // true if this PID is compiling a tracked source file
+    unsigned long peak_mb;
+    unsigned long old_peak_mb; // TODO redundant if reserved_mb freed in job.c
+    unsigned long current_mb;
+    int profile_idx;        /* Index into memory_profiles array, -1 if not found */
   } descendants[MAX_TRACKED_DESCENDANTS];
 } main_monitoring_data = {0};
 
-/* Helper function to update an existing compilation entry */
-static void
-update_compilation_entry (int idx, unsigned long rss_kb)
-{ // TODO - do we actually need this wrapper at all?
-  unsigned long current_mb = rss_kb / 1024;
-  int profile_idx;
 
-  /* Store current memory usage for this specific PID */
-  main_monitoring_data.descendants[idx].current_mb = current_mb;
-
-  /* Update the memory profile peak if this is higher */
-  profile_idx = main_monitoring_data.descendants[idx].idx;
-  if (profile_idx >= 0 && profile_idx < (int)memory_profile_count) {
-    if (current_mb > memory_profiles[profile_idx].peak_memory_mb) {
-      memory_profiles[profile_idx].peak_memory_mb = current_mb;
-    }
-  }
-}
-
-/* Record memory usage for a file (main make only)
-   idx: Index into memory_profiles array (-1 for new entry)
-   filepath: Filename (used only if idx == -1)
-   memory_mb: Memory usage in MB
-   final: 0=During compilation (update current_mb), 1=On child exit (update peak_memory_mb) */
+/* Record memory usage for a file using profile index (main make only) */
 void
-record_file_memory_usage (int idx, const char *filepath, unsigned long memory_mb, int final)
+record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int final)
 {
   time_t now;
+  unsigned long prev_peak_mb;
+
+  /* Only update if we have a valid profile index */
+  if (profile_idx < 0 || (unsigned int)profile_idx >= memory_profile_count) return;
+
+  prev_peak_mb = memory_profiles[profile_idx].peak_memory_mb;
+
+  if (memory_mb <= prev_peak_mb && !final) return;
 
   now = time (NULL);
+  fflush (stderr);
+  debug_write("[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
+              prev_peak_mb, memory_mb, final,
+              memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
 
-  /* If idx is valid, update existing profile */
-  if (idx >= 0 && idx < (int)memory_profile_count)
-    {
-      if (final) {
-        /* Final update: decrement pid_count and only show message on last PID */
-        if (memory_profiles[idx].pid_count > 0) {
-          memory_profiles[idx].pid_count--;
-        }
-
-        /* Only show final peak message when this is the last PID for this file */
-        if (memory_profiles[idx].pid_count == 0) {
-          debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
-                      memory_profiles[idx].filename, memory_profiles[idx].old_peak_mb, memory_mb);
-          memory_profiles[idx].peak_memory_mb = memory_mb;
-        }
-      } else {
-        /* During compilation: update peak if this is higher */
-        if (memory_mb > memory_profiles[idx].peak_memory_mb) {
-          memory_profiles[idx].peak_memory_mb = memory_mb;
-        }
-      }
-      memory_profiles[idx].last_used = now;
-      memory_profiles_dirty = 1;
-      return;
-    }
-
-  /* idx == -1: Look for existing profile by filename */
-  if (filepath) {
-    unsigned int i;
-    for (i = 0; i < memory_profile_count; i++) {
-      if (memory_profiles[i].filename && strcmp (memory_profiles[i].filename, filepath) == 0) {
-        if (final) {
-          /* Final update: decrement pid_count and only show message on last PID */
-          if (memory_profiles[i].pid_count > 0) {
-            memory_profiles[i].pid_count--;
-          }
-
-          /* Only show final peak message when this is the last PID for this file */
-          if (memory_profiles[i].pid_count == 0) {
-            debug_write("[MEMORY] Updated final peak for %s: %lu -> %luMB\n",
-                        filepath, memory_profiles[i].old_peak_mb, memory_mb);
-            memory_profiles[i].peak_memory_mb = memory_mb;
-          }
-        } else {
-          /* During compilation: update peak if this is higher */
-          if (memory_mb > memory_profiles[i].peak_memory_mb) {
-            memory_profiles[i].peak_memory_mb = memory_mb;
-          }
-        }
-        memory_profiles[i].last_used = now;
-        memory_profiles_dirty = 1;
-        return;
-      }
-    }
-  }
-
-  /* Add new profile if we have space */
-  if (memory_profile_count < MAX_MEMORY_PROFILES) {
-    memory_profiles[memory_profile_count].filename = xstrdup (filepath);
-    memory_profiles[memory_profile_count].peak_memory_mb = memory_mb;
-    memory_profiles[memory_profile_count].old_peak_mb = 0;  /* Will be set on first compilation */
-    memory_profiles[memory_profile_count].pid_count = final ? 0 : 1;  /* Start with 1 PID if during compilation */
-    memory_profiles[memory_profile_count].last_used = now;
-    memory_profile_count++;
-    memory_profiles_dirty = 1;
-    debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-           filepath, memory_mb, memory_profile_count);
-    fflush (stderr);
-
-    /* New file added, recalculate statistics */
-    if (final) calculate_memory_stats (__FILE__, __LINE__);
-  }
-}
-
-/* Helper function to add a new compilation entry */
-static int
-add_compilation_entry (pid_t pid, unsigned long rss_kb, unsigned long old_peak_mb, const char *filepath)
-{
-  // TODO - we we actually need this wrapper at all?
-  int idx;
-  int profile_idx = -1;
-
-  (void)old_peak_mb;  /* Parameter not used in current implementation */
-
-  if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS)
-    return 0;  /* No space available */
-
-  /* Find or create memory profile for this file */
-  if (filepath) {
-    /* Look for existing profile */
-    unsigned int i;
-    for (i = 0; i < memory_profile_count; i++) {
-      if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, filepath) == 0) {
-        profile_idx = i;
-        /* Set old_peak_mb to the current peak before starting new compilation */
-        memory_profiles[i].old_peak_mb = memory_profiles[i].peak_memory_mb;
-        /* Increment pid_count for this new compilation */
-        memory_profiles[i].pid_count++;
-        break;
-      }
-    }
-    /* If not found, record_file_memory_usage will create it */
-    if (profile_idx == -1) {
-      record_file_memory_usage(-1, filepath, rss_kb / 1024, 0);  /* final=0 */
-      profile_idx = memory_profile_count - 1;  /* New profile was added */
-    }
-  }
-
-  idx = main_monitoring_data.compile_count;
-  main_monitoring_data.descendants[idx].pid = pid;
-  main_monitoring_data.descendants[idx].idx = profile_idx;
-  main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
-  main_monitoring_data.descendants[idx].relevant = (filepath != NULL);  /* Relevant if we have a source filename */
-  main_monitoring_data.compile_count++;
-
-  return 1;  /* Success */
+  memory_profiles[profile_idx].peak_memory_mb = memory_mb;
+  memory_profiles[profile_idx].last_used = now;
+  memory_profiles_dirty = 1;
 }
 
 /* Forward declarations */
@@ -1128,14 +1006,21 @@ cleanup_shared_memory (void)
     }
 
   /* Remove the shared memory object from the system */
-  if (shm_unlink (SHARED_MEMORY_NAME) == -1)
-    {
-      perror ("shm_unlink");
-    }
-  else
-    {
+  /* Only try to unlink if we actually created shared memory */
+  if (shared_memory_fd != -1) {
+    if (shm_unlink (SHARED_MEMORY_NAME) == -1) {
+      /* Only report error if it's not "No such file" (ENOENT) */
+      if (errno != ENOENT) {
+        perror ("shm_unlink");
+      } else {
+        debug_write("[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
+      }
+    } else {
       debug_write("[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
     }
+  } else {
+    debug_write("[DEBUG] No shared memory to clean up (never created)\n");
+  }
 #endif
 }
 
@@ -1166,30 +1051,23 @@ save_memory_profiles (void)
       return;
     }
 
-  for (i = 0; i < memory_profile_count; i++)
-    {
-      fprintf (f, "%lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);
-      /*debug_write("[MEMORY] Wrote: %lu %ld %s\n",
-               memory_profiles[i].peak_memory_mb,
-               (long)memory_profiles[i].last_used,
-               memory_profiles[i].filename);*/
-    }
+  for (i = 0; i < memory_profile_count; i++) {
+    /* Skip entries with peak_memory_mb=0 to avoid saving useless data */
+    if (memory_profiles[i].peak_memory_mb == 0) continue;
+
+    fprintf (f, "%lu %ld %s\n",
+            memory_profiles[i].peak_memory_mb,
+            (long)memory_profiles[i].last_used,
+            memory_profiles[i].filename);
+  }
 
   fclose (f);
 
   /* Atomic file replacement: rename temp file (automatically replaces existing file) */
-  if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1)
-    {
-      perror ("rename .make_memory_cache.tmp");
-      debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
-    }
-  else
-    {
-      debug_write("[DEBUG] Successfully replaced cache file atomically (PID=%d)\n", getpid());
-    }
+  if (rename (".make_memory_cache.tmp", ".make_memory_cache") == -1) {
+    perror ("rename .make_memory_cache.tmp");
+    debug_write("[MEMORY] ERROR: Failed to rename temp file to cache file\n");
+  }
 
   /* debug_write("[MEMORY] Saved %u profiles to .make_memory_cache\n", memory_profile_count); */
   /* fflush (stderr); */
@@ -1200,7 +1078,7 @@ unsigned long
 get_imminent_memory_mb (void)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long total_current = 0;
+  unsigned long total_tracked_mb = 0;
   unsigned long result = 0;
   unsigned long reserved_mb = 0;
 
@@ -1219,18 +1097,18 @@ get_imminent_memory_mb (void)
       pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
 
       pthread_mutex_lock (&shared_data->current_usage_mutex);
-      total_current = shared_data->current_compile_usage_mb;
+      total_tracked_mb = shared_data->current_compile_usage_mb;
       pthread_mutex_unlock (&shared_data->current_usage_mutex);
-      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_current, getpid());
+      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, current_compile_usage_mb=%lu (PID=%d)\n", reserved_mb, total_tracked_mb, getpid());
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
   /*debug_write("[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
   debug_write("  Reserved memory (active processes): %luMB\n", reserved_mb);
-  debug_write("  Current compile usage: %luMB\n", total_current);*/
+  debug_write("  Current compile usage: %luMB\n", total_tracked_mb);*/
 
   /* Imminent = reserved peak memory - current usage */
-  result = reserved_mb > total_current ? reserved_mb - total_current : 0;
+  result = reserved_mb > total_tracked_mb ? reserved_mb - total_tracked_mb : 0;
 
   //fprintf (stderr, "  Final result: %luMB\n", result);
 
@@ -1282,7 +1160,7 @@ void
 reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long old_value;
+  unsigned long old_value, new_value;
 
   if (memory_aware_flag && shared_data == NULL) {
       if (init_shared_memory () != 0)
@@ -1296,26 +1174,25 @@ reserve_memory_mb (long mb, const char *filepath)
 
   pthread_mutex_lock (&shared_data->reserved_memory_mutex);
   old_value = shared_data->reserved_memory_mb;
-  if (mb > 0) {
-    /* Reserve memory */
-    shared_data->reserved_memory_mb += mb;
-    debug_write("[DEBUG] Reserved memory: %lu MB -> %lu MB (+%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, mb, filepath ? filepath : "unknown", getpid(), makelevel);
-  } else if (mb < 0) {
-    /* Release memory (ensure we don't go below zero) */
+  if (mb > 0) shared_data->reserved_memory_mb += mb;
+  else if (mb < 0) {
     unsigned long release_mb = (unsigned long)(-mb);
-    if (shared_data->reserved_memory_mb >= release_mb)
-      shared_data->reserved_memory_mb -= release_mb;
-    else
-      shared_data->reserved_memory_mb = 0;
-    debug_write("[DEBUG] Released memory: %lu MB -> %lu MB (-%lu MB) for %s (PID=%d, makelevel=%u)\n", old_value, shared_data->reserved_memory_mb, release_mb, filepath ? filepath : "unknown", getpid(), makelevel);
+    if (shared_data->reserved_memory_mb >= release_mb) shared_data->reserved_memory_mb -= release_mb;
+    else shared_data->reserved_memory_mb = 0;
   }
+  new_value = shared_data->reserved_memory_mb;
   pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
+  debug_write("[MEMORY] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
+       new_value, mb > 0 ? "+" : "", mb, filepath ? filepath : "?", getpid(), makelevel);
 #endif
 }
 
 /* Forward declaration for non-blocking debug output */
 #ifdef HAVE_PTHREAD_H
 void debug_write (const char *format, ...);
+static void write_monitor_debug_file (const char *function_name, int saved_errno);
+static void reset_terminal_state (void);
+static void terminal_cleanup_atexit (void);
 
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
@@ -1437,7 +1314,13 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
   /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-  output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+  /* CRITICAL: Only use cursor save/restore if stderr AND stdout are TTYs - avoid corruption when piped */
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
+    output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
+  } else {
+    /* Not a TTY or being piped - just use simple newline to avoid corrupting piped output */
+    output_len = snprintf(output_buf, sizeof(output_buf), "%s\n", status);
+  }
 
   if (output_len > 0 && output_len < (int)sizeof(output_buf)) {
     write_count++;
@@ -1451,86 +1334,57 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
     /* write() to monitor's private non-blocking fd - never blocks! */
     written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
-    (void)written;  /* Ignore errors - if it fails, next iteration will try again */
+    if (written < 0 && (errno == EPIPE || errno == EBADF)) {
+      int saved_errno = errno;
+      write_monitor_debug_file ("display_memory_status (broken pipe detected)", saved_errno);
+      /* Pipe broken (e.g., less exited) - reset terminal and stop monitoring */
+      reset_terminal_state ();
+      status_line_shown = 0;
+      monitor_thread_running = 0;  /* Stop the monitor thread */
+      write_monitor_debug_file ("display_memory_status (monitor stopped)", saved_errno);
+      return;
+    }
     status_line_shown = 1;
   }
-}
-
-/* Non-blocking debug write helper - uses monitor's private fd! */
-void
-debug_write (const char *format, ...)
-{
-  char buf[512];
-  int len;
-  ssize_t written;
-  va_list args;
-  int fd = (monitor_stderr_fd >= 0) ? monitor_stderr_fd : STDERR_FILENO;
-#if DEBUG_MEMORY_MONITOR
-  static int eagain_count = 0;
-#endif
-
-  va_start (args, format);
-  len = vsnprintf (buf, sizeof(buf), format, args);
-  va_end (args);
-
-  if (len > 0 && len < (int)sizeof(buf))
-    {
-      written = write (fd, buf, len);
-#if DEBUG_MEMORY_MONITOR
-      if (written < 0 && errno == EAGAIN)
-        {
-          eagain_count++;
-          /* Every 100 EAGAIN errors, try to report it (might fail too!) */
-          if (eagain_count % 100 == 0)
-            {
-              char eagain_msg[64];
-              int eagain_len;
-              ssize_t eagain_written;
-
-              eagain_len = snprintf (eagain_msg, sizeof(eagain_msg), "[EAGAIN x%d]", eagain_count);
-              eagain_written = write (fd, eagain_msg, eagain_len);
-              (void)eagain_written;  /* Ignore - this is a best-effort debug message */
-            }
-        }
-#else
-      (void)written;
-#endif
-    }
 }
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static void find_child_descendants(pid_t parent_pid)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
   char stat_path[512];
   FILE *stat_file;
   char line[512];
-  unsigned long rss_kb = 0;
-  pid_t pid, check_pid;
-  unsigned long profile_peak_mb = 0;
+  unsigned long total_rss_kb = 0;
   unsigned int i;
+  char *cmdline;  /* Cmdline for current PID being processed */
+  int term_width = cached_term_width > 0 ? cached_term_width : 80;
+  size_t max_cmdline_len = term_width > 100 ? (size_t)(term_width - 100) : 20;  /* Leave room for message prefix, min 20 */
 
-  //debug_write("[DEBUG] find_child_descendants called for parent_pid=%d\n", (int)parent_pid);
+  //debug_write("[EXTRA] run find_child_descendants parent_pid=%d (depth=%d, parent_idx=%d)\n", (int)parent_pid, depth, parent_idx);
 
   proc_dir = opendir("/proc");
   if (!proc_dir) {
     debug_write("[ERROR] Failed to open /proc directory\n");
-    return;
+    return 0;
   }
 
   while ((entry = readdir(proc_dir)) != NULL) {
+    int new_descendant = 0;
     int descendant_idx = -1;
-    char cmdline_path[512];
-    FILE *cmdline_file;
-    char cmdline_buf[4096];
-    ssize_t cmdline_len;
-    char *ptr;
-    char *end;
-    char *start;
-    size_t len;
-    char source_filename[1000];
+    int found_ppidx = parent_idx;
+    int send_idx;
+    char *strip_ptr = NULL;
+    unsigned long rss_kb = 0;
+    unsigned long profile_peak_mb = 0;
+    pid_t pid, check_pid = 0;
+    int profile_idx = -1;
+    unsigned long child_rss_kb = 0;
+    int child_pids = 0;
+
+    cmdline = NULL;  /* Reset cmdline for each PID */
 
     /* Skip non-numeric entries */
     if (!isdigit(entry->d_name[0])) continue;
@@ -1542,9 +1396,6 @@ static void find_child_descendants(pid_t parent_pid)
     snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)pid);
     stat_file = fopen(stat_path, "r");
     if (!stat_file) continue;
-
-    check_pid = 0;
-    rss_kb = 0;
 
     while (fgets(line, sizeof(line), stat_file)) {
       sscanf(line, "PPid: %d", &check_pid);
@@ -1559,158 +1410,122 @@ static void find_child_descendants(pid_t parent_pid)
 
     /* Found a descendant! Track its memory */
 
+    total_rss_kb += rss_kb; // Add this descendant's RSS to the total
+    if (total_pids) (*total_pids)++; // Increment the total PID count
     // Do we already know about this descendant?
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
-      if (main_monitoring_data.descendants[i].pid == pid) {
-        descendant_idx = main_monitoring_data.descendants[i].idx; // HERE
-        /*debug_write("[DEBUG] Found existing descendant[%d] PID %d: old_peak=%luMB, current_rss=%luMB new_peak=%luMB (file: %s)\n",
-                    i, (int)pid, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
-                    main_monitoring_data.descendants[i].peak_mb,
-                    main_monitoring_data.descendants[i].filename ? main_monitoring_data.descendants[i].filename : "unknown");*/
-        break;
+      if (main_monitoring_data.descendants[i].pid == parent_pid) {
+        found_ppidx = main_monitoring_data.descendants[i].profile_idx;
+        /*debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Found parent descendant[%d] ppidx=%d found_ppidx=%d (file: %s)\n", (int)pid, (int)parent_pid, depth, i,
+                    parent_idx, found_ppidx, found_ppidx >= 0 ? memory_profiles[found_ppidx].filename : "unknown");*/
       }
+      if (main_monitoring_data.descendants[i].pid == pid) {
+        descendant_idx = i;
+        profile_idx = main_monitoring_data.descendants[i].profile_idx;
+        if (parent_idx != found_ppidx)
+          debug_write("[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+                    i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+                    main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
+                    profile_idx >= 0 ? memory_profiles[profile_idx].filename : "");
+      }
+      if (descendant_idx >= 0 && found_ppidx >= 0) break;
+    }
+    if (descendant_idx < 0 && parent_idx != found_ppidx) {
+      debug_write("[DEBUG] PID=%d PPID=%d (d:%d) Parent index mismatch: parent_idx=%d != found_ppidx=%d\n", (int)pid, (int)parent_pid, depth, parent_idx, found_ppidx);
+      parent_idx = found_ppidx; // No idea why we're having to do this!! (done after debugging above so we capture the oddity)
     }
 
-    if (descendant_idx >= 0 && !main_monitoring_data.descendants[descendant_idx].relevant) {
-      // We already know about this descendant
-      return;
-    }
+    if (descendant_idx < 0 && parent_idx < 0) { // We'll need to track this new descendant
+      if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
+        debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
+        continue;
+      }
+
+      // Extract cmdline to see if we need to track it
+      strip_ptr = extract_filename_from_cmdline(pid, parent_pid, depth, "main", &cmdline, max_cmdline_len);
+
+      if (strip_ptr) {
+        /* Look up memory profile for this filename */
+        for (i = 0; i < memory_profile_count; i++) {
+          if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
+            profile_peak_mb = memory_profiles[i].peak_memory_mb;
+            profile_idx = i;  /* Remember the profile index */
+            //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
+            break;
+          }
+        }
+        if (profile_idx < 0) {
+          debug_write("[DEBUG] PID=%d (d:%d) No memory profile found for '%s'\n", (int)pid, depth, strip_ptr);
+          /* Create new memory profile if we have space */
+          if (memory_profile_count < MAX_MEMORY_PROFILES) {
+            memory_profiles[memory_profile_count].filename = xstrdup(strip_ptr);
+            memory_profiles[memory_profile_count].peak_memory_mb = rss_kb / 1024;
+            memory_profiles[memory_profile_count].last_used = time(NULL);
+            profile_idx = memory_profile_count;  /* Set the profile index for this new profile */
+            memory_profile_count++;
+            debug_write("[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
+                       strip_ptr, 0, memory_profile_count);
+            fflush(stderr);
+          } else
+            debug_write("[DEBUG] PID=%d (d:%d) Max memory profiles reached, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
+        }
+      } // if strip_ptr
+    } // if new descendant and parent not tracked
 
     if (descendant_idx < 0) {
-      // This new descendant is not yet tracked
-      if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
-        debug_write("[DEBUG] Max tracked compilations reached, skipping descendant PID %d\n",
-                    (int)pid);
-        return;
-      }
+      if (parent_idx < 0) {
+        // Add new entry for this compilation process
+        if (main_monitoring_data.compile_count < MAX_TRACKED_DESCENDANTS) {
+          int idx = main_monitoring_data.compile_count;
+          descendant_idx = idx;
+          main_monitoring_data.descendants[idx].pid = pid;
+          main_monitoring_data.descendants[idx].current_mb = rss_kb / 1024;
+          main_monitoring_data.descendants[idx].old_peak_mb = profile_peak_mb;
+          main_monitoring_data.descendants[idx].profile_idx = profile_idx;
+          main_monitoring_data.compile_count++;
+          new_descendant = 1;
 
-      /* Extract filename for this new descendant */
-      snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", (int)pid);
-      cmdline_file = fopen(cmdline_path, "r");
-      if (cmdline_file) {
-        cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
-        fclose(cmdline_file);
+          if (strip_ptr)
+            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (file: %s)\n",
+                        idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr);
+          else
+            debug_write("[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d rss=%luMB (cmd: %s)\n",
+                        idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, rss_kb / 1024, cmdline ? cmdline : "");
+        } else debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
+      } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
-        if (cmdline_len > 0) {
-          /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
-          for (i = 0; i < cmdline_len - 1; i++)
-            if (cmdline_buf[i] == '\0')
-              cmdline_buf[i] = ' ';
-          cmdline_buf[cmdline_len] = '\0';
+      /* Free the filename and cmdline if we extracted them */
+      if (strip_ptr) free(strip_ptr);
+      if (cmdline) free(cmdline);
+      strip_ptr = cmdline = NULL;
+    } // descendant_idx < 0
 
-          /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
-          end = NULL;
-          ptr = cmdline_buf;
-          while (*ptr) {
-            char *candidate_end = NULL;
-            char *candidate_start;
-            int has_slash;
-
-            /* Check for file extensions */
-            if (strncmp(ptr, ".cpp", 4) == 0)
-              candidate_end = ptr + 3;
-            else if (strncmp(ptr, ".cc", 3) == 0)
-              candidate_end = ptr + 2;
-            else if (strncmp(ptr, ".c", 2) == 0 && (ptr[2] == ' ' || ptr[2] == '\0'))
-              candidate_end = ptr + 1;
-
-            if (candidate_end) {
-              /* Backtrack to previous space */
-              candidate_start = ptr;
-              while (candidate_start > cmdline_buf && candidate_start[-1] != ' ')
-                candidate_start--;
-
-              /* Check if this token contains "/" (i.e., it's a filepath) */
-              has_slash = 0;
-              start = candidate_start;
-              while (start <= candidate_end) {
-                if (*start == '/') {
-                  has_slash = 1;
-                  break;
-                }
-                start++;
-              }
-
-              /* Only keep candidates with "/" */
-              if (has_slash)
-                end = candidate_end;
-            }
-
-            ptr++;
-          }
-
-          source_filename[0] = '\0';
-          if (end) {
-            /* Backtrack to find start of filepath */
-            start = end;
-            while (start > cmdline_buf && start[-1] != ' ')
-              start--;
-
-            len = (end - start) + 1;
-            if (len < 1000 && len > 0) {
-              char *strip_ptr;
-
-              memcpy(source_filename, start, len);
-              source_filename[len] = '\0';
-
-              /* Strip leading "../" sequences */
-              strip_ptr = source_filename;
-              while (strncmp(strip_ptr, "../", 3) == 0)
-                strip_ptr += 3;
-
-              /* Store the filename mapped to THIS descendant PID */
-              /* Look up memory profile for this filename */
-              debug_write("[DEBUG] Looking up memory profile for '%s' (profile_count=%u)\n", strip_ptr, memory_profile_count);
-              for (i = 0; i < memory_profile_count; i++) {
-                if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
-                  profile_peak_mb = memory_profiles[i].peak_memory_mb;
-                  debug_write("[DEBUG] Found memory profile for %s: %luMB\n", strip_ptr, profile_peak_mb);
-                  break;
-                }
-              }
-              /* Add new entry for this descendant */
-              if (add_compilation_entry(pid, rss_kb, profile_peak_mb, strip_ptr))
-                debug_write("[DEBUG] New descendant[%d] PID %d: rss=%luKB, profile_peak=%luMB (file: %s)\n",
-                            main_monitoring_data.compile_count - 1, (int)pid, rss_kb, profile_peak_mb, strip_ptr);
-            } // len between 0 and 1000
-          } // if (end)
-          if (source_filename[0] == '\0')
-          {
-            char tmp_filename[64];
-            FILE *f;
-            snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_cmdline_%d.txt", (int)pid);
-            f = fopen(tmp_filename, "w");
-            if (f) {
-              fprintf(f, "%s", cmdline_buf);
-              fclose(f);
-            }
-          }
-        } // if (cmdline_len > 0)
-      } // if (cmdline_file)
-    } // if new descendant
-
-    if (descendant_idx >= 0) {
-      // Existing descendant - update memory tracking
-      int profile_idx = main_monitoring_data.descendants[descendant_idx].idx;
-      const char *file_name = "unknown";
-      if (profile_idx >= 0 && profile_idx < (int)memory_profile_count && memory_profiles[profile_idx].filename) {
-        file_name = memory_profiles[profile_idx].filename;
-      }
-      debug_write("[DEBUG] Descendant[%d] PID %d memory increased: current_rss=%luMB (file: %s)\n",
-                  descendant_idx, (int)pid, rss_kb / 1024, file_name);
-      update_compilation_entry(descendant_idx, rss_kb);
-    } else {
-      /* Add new entry for this irrelevant descendant so we don't try to extract filename next time */
-      if (add_compilation_entry(pid, rss_kb, 0, NULL))
-        debug_write("[DEBUG] New irrelevant descendant[%d] PID %d: rss=%luKB (first time seen)\n",
-                    main_monitoring_data.compile_count - 1, (int)pid, rss_kb);
-    }
-
+    if (profile_idx >=0) send_idx = profile_idx;
+    else send_idx = parent_idx;
     /* Recursively find descendants of this descendant */
-    find_child_descendants(pid);
+    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_pids);
+    total_rss_kb += child_rss_kb;
+    *total_pids += child_pids;
+
+    if (descendant_idx >= 0 && profile_idx >= 0) {
+      long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
+      // Existing descendant - update memory tracking
+      if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
+        debug_write("[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
+                  descendant_idx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[descendant_idx].current_mb, new_current_mb,
+                  rss_kb / 1024, child_rss_kb / 1024, child_pids, profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
+        main_monitoring_data.descendants[descendant_idx].current_mb = new_current_mb;
+        if (new_current_mb > main_monitoring_data.descendants[descendant_idx].peak_mb) {
+          main_monitoring_data.descendants[descendant_idx].peak_mb = new_current_mb;
+          record_file_memory_usage_by_index(profile_idx, new_current_mb, 0);
+        }
+      }
+    }
   } // while reading /proc/PID/status
 
   closedir(proc_dir);
+
+  return total_rss_kb;
 }
 
 /* Memory monitoring thread - runs independently! */
@@ -1722,7 +1537,7 @@ memory_monitor_thread_func (void *arg)
   unsigned long free_mb;
   unsigned int i;
 
-  debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
+  //debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
   static time_t last_debug = 0;
   time_t now;
@@ -1769,14 +1584,19 @@ memory_monitor_thread_func (void *arg)
    * in child processes with "write error". Instead, we rely on write() being fast. */
   monitor_stderr_fd = dup(STDERR_FILENO);
   if (monitor_stderr_fd >= 0) {
-    debug_write("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d\n",
-                monitor_stderr_fd, STDERR_FILENO, cached_term_width);
+    debug_write("[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
+                monitor_stderr_fd, STDERR_FILENO, cached_term_width, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
   } else {
     debug_write("[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
   }
 
   while (monitor_thread_running) {
-    unsigned long total_current = 0;
+    unsigned long total_tracked_mb = 0;
+    unsigned long total_make_mem = 0;
+    int total_pids = 0;
+    static unsigned long last_total_make_mem = 0;
+    static int last_total_pids = 0;
+    static time_t last_save_time = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
@@ -1789,75 +1609,80 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    find_child_descendants(getpid());
+    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids);
+    if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
+      debug_write("[DEBUG] Total PIDs found: %d, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
+      last_total_make_mem = total_make_mem;
+      last_total_pids = total_pids;
+    }
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
       FILE *stat_file;
-      int profile_idx = main_monitoring_data.descendants[i].idx;
 
-      /* Calculate total current usage from main monitoring data */
-      total_current += main_monitoring_data.descendants[i].current_mb;
+      /* Calculate total current usage from main monitoring data for imminent memory calculation */
+      total_tracked_mb += (main_monitoring_data.descendants[i].current_mb < main_monitoring_data.descendants[i].old_peak_mb)
+                          ? main_monitoring_data.descendants[i].current_mb
+                          : main_monitoring_data.descendants[i].old_peak_mb;
 
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
       stat_file = fopen(stat_path, "r");
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
-        if (profile_idx >= 0 && profile_idx < (int)memory_profile_count &&
-            memory_profiles[profile_idx].filename &&
-            memory_profiles[profile_idx].peak_memory_mb > 1) {
+        int profile_idx = main_monitoring_data.descendants[i].profile_idx;
+        if (main_monitoring_data.descendants[i].old_peak_mb > 0)
+          reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
+                           profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
+        if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
+          debug_write("[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
+                      (int)main_monitoring_data.descendants[i].pid, memory_profiles[profile_idx].filename,
+                      main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].peak_mb);
 
-          /* Release the reserved memory now that process has exited */
-          if (memory_profiles[profile_idx].old_peak_mb > 0) {
-            //reserve_memory_mb(-(long)memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].filename);
-            debug_write("[MEMORY] Process exited. old_peak=%luMB, new_peak=%luMB filename=%s\n",
-                        memory_profiles[profile_idx].old_peak_mb, memory_profiles[profile_idx].peak_memory_mb,
-                        memory_profiles[profile_idx].filename);
-          }
-
-          /* Record final memory usage for disk operations */
-          record_file_memory_usage(profile_idx, NULL, main_monitoring_data.descendants[i].current_mb, 1);  /* final=1 */
+          /* Record final memory usage for disk operations using direct profile update */
+          record_file_memory_usage_by_index(profile_idx, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
         }
 
         /* Remove this entry by shifting remaining entries */
-        if (i < main_monitoring_data.compile_count - 1) {
+        if (i < main_monitoring_data.compile_count - 1)
           memmove(&main_monitoring_data.descendants[i], &main_monitoring_data.descendants[i + 1],
                   (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.descendants[0]));
-        }
         main_monitoring_data.compile_count--;
         i--;  /* Check this index again since we shifted */
-      } else {
-        fclose(stat_file);
-      }
+      } else fclose(stat_file);
     }
-
-    /* Save memory profiles if they've been updated (check shared dirty flag) */
-    if (memory_profiles_dirty) {
-      debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
-      save_memory_profiles();
-      memory_profiles_dirty = 0;
-      /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
-    }
-
-    /* Always update status display */
-    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
 
     /* Update shared memory with total current usage (calculated in the loop above) */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
     if (shared_data) {
       pthread_mutex_lock (&shared_data->current_usage_mutex);
-      shared_data->current_compile_usage_mb = total_current;
+      shared_data->current_compile_usage_mb = total_tracked_mb;
       pthread_mutex_unlock (&shared_data->current_usage_mutex);
     }
 #endif
+
+    /* Save memory profiles if they've been updated (check shared dirty flag)
+     * Rate limit to once every 10 seconds */
+    if (memory_profiles_dirty) {
+      time_t current_time = time(NULL);
+      if (current_time - last_save_time >= 10) {
+        debug_write("[MEMORY] Dirty flag detected, saving profiles...\n");
+        save_memory_profiles();
+        last_save_time = current_time;
+        memory_profiles_dirty = 0;
+        /* debug_write ("[MEMORY] Profiles saved, dirty flag cleared\n"); */
+      }
+    }
+
+    /* Update status display */
+    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
 
   } /* while (monitor_thread_running) */
 
   /* If we exit the loop, show why */
 #if DEBUG_MEMORY_MONITOR
-  debug_write ("\n[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
+  debug_write ("[THREAD_EXIT] Loop exited, monitor_thread_running=%d\n", monitor_thread_running);
 #endif
 
   /* Close our private stderr fd */
@@ -1894,7 +1719,10 @@ start_memory_monitor (void)
   /* Load existing memory profiles from cache */
   load_memory_profiles ();
 
-  debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
+  /* Register terminal cleanup function for atexit() - runs when process exits */
+  atexit(terminal_cleanup_atexit);
+
+  //debug_write("[DEBUG] Starting memory monitor thread (PID=%d)\n", (int)getpid());
 
 #ifdef HAVE_PTHREAD_H
   if (pthread_create (&memory_monitor_thread, NULL, memory_monitor_thread_func, NULL) != 0)
@@ -1909,46 +1737,120 @@ start_memory_monitor (void)
 }
 #endif
 
-/* Stop the memory monitoring thread */
-#ifdef HAVE_PTHREAD_H
+/* Reset terminal state - tries multiple methods to ensure it works */
 static void
-stop_memory_monitor (void)
+reset_terminal_state (void)
 {
-  if (!memory_aware_flag || !monitor_thread_running)
-    return;
+  const char reset_seq[] = "\r\033[K\n";  /* Reset cursor, clear line, newline - simple and reliable */
+  ssize_t written;
+  int tty_fd = -1;
 
-  /* DEBUG: Show we're stopping */
-#if DEBUG_MEMORY_MONITOR
-  debug_write ("\n[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
-#endif
+  /* Try the monitor's stderr fd first if available */
+  if (monitor_stderr_fd >= 0) {
+    written = write(monitor_stderr_fd, reset_seq, sizeof(reset_seq) - 1);
+    if (written >= 0) {
+      write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd success)", 0);
+      return;
+    }
+    write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd failed)", errno);
+  }
 
-  monitor_thread_running = 0;
-  pthread_join (memory_monitor_thread, NULL);
-  /* Clear status line - simple newline to avoid ANSI escape sequences that can mess up TTY */
-  if (status_line_shown) {
-    ssize_t written = write (monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, "\n", 1);
-    (void)written;
-    status_line_shown = 0;
+  /* Fallback: try /dev/tty directly */
+  tty_fd = open("/dev/tty", O_WRONLY);
+  if (tty_fd >= 0) {
+    written = write(tty_fd, reset_seq, sizeof(reset_seq) - 1);
+    close(tty_fd);
+    if (written >= 0) {
+      write_monitor_debug_file ("reset_terminal_state (/dev/tty success)", 0);
+      return;
+    }
+    write_monitor_debug_file ("reset_terminal_state (/dev/tty failed)", errno);
+  } else {
+    write_monitor_debug_file ("reset_terminal_state (/dev/tty open failed)", errno);
+  }
+
+  /* Last resort: try stderr */
+  written = write(STDERR_FILENO, reset_seq, sizeof(reset_seq) - 1);
+  if (written >= 0) {
+    write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO success)", 0);
+  } else {
+    write_monitor_debug_file ("reset_terminal_state (STDERR_FILENO failed)", errno);
   }
 }
-#endif
 
-/* Immediate stop for signal handlers - don't wait for thread join */
+/* Terminal cleanup function for atexit() - runs when process exits */
+static void
+terminal_cleanup_atexit (void)
+{
+  /* Only try to reset if we were showing status lines AND both stdout/stderr are TTYs */
+  if (status_line_shown && isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
+    write_monitor_debug_file ("terminal_cleanup_atexit", errno);
+    reset_terminal_state();
+  }
+}
+
+/* Write debug info to file (works even when stderr is broken) */
+static void
+write_monitor_debug_file (const char *function_name, int saved_errno)
+{
+  char debug_filename[64];
+  FILE *debug_file;
+
+  snprintf(debug_filename, sizeof(debug_filename), "/tmp/make_monitor_debug_%d.txt", (int)getpid());
+  debug_file = fopen (debug_filename, "a");
+  if (debug_file) {
+      time_t now = time(NULL);
+      struct tm *tm_info = localtime(&now);
+      char buf[16];
+      if (tm_info) strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
+      else strncpy(buf, "??:??:??", sizeof(buf));
+      fprintf (debug_file, "[%s] %s called: PID=%d (PPID=%d), makelevel=%u, errno=%d (%s), status_line_shown=%d, monitor_thread_running=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
+               buf, function_name, (int)getpid(), (int)getppid(), makelevel,
+               saved_errno, saved_errno ? strerror(saved_errno) : "0",
+               status_line_shown, monitor_thread_running, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
+    fclose (debug_file);
+  }
+}
+
+/* Stop the memory monitoring thread */
 #ifdef HAVE_PTHREAD_H
 void
-stop_memory_monitor_immediate (void)
+stop_memory_monitor (int immediate)
 {
-  if (!memory_aware_flag || !monitor_thread_running)
-    return;
+  int saved_errno = errno;  /* Save errno at entry */
 
-  /* DEBUG: Show we're stopping (from signal handler) */
-  debug_write ("\n[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+  if (!memory_aware_flag || !monitor_thread_running) return;
 
-  /* Just set the flag - don't pthread_join in a signal handler! */
+  write_monitor_debug_file(immediate ? "stop_memory_monitor_immediate (entry)" : "stop_memory_monitor", saved_errno);
+
+  if (immediate)
+    debug_write("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+  else
+    debug_write("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
+
   monitor_thread_running = 0;
+  if (!immediate)
+    pthread_join (memory_monitor_thread, NULL);
 
-  /* Give thread a moment to see the flag and exit */
-  usleep (10000);  /* 10ms */
+  saved_errno = errno;  /* Capture errno after join or flag set */
+
+  /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
+  /* But only if both stdout/stderr are TTYs - don't try to reset if we're piped */
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO))
+    reset_terminal_state ();
+  status_line_shown = 0;
+
+  write_monitor_debug_file(immediate ? "stop_memory_monitor_immediate (exit)" : "stop_memory_monitor (exit)", saved_errno);
+
+  /* Give thread a moment to see the flag and exit (only for immediate/signal handlers) */
+  if (immediate) usleep (10000);  /* 10ms */
+}
+
+/* Minimal wrapper for atexit() - required because atexit needs void (*)(void) signature */
+static void
+stop_memory_monitor_atexit (void)
+{
+  stop_memory_monitor(0);
 }
 #else
 /* Stub functions for non-POSIX systems */
@@ -1959,19 +1861,13 @@ start_memory_monitor (void)
   memory_aware_flag = 0;
 }
 
-static void
-stop_memory_monitor (void)
-{
-  /* No-op on non-POSIX systems */
-}
-
 void
-stop_memory_monitor_immediate (void)
+stop_memory_monitor (int immediate)
 {
   /* No-op on non-POSIX systems */
+  (void)immediate; /* Unused parameter */
 }
 #endif
-
 
 static void
 decode_debug_flags (void)
@@ -2386,7 +2282,7 @@ main (int argc, char **argv, char **envp)
     atexit (close_stdout);
   /* Only top-level make should stop the monitor thread */
   if (makelevel == 0)
-    atexit (stop_memory_monitor);
+    atexit (stop_memory_monitor_atexit);
 #endif
 
   output_init (&make_sync);
@@ -3072,15 +2968,7 @@ main (int argc, char **argv, char **envp)
   init_memory_monitoring_env ();
 
   /* Start memory monitoring thread if memory-aware mode is enabled (top-level only) */
-  if (memory_aware_flag && makelevel == 0)
-    {
-      char msg[256];
-      sprintf (msg, _("Memory-aware job pausing enabled (starting with -j%u)"), job_slots);
-      OS (message, 0, "%s", msg);
-
-      /* Start the background monitoring thread */
-      start_memory_monitor ();
-    }
+  if (memory_aware_flag && makelevel == 0) start_memory_monitor ();
 
   /* The extra indirection through $(MAKE_COMMAND) is done
      for hysterical raisins.  */
@@ -4955,7 +4843,92 @@ print_version (void)
 %sThere is NO WARRANTY, to the extent permitted by law.\n"),
             precede, precede, precede);
 
+  /* Print compiled features for debugging */
+  print_compiled_features (precede);
+
   printed_version = 1;
+}
+
+/* Print compiled features for debugging purposes */
+static void
+print_compiled_features (const char *precede)
+{
+  printf ("%sCompiled features:\n", precede);
+
+  /* System headers */
+#ifdef HAVE_SYS_MMAN_H
+  printf ("%s  ✓ sys/mman.h (memory mapping)\n", precede);
+#else
+  printf ("%s  ✗ sys/mman.h (memory mapping)\n", precede);
+#endif
+
+#ifdef HAVE_PTHREAD_H
+  printf ("%s  ✓ pthread.h (POSIX threads)\n", precede);
+#else
+  printf ("%s  ✗ pthread.h (POSIX threads)\n", precede);
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
+  printf ("%s  ✓ sys/ioctl.h (terminal control)\n", precede);
+#else
+  printf ("%s  ✗ sys/ioctl.h (terminal control)\n", precede);
+#endif
+
+#ifdef HAVE_DIRENT_H
+  printf ("%s  ✓ dirent.h (directory operations)\n", precede);
+#else
+  printf ("%s  ✗ dirent.h (directory operations)\n", precede);
+#endif
+
+  /* Additional important features */
+#ifdef HAVE_SHM_OPEN
+  printf ("%s  ✓ shm_open (shared memory)\n", precede);
+#else
+  printf ("%s  ✗ shm_open (shared memory)\n", precede);
+#endif
+
+#ifdef HAVE_POSIX_SPAWN
+  printf ("%s  ✓ posix_spawn (process spawning)\n", precede);
+#else
+  printf ("%s  ✗ posix_spawn (process spawning)\n", precede);
+#endif
+
+#ifdef MAKE_JOBSERVER
+  printf ("%s  ✓ job server support\n", precede);
+#else
+  printf ("%s  ✗ job server support\n", precede);
+#endif
+
+#ifdef MAKE_LOAD
+  printf ("%s  ✓ load average support\n", precede);
+#else
+  printf ("%s  ✗ load average support\n", precede);
+#endif
+
+#ifdef MAKE_SYMLINKS
+  printf ("%s  ✓ symbolic link timestamp checking\n", precede);
+#else
+  printf ("%s  ✗ symbolic link timestamp checking\n", precede);
+#endif
+
+  /* Platform-specific features */
+#ifdef WINDOWS32
+  printf ("%s  ✓ Windows32 API\n", precede);
+#else
+  printf ("%s  ✗ Windows32 API\n", precede);
+#endif
+
+#ifdef VMS
+  printf ("%s  ✓ VMS support\n", precede);
+#else
+  printf ("%s  ✗ VMS support\n", precede);
+#endif
+
+#ifdef _AMIGA
+  printf ("%s  ✓ Amiga support\n", precede);
+#else
+  printf ("%s  ✗ Amiga support\n", precede);
+#endif
 }
 
 /* Print a bunch of information about this and that.  */
@@ -5032,7 +5005,9 @@ die (int status)
 
       if (makelevel == 0) {
         save_memory_profiles ();
+#if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
         cleanup_shared_memory ();
+#endif
       }
 
       if (print_version_flag)

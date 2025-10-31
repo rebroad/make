@@ -771,13 +771,11 @@ extern void calculate_memory_stats (const char *caller_file, int caller_line);
 extern int memory_aware_flag;
 
 /* Memory profiling structures */
-#define MAX_MEMORY_PROFILES 10000
+#define MAX_MEMORY_PROFILES 20000
 struct file_memory_profile
 {
   char *filename;
   unsigned long peak_memory_mb;
-  unsigned long old_peak_mb;      /* Previous peak before this compilation */
-  unsigned int pid_count;         /* Number of active PIDs compiling this file */
   time_t last_used;  /* Unix timestamp of last compilation */
 };
 extern struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
