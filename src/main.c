@@ -1756,7 +1756,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update status display */
-    display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
+    display_memory_status (mem_percent, free_mb, 0, total_jobs);
 
   } /* while (monitor_thread_running) */
 
