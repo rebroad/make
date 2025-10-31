@@ -1299,8 +1299,8 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Use the total_tracked count we already calculated (no need to scan /proc again) */
 
   snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
-           spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-           green, display_slots, reset, gray, total_tracked, reset);
+            spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
+            green, display_slots, reset, gray, total_tracked, reset);
 
   /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
   term_width = cached_term_width;
@@ -1378,7 +1378,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     int send_idx;
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
-    unsigned int profile_peak_mb = 0;
+    unsigned long profile_peak_mb = 0;
     pid_t pid, check_pid = 0;
     int profile_idx = -1;
     unsigned long child_rss_kb = 0;
@@ -1450,7 +1450,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           if (memory_profiles[i].filename && strcmp(memory_profiles[i].filename, strip_ptr) == 0) {
             profile_peak_mb = memory_profiles[i].peak_memory_mb;
             profile_idx = i;  /* Remember the profile index */
-            //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %luMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
+            //debug_write("[DEBUG] PID=%d (d:%d) Found memory profile for %s: %uMB\n", (int)pid, depth, strip_ptr, profile_peak_mb);
             break;
           }
         }
@@ -1508,7 +1508,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     *total_pids += child_pids;
 
     if (descendant_idx >= 0 && profile_idx >= 0) {
-      long unsigned int new_current_mb = (rss_kb + child_rss_kb) / 1024;
+      unsigned long new_current_mb = (rss_kb + child_rss_kb) / 1024;
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
         debug_write("[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_pids=%u (file: %s)\n",
@@ -1534,7 +1534,7 @@ static void *
 memory_monitor_thread_func (void *arg)
 {
   unsigned int mem_percent;
-  unsigned int free_mb;
+  unsigned long free_mb;
 
   //debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
@@ -1590,7 +1590,7 @@ memory_monitor_thread_func (void *arg)
   }
 
   while (monitor_thread_running) {
-    unsigned int total_tracked_mb = 0;
+    unsigned long total_tracked_mb = 0;
     unsigned int total_make_mem = 0;
     unsigned int total_pids = 0;
     static unsigned int last_total_make_mem = 0;
@@ -1631,9 +1631,9 @@ memory_monitor_thread_func (void *arg)
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
         int profile_idx = main_monitoring_data.descendants[i].profile_idx;
-        if (main_monitoring_data.descendants[i].old_peak_mb > 0)
+        /*if (main_monitoring_data.descendants[i].old_peak_mb > 0)
           reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
-                           profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
+                           profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");*/
         if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
           debug_write("[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid, memory_profiles[profile_idx].filename,

@@ -113,7 +113,7 @@ struct file
                                     --shuffle passes through the graph.  */
     unsigned int snapped:1;     /* True if the deps of this file have been
                                    secondary expanded.  */
-    unsigned long reserved_mb;   /* Memory reserved for this file's compilation (MB) */
+    int profile_idx;   /* Index into memory_profiles array, -1 if not found */
   };
 
 

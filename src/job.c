@@ -227,6 +227,7 @@ pid2str (pid_t pid)
 
 static void free_child (struct child *);
 static void start_job_command (struct child *child);
+static unsigned long get_file_memory_estimate (const char *filename);
 static int load_too_high (void);
 static int job_next_command (struct child *);
 static int start_waiting_job (struct child *);
@@ -1097,11 +1098,15 @@ reap_children (int block, int err)
         job_slots_used -= c->jobslot;
 
       /* Release reserved memory for this file if any was reserved */
-      if (c->file->reserved_mb > 0) {
-        //reserve_memory_mb(-(long)c->file->reserved_mb, c->file->name);
-        debug_write("[MEMORY] Released %luMB reservation for %s (job completed)\n",
-                    c->file->reserved_mb, c->file->name);
-        c->file->reserved_mb = 0;
+      if (c->file->profile_idx >= 0) {
+        unsigned long peak_mb = memory_profiles[c->file->profile_idx].peak_memory_mb;
+        const char *profile_filename = memory_profiles[c->file->profile_idx].filename;
+        if (peak_mb > 0) {
+          reserve_memory_mb(-(long)peak_mb, profile_filename ? profile_filename : c->file->name);
+          debug_write("[MEMORY] Released %luMB reservation for %s (job completed)\n",
+                      peak_mb, profile_filename ? profile_filename : c->file->name);
+        }
+        c->file->profile_idx = -1;
       }
 
       /* Remove the child from the chain and free it.  */
@@ -1490,6 +1495,7 @@ start_job_command (struct child *child)
       if (memory_aware_flag) {
         unsigned long required_mb = 0;
         unsigned long free_mb;
+        int profile_idx = -1;
 
         /* Check if this is an "echo Compiling ..." command */
         if (argv[0] && argv[1] && argv[2] &&
@@ -1510,8 +1516,16 @@ start_job_command (struct child *child)
             filename = clean_filename;
           }
 
-          /* Look up memory requirement */
-          required_mb = get_file_memory_requirement (filename);
+          /* Look up profile index */
+          profile_idx = get_file_profile_idx (filename);
+
+          if (profile_idx >= 0) {
+            /* Get memory requirement from profile */
+            required_mb = memory_profiles[profile_idx].peak_memory_mb;
+          } else {
+            /* No profile - estimate using heuristics */
+            required_mb = get_file_memory_estimate (filename);
+          }
 
           if (required_mb > 0) {
             int waited = 0;
@@ -1538,7 +1552,7 @@ start_job_command (struct child *child)
 
                 /* We have enough memory! Reserve it and proceed */
                 reserve_memory_mb (required_mb, filename);
-                child->file->reserved_mb = required_mb;
+                child->file->profile_idx = profile_idx;
 
                 break;
               }
@@ -3995,7 +4009,7 @@ load_memory_profiles (void)
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;
               memory_profiles[memory_profile_count].last_used = (time_t)timestamp;
-              //debug_write("[DEBUG] Loaded profile %u: '%s' -> %lu MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
+              //debug_write("[DEBUG] Loaded profile %u: '%s' -> %u MB (PID=%d, makelevel=%u)\n", memory_profile_count, filename, peak_mb, getpid(), makelevel);
               memory_profile_count++;
             }
         }
@@ -4084,14 +4098,13 @@ calculate_memory_stats (const char *caller_file, int caller_line)
   free (ratios);
 }
 
-unsigned long
-get_file_memory_requirement (const char *filename)
+int
+get_file_profile_idx (const char *filename)
 {
   unsigned int i;
-  struct stat st;
 
   if (!filename)
-    return 0;
+    return -1;
 
   /* Lazy loading: load memory profiles if not already loaded */
   if (!memory_profiles_loaded)
@@ -4100,22 +4113,31 @@ get_file_memory_requirement (const char *filename)
     }
 
   /* Look up the file in our profiles */
-  //debug_write("[DEBUG] PID=%d Looking up memory requirement for: '%s' (makelevel=%u)\n", getpid(), filename, makelevel);
-  //debug_write("[DEBUG] PID=%d Loaded %u memory profiles\n", getpid(), memory_profile_count);
   for (i = 0; i < memory_profile_count; i++)
     {
       if (memory_profiles[i].filename)
         {
-          //debug_write("[DEBUG] Profile %u: '%s' -> %lu MB\n", i, memory_profiles[i].filename, memory_profiles[i].peak_memory_mb);
           if (strcmp (memory_profiles[i].filename, filename) == 0)
             {
-              //debug_write("[DEBUG] PID=%d Found match! Returning %lu MB (makelevel=%u)\n", getpid(), memory_profiles[i].peak_memory_mb, makelevel);
-              return memory_profiles[i].peak_memory_mb;
+              return (int)i;
             }
         }
     }
 
-  /* No profile yet - try heuristics and statistical estimation */
+  /* No profile found - return -1 */
+  return -1;
+}
+
+/* Get memory requirement from profile or estimate using heuristics */
+static unsigned long
+get_file_memory_estimate (const char *filename)
+{
+  struct stat st;
+
+  if (!filename)
+    return 0;
+
+  /* Try heuristics and statistical estimation */
   if (stat (filename, &st) == 0 && st.st_size > 0)
     {
       unsigned long file_kb = st.st_size / 1024;
@@ -4243,3 +4265,4 @@ get_file_memory_requirement (const char *filename)
 #ifdef VMS
 #include "vmsjobs.c"
 #endif
+

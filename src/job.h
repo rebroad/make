@@ -93,4 +93,4 @@ extern unsigned int jobserver_tokens;
 
 /* Memory profiling per file */
 void load_memory_profiles (void);
-unsigned long get_file_memory_requirement (const char *filename);
+int get_file_profile_idx (const char *filename);
