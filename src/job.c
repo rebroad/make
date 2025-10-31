@@ -1559,7 +1559,7 @@ start_job_command (struct child *child)
                             getpid(), filename, waited / 10);
                   fflush (stderr);
                 } else {
-                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - OK\n",
+                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - \033[1;32mOK\033[0m\n",
                             getpid(), filename, required_mb, effective_free, imminent_mb);
                   fflush (stderr);
                 }
@@ -1573,7 +1573,7 @@ start_job_command (struct child *child)
 
               /* Not enough memory, wait */
               if (waited == 0) {
-                debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - WAITING\n",
+                debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, only %luMB free (%luMB imminent) - \033[1;35mWAITING\033[0m\n",
                         getpid(), filename, required_mb, effective_free, imminent_mb);
                 fflush (stderr);
               }
