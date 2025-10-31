@@ -1555,7 +1555,7 @@ start_job_command (struct child *child)
 
               if (required_mb <= effective_free) {
                 if (waited) {
-                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, proceeding\n",
+                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
                             getpid(), filename, waited / 10);
                   fflush (stderr);
                 } else {
