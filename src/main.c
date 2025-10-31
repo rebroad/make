@@ -946,9 +946,18 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
 
   now = time (NULL);
   fflush (stderr);
-  debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
-              prev_peak_mb, memory_mb, final,
-              memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
+
+  /* If final=1 and the new peak is lower, reduce by 10% of the difference */
+  if (final && memory_mb < prev_peak_mb) {
+    memory_mb = prev_peak_mb - (prev_peak_mb - memory_mb) / 10;
+    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Reducing peak by 10%% of difference (peak: %luMB -> %luMB final: %d file: %s)\n",
+                prev_peak_mb, memory_mb, final,
+                memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
+  } else {
+    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Marking memory_profiles_dirty (peak: %luMB -> %luMB final: %d file: %s)\n",
+                prev_peak_mb, memory_mb, final,
+                memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
+  }
 
   memory_profiles[profile_idx].peak_memory_mb = memory_mb;
   memory_profiles[profile_idx].last_used = now;
