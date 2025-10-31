@@ -1099,16 +1099,18 @@ reap_children (int block, int err)
 
       /* Release reserved memory for this file if any was reserved */
       if (c->file->profile_idx >= 0) {
+        debug_write(MEM_DEBUG_INFO, "[MEMORY] reap_children: PID=%d makelevel=%u profile_idx=%d, memory_profiles=%p\n",
+                    getpid(), makelevel, c->file->profile_idx, memory_profiles);
         if (memory_profiles == NULL) {
-          debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: reap_children: memory_profiles is NULL but profile_idx=%d\n",
-                      c->file->profile_idx);
+          debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: reap_children: memory_profiles is NULL but profile_idx=%d (PID=%d, makelevel=%u)\n",
+                      c->file->profile_idx, getpid(), makelevel);
         } else {
           unsigned long peak_mb = memory_profiles[c->file->profile_idx].peak_memory_mb;
           const char *profile_filename = memory_profiles[c->file->profile_idx].filename;
           if (peak_mb > 0) {
             reserve_memory_mb(-(long)peak_mb, profile_filename ? profile_filename : c->file->name);
-            debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed)\n",
-                        peak_mb, profile_filename ? profile_filename : c->file->name);
+            debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed) (PID=%d, makelevel=%u)\n",
+                        peak_mb, profile_filename ? profile_filename : c->file->name, getpid(), makelevel);
           }
         }
         c->file->profile_idx = -1;

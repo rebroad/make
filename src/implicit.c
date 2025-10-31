@@ -892,6 +892,7 @@ pattern_search (struct file *file, int archive,
                         int_file = alloca (sizeof (struct file));
                       memset (int_file, '\0', sizeof (struct file));
                       int_file->name = d->name;
+                      int_file->profile_idx = -1;
 
                       if (pattern_search (int_file,
                                           0,
