@@ -1096,6 +1096,14 @@ reap_children (int block, int err)
       if (job_slots_used > 0)
         job_slots_used -= c->jobslot;
 
+      /* Release reserved memory for this file if any was reserved */
+      if (c->file->reserved_mb > 0) {
+        //reserve_memory_mb(-(long)c->file->reserved_mb, c->file->name);
+        debug_write("[MEMORY] Released %luMB reservation for %s (job completed)\n",
+                    c->file->reserved_mb, c->file->name);
+        c->file->reserved_mb = 0;
+      }
+
       /* Remove the child from the chain and free it.  */
       if (lastc == 0)
         children = c->next;
@@ -1530,6 +1538,7 @@ start_job_command (struct child *child)
 
                 /* We have enough memory! Reserve it and proceed */
                 reserve_memory_mb (required_mb, filename);
+                child->file->reserved_mb = required_mb;
 
                 break;
               }
