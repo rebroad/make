@@ -874,7 +874,7 @@ static struct {
   struct {
     pid_t pid;
     unsigned long peak_mb;
-    unsigned long old_peak_mb;
+    unsigned long old_peak_mb; // TODO redundant if reserved_mb freed in job.c
     unsigned long current_mb;
     int profile_idx;        /* Index into memory_profiles array, -1 if not found */
   } descendants[MAX_TRACKED_DESCENDANTS];
@@ -1643,32 +1643,26 @@ memory_monitor_thread_func (void *arg)
       stat_file = fopen(stat_path, "r");
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
-        if (main_monitoring_data.descendants[i].old_peak_mb > 0)
+        int profile_idx = main_monitoring_data.descendants[i].profile_idx;
+        if (profile_idx >= 0 && main_monitoring_data.descendants[i].old_peak_mb > 0)
           reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
-                           main_monitoring_data.descendants[i].profile_idx >= 0 ?
-                           memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename : "unknown");
-        if ((main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)
-                && main_monitoring_data.descendants[i].profile_idx >= 0) {
-          debug_write("[MEMORY] Compilation PID %d exited, final peak for %s: %luMB -> %luMB\n",
-                      (int)main_monitoring_data.descendants[i].pid,
-                      memory_profiles[main_monitoring_data.descendants[i].profile_idx].filename,
-                      memory_profiles[main_monitoring_data.descendants[i].profile_idx].peak_memory_mb,
-                      main_monitoring_data.descendants[i].peak_mb);
+                           profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
+        if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
+          debug_write("[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
+                      (int)main_monitoring_data.descendants[i].pid, memory_profiles[profile_idx].filename,
+                      main_monitoring_data.descendants[i].old_peak_mb, main_monitoring_data.descendants[i].peak_mb);
 
           /* Record final memory usage for disk operations using direct profile update */
-          record_file_memory_usage_by_index(main_monitoring_data.descendants[i].profile_idx, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
+          record_file_memory_usage_by_index(profile_idx, main_monitoring_data.descendants[i].peak_mb, 1);  /* final=1 */
         }
 
         /* Remove this entry by shifting remaining entries */
-        if (i < main_monitoring_data.compile_count - 1) {
+        if (i < main_monitoring_data.compile_count - 1)
           memmove(&main_monitoring_data.descendants[i], &main_monitoring_data.descendants[i + 1],
                   (main_monitoring_data.compile_count - i - 1) * sizeof(main_monitoring_data.descendants[0]));
-        }
         main_monitoring_data.compile_count--;
         i--;  /* Check this index again since we shifted */
-      } else {
-        fclose(stat_file);
-      }
+      } else fclose(stat_file);
     }
 
     /* Update shared memory with total current usage (calculated in the loop above) */
