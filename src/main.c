@@ -283,8 +283,9 @@ int memory_debug_level = MEM_DEBUG_NONE;
 static const int default_memory_debug_level = MEM_DEBUG_NONE;
 
 /* Memory profiling variables */
-struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+struct file_memory_profile *memory_profiles = NULL;
 unsigned int memory_profile_count = 0;
+unsigned int memory_profiles_capacity = 0;
 static int disable_memory_display = 0;  /* Disable memory status display */
 #ifdef HAVE_PTHREAD_H
 static int status_line_shown = 0;
@@ -885,6 +886,44 @@ static struct {
   } descendants[MAX_TRACKED_DESCENDANTS];
 } main_monitoring_data = {0};
 
+void
+grow_memory_profiles (void)
+{
+  unsigned int new_capacity;
+  struct file_memory_profile *new_profiles;
+
+  if (memory_profiles_capacity == 0) {
+    /* First allocation: start with 1000 entries */
+    new_capacity = 1000;
+  } else {
+    /* Double the capacity */
+    new_capacity = memory_profiles_capacity * 2;
+  }
+
+  if (memory_profiles == NULL) {
+    /* First allocation */
+    new_profiles = (struct file_memory_profile *)xmalloc (new_capacity * sizeof(struct file_memory_profile));
+  } else {
+    /* Reallocation */
+    new_profiles = (struct file_memory_profile *)xrealloc (memory_profiles,
+                                                            new_capacity * sizeof(struct file_memory_profile));
+  }
+
+  if (!new_profiles) {
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: Failed to grow memory_profiles array from %u to %u\n",
+                memory_profiles_capacity, new_capacity);
+    return;
+  }
+
+  /* Initialize new entries */
+  memset(&new_profiles[memory_profiles_capacity], 0,
+         (new_capacity - memory_profiles_capacity) * sizeof(struct file_memory_profile));
+
+  memory_profiles = new_profiles;
+  memory_profiles_capacity = new_capacity;
+
+  debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Grew memory_profiles array to %u entries\n", new_capacity);
+}
 
 /* Record memory usage for a file using profile index (main make only) */
 void
@@ -1460,9 +1499,20 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           }
         }
         if (profile_idx < 0) {
-          static int memory_profile_error_count = 0;
-          /* Create new memory profile if we have space */
-          if (memory_profile_count < MAX_MEMORY_PROFILES) {
+          /* Grow array if needed */
+          if (memory_profile_count >= memory_profiles_capacity) {
+            grow_memory_profiles();
+            /* If growth failed, capacity will still be 0 or less than count */
+            if (memory_profile_count >= memory_profiles_capacity) {
+              static int memory_profile_error_count = 0;
+              if (memory_profile_error_count < 10) {
+                debug_write(MEM_DEBUG_ERROR, "[DEBUG] PID=%d (d:%d) Failed to grow memory_profiles, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
+                memory_profile_error_count++;
+              }
+            }
+          }
+
+          if (memory_profile_count < memory_profiles_capacity) {
             memory_profiles[memory_profile_count].filename = xstrdup(strip_ptr);
             memory_profiles[memory_profile_count].peak_memory_mb = rss_kb / 1024;
             memory_profiles[memory_profile_count].last_used = time(NULL);
@@ -1471,9 +1521,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
             debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
                        strip_ptr, 0, memory_profile_count);
             fflush(stderr);
-          } else if (memory_profile_error_count < 10) {
-            debug_write(MEM_DEBUG_ERROR, "[DEBUG] PID=%d (d:%d) Max memory profiles reached, cannot create profile for '%s'\n", (int)pid, depth, strip_ptr);
-            memory_profile_error_count++;
           }
         }
       } // if strip_ptr

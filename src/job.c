@@ -4004,7 +4004,10 @@ load_memory_profiles (void)
     {
       if (sscanf (line, "%lu %ld %[^\n]", &peak_mb, &timestamp, filename) == 3)
         {
-          if (memory_profile_count < MAX_MEMORY_PROFILES)
+          /* Grow array if needed */
+          if (memory_profile_count >= memory_profiles_capacity)
+            grow_memory_profiles();
+          if (memory_profile_count < memory_profiles_capacity)
             {
               memory_profiles[memory_profile_count].filename = xstrdup (filename);
               memory_profiles[memory_profile_count].peak_memory_mb = peak_mb;

@@ -781,15 +781,16 @@ extern int memory_aware_flag;
 extern int memory_debug_level;
 
 /* Memory profiling structures */
-#define MAX_MEMORY_PROFILES 20000
 struct file_memory_profile
 {
   char *filename;
   unsigned long peak_memory_mb;
   time_t last_used;  /* Unix timestamp of last compilation */
 };
-extern struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
+extern struct file_memory_profile *memory_profiles;
 extern unsigned int memory_profile_count;
+extern unsigned int memory_profiles_capacity;
+extern void grow_memory_profiles (void);
 
 extern const char *program;
 
