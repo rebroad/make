@@ -280,6 +280,7 @@ int memory_aware_flag = -1;  /* -1 = not set, will check env */
 
 /* Memory debug level (0 = no debug output, higher = more verbose) */
 int memory_debug_level = MEM_DEBUG_NONE;
+static const int default_memory_debug_level = MEM_DEBUG_NONE;
 
 /* Memory profiling variables */
 struct file_memory_profile memory_profiles[MAX_MEMORY_PROFILES];
@@ -564,7 +565,7 @@ static struct command_switch switches[] =
     { CHAR_MAX+13, flag, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "memory-aware", 0 },
     { CHAR_MAX+14, flag_off, &memory_aware_flag, 1, 1, 0, 0, 0, 0, "no-memory-aware", 0 },
     { CHAR_MAX+15, flag, &disable_memory_display, 1, 1, 0, 0, 0, 0, "nomem", 0 },
-    { CHAR_MAX+16, positive_int, &memory_debug_level, 1, 1, 0, 0, 0, 0, "memdebug", 0 },
+    { CHAR_MAX+16, positive_int, &memory_debug_level, 1, 1, 0, 0, 0, &default_memory_debug_level, "memdebug", 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 
