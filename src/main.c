@@ -1400,17 +1400,10 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     while (fgets(line, sizeof(line), stat_file)) {
       sscanf(line, "PPid: %d", &check_pid);
       sscanf(line, "VmRSS: %lu kB", &rss_kb);
-      //sscanf(line, "State: %c", &state);
 
       if (check_pid > 0 && rss_kb > 0) break;
     }
     fclose(stat_file);
-
-    /* Skip zombie processes - they're not actually running */
-    /*if (state == 'Z') {
-      debug_write("[DEBUG] Skipping zombie process PID %d (state=%c)\n", (int)pid, state);
-      continue;
-    }*/
 
     /* Check if this process is a direct descendant of our parent */
     if (check_pid != parent_pid) continue;
@@ -1442,12 +1435,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
       parent_idx = found_ppidx; // No idea why we're having to do this!! (done after debugging above so we capture the oddity)
     }
 
-    /*if (descendant_idx >= 0 && main_monitoring_data.descendants[descendant_idx].profile_idx < 0) {
-      // We already know about it and it wasn't relevant to us (as no filename was extracted)
-      continue;
-    }*/
-
-    if (descendant_idx < 0 && parent_idx < 0) { // Might need to track this new descendant
+    if (descendant_idx < 0 && parent_idx < 0) { // We'll need to track this new descendant
       if (main_monitoring_data.compile_count >= MAX_TRACKED_DESCENDANTS) {
         debug_write("[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
         continue;
@@ -1687,7 +1675,7 @@ memory_monitor_thread_func (void *arg)
       }
     }
 
-    /* Always update status display */
+    /* Update status display */
     display_memory_status (mem_percent, free_mb, 0, main_monitoring_data.compile_count);
 
   } /* while (monitor_thread_running) */
@@ -1826,65 +1814,43 @@ write_monitor_debug_file (const char *function_name, int saved_errno)
 
 /* Stop the memory monitoring thread */
 #ifdef HAVE_PTHREAD_H
-static void
-stop_memory_monitor (void)
+void
+stop_memory_monitor (int immediate)
 {
   int saved_errno = errno;  /* Save errno at entry */
 
-  if (!memory_aware_flag || !monitor_thread_running)
-    return;
+  if (!memory_aware_flag || !monitor_thread_running) return;
 
-  write_monitor_debug_file ("stop_memory_monitor", saved_errno);
-  debug_write ("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
+  write_monitor_debug_file(immediate ? "stop_memory_monitor_immediate (entry)" : "stop_memory_monitor", saved_errno);
+
+  if (immediate)
+    debug_write("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
+  else
+    debug_write("[STOP_MONITOR] Stopping monitor thread (makelevel=%u, pid=%d)\n", makelevel, (int)getpid());
 
   monitor_thread_running = 0;
-  pthread_join (memory_monitor_thread, NULL);
+  if (!immediate)
+    pthread_join (memory_monitor_thread, NULL);
 
-  saved_errno = errno;  /* Capture errno after join */
+  saved_errno = errno;  /* Capture errno after join or flag set */
 
   /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
   /* But only if both stdout/stderr are TTYs - don't try to reset if we're piped */
-  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
+  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO))
     reset_terminal_state ();
-    status_line_shown = 0;
-  } else {
-    status_line_shown = 0;  /* Clear the flag anyway */
-  }
+  status_line_shown = 0;
 
-  write_monitor_debug_file ("stop_memory_monitor (exit)", saved_errno);
+  write_monitor_debug_file(immediate ? "stop_memory_monitor_immediate (exit)" : "stop_memory_monitor (exit)", saved_errno);
+
+  /* Give thread a moment to see the flag and exit (only for immediate/signal handlers) */
+  if (immediate) usleep (10000);  /* 10ms */
 }
 
-/* Immediate stop for signal handlers - don't wait for thread join */
-void
-stop_memory_monitor_immediate (void)
+/* Minimal wrapper for atexit() - required because atexit needs void (*)(void) signature */
+static void
+stop_memory_monitor_atexit (void)
 {
-  int saved_errno = errno;  /* Save errno at entry */
-
-  if (!memory_aware_flag || !monitor_thread_running)
-    return;
-
-  write_monitor_debug_file ("stop_memory_monitor_immediate (entry)", saved_errno);
-
-  /* DEBUG: Show we're stopping (from signal handler) */
-  debug_write ("[STOP_MONITOR_IMMEDIATE] Signal stop (pid=%d)\n", (int)getpid());
-
-  /* Just set the flag - don't pthread_join in a signal handler! */
-  monitor_thread_running = 0;
-
-  /* Always reset terminal state - ANSI sequences may have left cursor in wrong position */
-  /* But only if both stdout/stderr are TTYs - don't try to reset if we're piped */
-  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
-    reset_terminal_state ();
-    status_line_shown = 0;
-  } else {
-    status_line_shown = 0;  /* Clear the flag anyway */
-  }
-
-  saved_errno = errno;  /* Capture errno after setting flag */
-  write_monitor_debug_file ("stop_memory_monitor_immediate (exit)", saved_errno);
-
-  /* Give thread a moment to see the flag and exit */
-  usleep (10000);  /* 10ms */
+  stop_memory_monitor(0);
 }
 #else
 /* Stub functions for non-POSIX systems */
@@ -1895,16 +1861,11 @@ start_memory_monitor (void)
   memory_aware_flag = 0;
 }
 
-static void
-stop_memory_monitor (void)
-{
-  /* No-op on non-POSIX systems */
-}
-
 void
-stop_memory_monitor_immediate (void)
+stop_memory_monitor (int immediate)
 {
   /* No-op on non-POSIX systems */
+  (void)immediate; /* Unused parameter */
 }
 #endif
 
@@ -2321,7 +2282,7 @@ main (int argc, char **argv, char **envp)
     atexit (close_stdout);
   /* Only top-level make should stop the monitor thread */
   if (makelevel == 0)
-    atexit (stop_memory_monitor);
+    atexit (stop_memory_monitor_atexit);
 #endif
 
   output_init (&make_sync);

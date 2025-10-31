@@ -1,2 +1,3 @@
 = Make decendants within shared memory? (If already a memory_profile, create the decendant within job.c) still use reserved_mb? or total of old_peaks?
 = Unreserve_mb as soon as new decendant detected (and use total_old_peaks = total_current_mb instead for imminent calc)
+= Remove some of that TTY fix code (as probably wasn't needed given the final fix was simple)
