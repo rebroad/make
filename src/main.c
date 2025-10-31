@@ -1359,7 +1359,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
   char line[512];
   unsigned long total_rss_kb = 0;
   unsigned int i;
-  char *cmdline = NULL;  /* Cmdline for current PID being processed */
+  char *cmdline;  /* Cmdline for current PID being processed */
   int term_width = cached_term_width > 0 ? cached_term_width : 80;
   size_t max_cmdline_len = term_width > 100 ? (size_t)(term_width - 100) : 20;  /* Leave room for message prefix, min 20 */
 
@@ -1644,7 +1644,7 @@ memory_monitor_thread_func (void *arg)
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
         int profile_idx = main_monitoring_data.descendants[i].profile_idx;
-        if (profile_idx >= 0 && main_monitoring_data.descendants[i].old_peak_mb > 0)
+        if (main_monitoring_data.descendants[i].old_peak_mb > 0)
           reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
                            profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");
         if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
