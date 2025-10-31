@@ -1099,8 +1099,8 @@ reap_children (int block, int err)
 
       /* Release reserved memory for this file if any was reserved */
       if (c->file->profile_idx >= 0) {
-        debug_write(MEM_DEBUG_INFO, "[MEMORY] reap_children: PID=%d makelevel=%u profile_idx=%d, memory_profiles=%p\n",
-                    getpid(), makelevel, c->file->profile_idx, memory_profiles);
+        /*debug_write(MEM_DEBUG_INFO, "[MEMORY] reap_children: PID=%d makelevel=%u profile_idx=%d, memory_profiles=%p\n",
+                    getpid(), makelevel, c->file->profile_idx, memory_profiles);*/
         if (memory_profiles == NULL) {
           debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: reap_children: memory_profiles is NULL but profile_idx=%d (PID=%d, makelevel=%u)\n",
                       c->file->profile_idx, getpid(), makelevel);
