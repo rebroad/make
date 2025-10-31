@@ -5075,6 +5075,7 @@ die (int status)
       dying = 1;
 
       if (makelevel == 0) {
+        debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u)\n", status, getpid(), makelevel);
         save_memory_profiles ();
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
         cleanup_shared_memory ();

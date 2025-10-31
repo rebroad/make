@@ -525,6 +525,8 @@ fatal_error_signal (int sig)
 #endif
   /* Stop memory monitor thread FIRST if it's running - it could interfere with cleanup */
   extern void stop_memory_monitor (int immediate);
+  extern void debug_write (int log_level, const char *format, ...);
+  debug_write(MEM_DEBUG_ERROR, "[SIGNAL] fatal_error_signal called with sig=%d (PID=%d, makelevel=%u)\n", sig, getpid(), makelevel);
   stop_memory_monitor (1);
 
   handling_fatal_signal = 1;
