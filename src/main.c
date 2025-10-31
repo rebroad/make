@@ -1268,39 +1268,37 @@ static int monitor_stderr_fd = -1;
 
 #ifdef HAVE_PTHREAD_H
 static void
-display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_tracked)
+display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_jobs, unsigned long make_usage_mb, unsigned long imminent_mb)
 {
   static struct timeval last_display = {0, 0};
   struct timeval now;
   long elapsed_ms;
   const char *green = "\033[1;32m";
+  const char *purple = "\033[1;35m";
   const char *gray = "\033[0;90m";
   const char *white = "\033[1;37m";
   const char *reset = "\033[0m";
   const char *spinners[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
   const char *spinner;
-  const char *bar_color;
   char bar[256];
   int bar_len = 20;
-  int filled;
   size_t pos = 0;
   size_t i;
-  unsigned int display_slots;
   char status[512];
   int term_width;
-  int visible_len = 50;  /* Adjusted for "X procs" display */
+  int visible_len = 50;  /* Adjusted for "X jobs" display */
   int col_pos;
   static int write_count = 0;
   static int skip_count = 0;
-#if DEBUG_MEMORY_MONITOR
-  struct timeval count_start, count_end;
-  long count_time_ms;
-#endif
+  unsigned long total_mb;
+  int make_filled, imminent_filled;
+  int other_filled, free_filled;
   char output_buf[1024];
   int output_len;
   ssize_t written;
   char debug_msg[128];
   int debug_len;
+  int total_used_filled;
 
   if (!memory_aware_flag || disable_memory_display)
     return;
@@ -1330,42 +1328,59 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   spinner = spinners[spinner_state % 10];
   spinner_state++;
 
-  /* Use green color for memory bar */
-  bar_color = green;
+  /* Get total memory */
+  total_mb = free_mb / (100 - mem_percent) * 100;
 
-  /* Build memory bar (20 chars) - use safe string building */
-  filled = (mem_percent * bar_len) / 100;
+  /* Build multi-color memory bar (20 chars) */
+  /* Bar shows: [make memory in purple][other used in green][imminent in yellow][free in gray] */
+  make_filled = (make_usage_mb * bar_len) / total_mb;
+  imminent_filled = (imminent_mb * bar_len) / total_mb;
 
-  /* Add color code */
-  pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", bar_color);
+  /* Calculate other_filled and ensure it's not negative */
+  total_used_filled = (mem_percent * bar_len) / 100;
+  other_filled = total_used_filled - make_filled;
+  if (other_filled < 0) other_filled = 0;
 
-  /* Add filled portion */
-  for (i = 0; i < (size_t)filled && i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
+  free_filled = bar_len - make_filled - other_filled - imminent_filled;
+  if (free_filled < 0) free_filled = 0;
 
-  /* Switch to gray for empty portion */
-  pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", gray);
+  /* Purple: make-tracked memory */
+  if (make_filled > 0) {
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", purple);
+    for (i = 0; i < (size_t)make_filled && pos < sizeof(bar) - 10; i++)
+      pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
+  }
 
-  /* Add empty portion */
-  for (; i < (size_t)bar_len && pos < sizeof(bar) - 10; i++)
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
+  /* Green: other used memory */
+  if (other_filled > 0) {
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", green);
+    for (i = 0; i < (size_t)other_filled && pos < sizeof(bar) - 10; i++)
+      pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
+  }
+
+  /* Yellow: imminent memory */
+  if (imminent_filled > 0) {
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "\033[1;33m");
+    for (i = 0; i < (size_t)imminent_filled && pos < sizeof(bar) - 10; i++)
+      pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
+  }
+
+  /* Gray: free memory */
+  if (free_filled > 0) {
+    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", gray);
+    for (i = 0; i < (size_t)free_filled && pos < sizeof(bar) - 10; i++)
+      pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
+  }
 
   /* Reset color */
   snprintf(bar + pos, sizeof(bar) - pos, "%s", reset);
 
-  /* Get effective job slots */
-  /* Both jobserver and direct mode now use job_slots (monitor thread sets it directly) */
-  if (job_slots > 0)
-    display_slots = job_slots;
-  else
-    display_slots = 0;  /* Not running jobs */
+  /* Build the status string - show total job count */
+  /* Use the total_jobs count we already calculated (no need to scan /proc again) */
 
-  /* Build the status string - show total descendant count */
-  /* Use the total_tracked count we already calculated (no need to scan /proc again) */
-
-  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s-j%u%s %s%u procs%s",
+  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s%u jobs%s",
             spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-            green, display_slots, reset, gray, total_tracked, reset);
+            gray, total_jobs, reset);
 
   /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
   term_width = cached_term_width;
@@ -1672,6 +1687,7 @@ memory_monitor_thread_func (void *arg)
 
   while (monitor_thread_running) {
     unsigned long total_tracked_mb = 0;
+    unsigned long total_imminent_mb = 0;
     unsigned int total_make_mem = 0;
     unsigned int total_jobs = 0;
     static unsigned int last_total_make_mem = 0;
@@ -1705,6 +1721,9 @@ memory_monitor_thread_func (void *arg)
       total_tracked_mb += (main_monitoring_data.descendants[i].current_mb < main_monitoring_data.descendants[i].old_peak_mb)
                           ? main_monitoring_data.descendants[i].current_mb
                           : main_monitoring_data.descendants[i].old_peak_mb;
+      total_imminent_mb += (main_monitoring_data.descendants[i].old_peak_mb > main_monitoring_data.descendants[i].current_mb)
+                          ? main_monitoring_data.descendants[i].old_peak_mb - main_monitoring_data.descendants[i].current_mb
+                          : 0;
 
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
@@ -1756,7 +1775,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update status display */
-    display_memory_status (mem_percent, free_mb, 0, total_jobs);
+    display_memory_status (mem_percent, free_mb, 0, total_jobs, total_make_mem, total_imminent_mb);
 
   } /* while (monitor_thread_running) */
 
