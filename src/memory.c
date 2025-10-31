@@ -192,16 +192,11 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
   cmdline_len = fread(cmdline_buf, 1, sizeof(cmdline_buf) - 1, cmdline_file);
   fclose(cmdline_file);
 
-  if (cmdline_len == 0) {
-    /* Debug: empty cmdline */
-    debug_write("[DEBUG] extract_filename_from_cmdline: empty cmdline for PID %d\n", (int)pid);
-    return NULL;
-  }
+  if (cmdline_len == 0) return NULL;
 
   /* /proc/cmdline uses \0 separators, convert to spaces for easier parsing */
   for (i = 0; i < (int)cmdline_len - 1; i++)
-    if (cmdline_buf[i] == '\0')
-      cmdline_buf[i] = ' ';
+    if (cmdline_buf[i] == '\0') cmdline_buf[i] = ' ';
   cmdline_buf[cmdline_len - 1] = '\0';
 
   /* Return cmdline if requested */

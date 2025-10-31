@@ -3970,7 +3970,8 @@ load_memory_profiles (void)
   else
     {
       /* Fallback to current directory if environment variable not available */
-      debug_write("[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
+      if (makelevel != 0)
+        debug_write("[DEBUG] PID=%d Environment variable MAKE_TOP_LEVEL_CWD not available, using current directory\n", getpid());
       f = fopen (".make_memory_cache", "r");
     }
 

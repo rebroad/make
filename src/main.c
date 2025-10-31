@@ -1350,7 +1350,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 #endif // HAVE_PTHREAD_H
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
-static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, int *total_pids)
+static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_pids)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1378,11 +1378,11 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     int send_idx;
     char *strip_ptr = NULL;
     unsigned long rss_kb = 0;
-    unsigned long profile_peak_mb = 0;
+    unsigned int profile_peak_mb = 0;
     pid_t pid, check_pid = 0;
     int profile_idx = -1;
     unsigned long child_rss_kb = 0;
-    int child_pids = 0;
+    unsigned int child_pids = 0;
 
     cmdline = NULL;  /* Reset cmdline for each PID */
 
@@ -1534,8 +1534,7 @@ static void *
 memory_monitor_thread_func (void *arg)
 {
   unsigned int mem_percent;
-  unsigned long free_mb;
-  unsigned int i;
+  unsigned int free_mb;
 
   //debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
@@ -1591,11 +1590,11 @@ memory_monitor_thread_func (void *arg)
   }
 
   while (monitor_thread_running) {
-    unsigned long total_tracked_mb = 0;
-    unsigned long total_make_mem = 0;
-    int total_pids = 0;
-    static unsigned long last_total_make_mem = 0;
-    static int last_total_pids = 0;
+    unsigned int total_tracked_mb = 0;
+    unsigned int total_make_mem = 0;
+    unsigned int total_pids = 0;
+    static unsigned int last_total_make_mem = 0;
+    static unsigned int last_total_pids = 0;
     static time_t last_save_time = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
@@ -1609,15 +1608,15 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids);
+    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_pids) / 1024;
     if (total_make_mem != last_total_make_mem || total_pids != last_total_pids) {
-      debug_write("[DEBUG] Total PIDs found: %d, total make memory: %luMB\n", total_pids, total_make_mem / 1024);
+      debug_write("[DEBUG] Total PIDs found: %u, total make memory: %uMB\n", total_pids, total_make_mem);
       last_total_make_mem = total_make_mem;
       last_total_pids = total_pids;
     }
 
     /* Check for exited descendants and calculate total current usage in one loop */
-    for (i = 0; i < main_monitoring_data.compile_count; i++) {
+    for (unsigned int i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
       FILE *stat_file;
 
