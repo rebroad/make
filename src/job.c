@@ -1531,8 +1531,21 @@ start_job_command (struct child *child)
           if (required_mb > 0) {
             int waited = 0;
 
+            /* If we still don't have a profile index, create a new entry now (before the wait loop) */
+            if (required_mb > 0 && profile_idx < 0 && memory_profiles != NULL) {
+              if (memory_profile_count >= memory_profiles_capacity)
+                grow_memory_profiles();
+              if (memory_profile_count < memory_profiles_capacity) {
+                memory_profiles[memory_profile_count].filename = xstrdup(filename);
+                memory_profiles[memory_profile_count].peak_memory_mb = required_mb;
+                memory_profiles[memory_profile_count].last_used = 0;
+                profile_idx = memory_profile_count;
+                memory_profile_count++;
+              }
+            }
+
             /* Wait loop: check if we have enough memory, accounting for imminent usage */
-            while (1) {
+            while (profile_idx >= 0) {
               unsigned long imminent_mb;
               unsigned long effective_free;
 
@@ -1541,17 +1554,6 @@ start_job_command (struct child *child)
               effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
               if (required_mb <= effective_free) {
-                if (profile_idx < 0) {
-                  if (memory_profile_count >= memory_profiles_capacity)
-                    grow_memory_profiles();
-                  if (memory_profile_count < memory_profiles_capacity) {
-                    memory_profiles[memory_profile_count].filename = xstrdup(filename);
-                    memory_profiles[memory_profile_count].peak_memory_mb = required_mb;
-                    profile_idx = memory_profile_count;
-                    memory_profile_count++;
-                  }
-                }
-
                 child->file->profile_idx = profile_idx;
 
                 /* We have enough memory! Reserve it and proceed */
@@ -1582,7 +1584,7 @@ start_job_command (struct child *child)
 
               usleep (100000);  /* Sleep 100ms */
               waited++;
-            } /* while (1) */
+            } /* while (profile_idx >= 0) */
           } else {
             /* No data available, just report current state */
             unsigned long imminent_mb;
