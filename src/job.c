@@ -27,6 +27,7 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #include "os.h"
 #include "dep.h"
 #include "shuffle.h"
+#include "memory.h"
 
 /* Default shell to use.  */
 #ifdef WINDOWS32
@@ -1503,26 +1504,12 @@ start_job_command (struct child *child)
         unsigned long required_mb = 0;
         unsigned long free_mb;
         int profile_idx = -1;
+        char *filename = NULL;
 
-        /* Check if this is an "echo Compiling ..." command */
-        if (argv[0] && argv[1] && argv[2] &&
-            strcmp (argv[0], "echo") == 0 &&
-            strcmp (argv[1], "Compiling") == 0)
-        {
-          /* Extract filename from "Compiling src/foo/bar.cpp..." */
-          const char *filename = argv[2];
-          char *dot_pos;
+        /* Extract filename from command using common extraction logic */
+        filename = extract_filename_from_argv ((const char **)argv, "job");
 
-          /* Remove trailing "..." if present */
-          dot_pos = strstr (filename, "...");
-          if (dot_pos) {
-            size_t len = dot_pos - filename;
-            char *clean_filename = alloca (len + 1);
-            memcpy (clean_filename, filename, len);
-            clean_filename[len] = '\0';
-            filename = clean_filename;
-          }
-
+        if (filename) {
           /* Look up profile index */
           profile_idx = get_file_profile_idx (filename);
 
@@ -1591,6 +1578,9 @@ start_job_command (struct child *child)
                     getpid(), filename, free_mb, imminent_mb);
             fflush (stderr);
           }
+
+          /* Free the filename extracted from argv */
+          free (filename);
         }
       }
 
