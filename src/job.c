@@ -1569,7 +1569,7 @@ start_job_command (struct child *child)
                   }
 
                   reserve_memory_mb (required_mb, filename);
-                  memory_profiles[profile_idx].last_used = time(NULL) + 600;
+                  memory_profiles[profile_idx].last_used = (time_t)(~(time_t)0);
                 }
 
                 break;
