@@ -1774,7 +1774,24 @@ memory_monitor_thread_func (void *arg)
       }
     }
 
-    /* Update status display */
+    /* Update status display - use get_imminent_memory_mb() to get the authoritative value */
+    {
+      unsigned long calculated_imminent = total_imminent_mb;
+      total_imminent_mb = get_imminent_memory_mb();
+
+      /* Debug if the two calculations differ by more than 10% */
+      if (calculated_imminent > 0 && total_imminent_mb > 0) {
+        unsigned long diff = calculated_imminent > total_imminent_mb
+                             ? calculated_imminent - total_imminent_mb
+                             : total_imminent_mb - calculated_imminent;
+        /* Check if diff is more than 10% of the average */
+        unsigned long avg = (calculated_imminent + total_imminent_mb) / 2;
+        if (diff * 10 > avg) {
+          debug_write(MEM_DEBUG_INFO, "[MEMORY] Imminent mismatch: calculated=%luMB vs authoritative=%luMB (diff=%luMB, %.1f%%)\n",
+                      calculated_imminent, total_imminent_mb, diff, (double)diff * 100.0 / avg);
+        }
+      }
+    }
     display_memory_status (mem_percent, free_mb, 0, total_jobs, total_make_mem, total_imminent_mb);
 
   } /* while (monitor_thread_running) */
