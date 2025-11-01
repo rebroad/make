@@ -1557,7 +1557,7 @@ start_job_command (struct child *child)
                 child->file->profile_idx = profile_idx;
 
                 /* We have enough memory! Reserve it and proceed */
-                if (memory_profiles[profile_idx].last_used < time(NULL)) {
+                if (memory_profiles[profile_idx].last_used != -1) {
                   if (waited) {
                     debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
                               getpid(), filename, waited / 10);
@@ -1569,7 +1569,7 @@ start_job_command (struct child *child)
                   }
 
                   reserve_memory_mb (required_mb, filename);
-                  memory_profiles[profile_idx].last_used = (time_t)(~(time_t)0);
+                  memory_profiles[profile_idx].last_used = -1;
                 }
 
                 break;
