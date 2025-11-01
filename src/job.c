@@ -1541,16 +1541,6 @@ start_job_command (struct child *child)
               effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
               if (required_mb <= effective_free) {
-                if (waited) {
-                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
-                            getpid(), filename, waited / 10);
-                  fflush (stderr);
-                } else {
-                  debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - \033[1;32mOK\033[0m\n",
-                            getpid(), filename, required_mb, effective_free, imminent_mb);
-                  fflush (stderr);
-                }
-
                 if (profile_idx < 0) {
                   if (memory_profile_count >= memory_profiles_capacity)
                     grow_memory_profiles();
@@ -1566,6 +1556,16 @@ start_job_command (struct child *child)
 
                 /* We have enough memory! Reserve it and proceed */
                 if (memory_profiles[profile_idx].last_used < time(NULL)) {
+                  if (waited) {
+                    debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
+                              getpid(), filename, waited / 10);
+                    fflush (stderr);
+                  } else {
+                    debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - \033[1;32mOK\033[0m\n",
+                              getpid(), filename, required_mb, effective_free, imminent_mb);
+                    fflush (stderr);
+                  }
+
                   reserve_memory_mb (required_mb, filename);
                   memory_profiles[profile_idx].last_used = time(NULL) + 600;
                 }
