@@ -1551,9 +1551,6 @@ start_job_command (struct child *child)
                   fflush (stderr);
                 }
 
-                /* We have enough memory! Reserve it and proceed */
-                reserve_memory_mb (required_mb, filename);
-
                 if (profile_idx < 0) {
                   if (memory_profile_count >= memory_profiles_capacity)
                     grow_memory_profiles();
@@ -1566,6 +1563,12 @@ start_job_command (struct child *child)
                 }
 
                 child->file->profile_idx = profile_idx;
+
+                /* We have enough memory! Reserve it and proceed */
+                if (memory_profiles[profile_idx].last_used < time(NULL)) {
+                  reserve_memory_mb (required_mb, filename);
+                  memory_profiles[profile_idx].last_used = time(NULL) + 600;
+                }
 
                 break;
               }
