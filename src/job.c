@@ -1553,6 +1553,18 @@ start_job_command (struct child *child)
 
                 /* We have enough memory! Reserve it and proceed */
                 reserve_memory_mb (required_mb, filename);
+
+                if (profile_idx < 0) {
+                  if (memory_profile_count >= memory_profiles_capacity)
+                    grow_memory_profiles();
+                  if (memory_profile_count < memory_profiles_capacity) {
+                    memory_profiles[memory_profile_count].filename = xstrdup(filename);
+                    memory_profiles[memory_profile_count].peak_memory_mb = required_mb;
+                    profile_idx = memory_profile_count;
+                    memory_profile_count++;
+                  }
+                }
+
                 child->file->profile_idx = profile_idx;
 
                 break;
@@ -1567,7 +1579,7 @@ start_job_command (struct child *child)
 
               usleep (100000);  /* Sleep 100ms */
               waited++;
-            }
+            } /* while (1) */
           } else {
             /* No data available, just report current state */
             unsigned long imminent_mb;
@@ -4176,7 +4188,7 @@ get_file_memory_estimate (const char *filename)
         {
           /* These are huge auto-generated files, ~200K lines, ~200-500 bytes per MB */
           estimated_mb = file_kb / 4;  /* Very rough: 4KB source → 1MB compiled */
-          debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: HEURISTIC m68k-autogen ~%luMB\n", filename, estimated_mb);
+          debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: HEURISTIC m68k-autogen ~%luMB\n", filename, estimated_mb);
           fflush (stderr);
           return estimated_mb;
         }
@@ -4221,7 +4233,7 @@ get_file_memory_estimate (const char *filename)
             {
               /* Like emumem_hed*.cpp: ~120 lines, 104 templates → 1.4GB */
               estimated_mb = template_count * 13;  /* ~13MB per template instantiation */
-              debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: HEURISTIC template-explosion (%d tmpls) ~%luMB\n",
+              debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: HEURISTIC template-explosion (%d tmpls) ~%luMB\n",
                           filename, template_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
@@ -4232,7 +4244,7 @@ get_file_memory_estimate (const char *filename)
             {
               /* luaengine.cpp: 423 sol:: → 3414MB, ~8MB per sol:: */
               estimated_mb = sol_count * 8;
-              debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: HEURISTIC sol2-heavy (%d sol::) ~%luMB\n",
+              debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: HEURISTIC sol2-heavy (%d sol::) ~%luMB\n",
                           filename, sol_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
@@ -4247,7 +4259,7 @@ get_file_memory_estimate (const char *filename)
               else
                 estimated_mb = file_kb / 3;  /* Rough guess */
 
-              debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: HEURISTIC template-moderate (%d tmpls) ~%luMB\n",
+              debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: HEURISTIC template-moderate (%d tmpls) ~%luMB\n",
                           filename, template_count, estimated_mb);
               fflush (stderr);
               return estimated_mb;
@@ -4259,7 +4271,7 @@ get_file_memory_estimate (const char *filename)
         {
           estimated_mb = (file_kb * memory_stats.conservative_mb_per_kb) / 1000;
 
-          debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: %luKB file * %lu conservative ratio = ~%luMB (stats)\n",
+          debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: %luKB file * %lu conservative ratio = ~%luMB (stats)\n",
                       filename, file_kb, memory_stats.conservative_mb_per_kb, estimated_mb);
           fflush (stderr);
 
@@ -4268,7 +4280,7 @@ get_file_memory_estimate (const char *filename)
 
       /* No stats yet - very conservative guess */
       estimated_mb = file_kb / 10;
-      debug_write(MEM_DEBUG_INFO, "[MEMORY] Estimating %s: %luKB → ~%luMB (wild guess)\n",
+      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Estimating %s: %luKB → ~%luMB (wild guess)\n",
                   filename, file_kb, estimated_mb);
       fflush (stderr);
       return estimated_mb;
