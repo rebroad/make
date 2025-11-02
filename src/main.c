@@ -1227,17 +1227,12 @@ find_or_create_reservation (pid_t pid)
 
   pthread_mutex_lock (&shared_data->reserved_count_mutex);
   count = shared_data->reservation_count;
-  /* Need to find empty slot - check from count position */
-  if (count < MAX_RESERVATIONS && shared_data->reservations[count].pid == 0)
-    empty_slot = count;
-  else {
-    /* Check beyond count for any empty slot */
-    for (i = count; i < MAX_RESERVATIONS; i++)
-      if (shared_data->reservations[i].pid == 0) {
-        empty_slot = i;
-        break;
-      }
-  }
+  /* Need to find empty slot - first check slots before count (reused slots) */
+  for (i = 0; i < MAX_RESERVATIONS; i++)
+    if (shared_data->reservations[i].pid == 0) {
+      empty_slot = i;
+      break;
+    }
 
   /* No existing entry, use empty slot if available */
   if (empty_slot >= 0) {
@@ -1251,8 +1246,10 @@ find_or_create_reservation (pid_t pid)
     return res;
   }
 
-  /* No empty slot available - this shouldn't happen often */
+  /* No empty slot available - report error */
   pthread_mutex_unlock (&shared_data->reserved_count_mutex);
+  debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: No available reservation slots (MAX_RESERVATIONS=%d exceeded). Cannot track memory for PID=%d\n",
+              MAX_RESERVATIONS, (int)pid);
   return NULL;
 }
 
@@ -1289,6 +1286,12 @@ reserve_memory_mb (pid_t pid, unsigned long mb, const char *filepath)
 
   old_value = res->reserved_mb;
   res->reserved_mb = mb;
+
+  /* If releasing (mb == 0), clear the PID to mark the slot as free for reuse */
+  if (mb == 0 && res->pid == pid) {
+    res->pid = 0;
+    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused)\n", (int)pid);
+  }
 
   //pthread_mutex_unlock (&shared_data->imminent_mutex);
   debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u)\n",
@@ -1644,6 +1647,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           shared_data->total_reserved_mb -= profile_peak_mb;
           pthread_mutex_unlock (&shared_data->total_reserved_mb_mutex);
           res->reserved_mb = 0;
+          res->pid = 0;  /* Clear PID to mark slot as free for reuse */
           released = 1;
         }
         //pthread_mutex_unlock (&shared_data->imminent_mutex);
