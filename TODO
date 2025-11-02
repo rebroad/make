@@ -2,3 +2,4 @@
 = Unreserve_mb as soon as new decendant detected (and use total_old_peaks = total_current_mb instead for imminent calc)
 = Remove some of that TTY fix code (as probably wasn't needed given the final fix was simple)
 = Make memory_profiles resize as needed
+= Fix memory bar (imminent can take it over 100%)
