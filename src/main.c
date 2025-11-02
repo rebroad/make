@@ -1828,13 +1828,18 @@ memory_monitor_thread_func (void *arg)
       //pthread_mutex_lock (&shared_data->imminent_mutex);
       shared_data->unused_peaks_mb = total_unused_peaks_mb;
       count = shared_data->reservation_count;
-      for (i = 0; i < (unsigned int)count && i < MAX_RESERVATIONS; i++) {
+      for (i = 0; i < (unsigned int)count; i++) {
         unsigned long res_mb = shared_data->reservations[i].reserved_mb;
         total_reserved_mb += res_mb;
         if (res_mb > 0) {
           debug_write(MEM_DEBUG_VERBOSE, "[DEBUG_SUM] reservation[%u]: PID=%d reserved_mb=%lu (total now=%lu)\n",
                       i, (int)shared_data->reservations[i].pid, res_mb, total_reserved_mb);
         }
+      }
+      /* Check if total_reserved_mb matches shared_data->total_reserved_mb, warn if not */
+      if (shared_data->total_reserved_mb != total_reserved_mb) {
+        debug_write(MEM_DEBUG_ERROR, "[MEMORY] WARNING: Calculated total_reserved_mb=%lu does not match shared_data->total_reserved_mb=%lu\n",
+                    total_reserved_mb, shared_data->total_reserved_mb);
       }
       /* Update shared memory with total current usage (calculated in the loop above) */
       //shared_data->total_reserved_mb = total_reserved_mb;
