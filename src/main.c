@@ -1013,28 +1013,26 @@ init_shared_memory (void)
       return -1;
     }
 
-  /* Initialize shared memory data */
-  if (created)
+  /* Initialize or reset all shared memory data at top-level make */
+  if (makelevel == 0)
     {
       pthread_mutexattr_t mutex_attr;
-      memset(shared_data->reservations, 0, sizeof(shared_data->reservations));
-      shared_data->reservation_count = 0;
-      shared_data->unused_peaks_mb = 0;
-      debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Created NEW shared memory: reservations initialized, unused_peaks_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
-      pthread_mutexattr_init (&mutex_attr);
-      pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-      pthread_mutex_init (&shared_data->imminent_mutex, &mutex_attr);
-      pthread_mutexattr_destroy (&mutex_attr);
-    }
-  else
-    {
-      //debug_write("[DEBUG] Reusing EXISTING shared memory: reserved_memory_mb=%lu, unused_peaks_mb=%lu (PID=%d, makelevel=%u)\n", shared_data->reserved_memory_mb, shared_data->unused_peaks_mb, getpid(), makelevel);
-      /* Only top-level make should reset shared memory to prevent stale data */
-      if (makelevel == 0)
+      /* Fully zero/clear most shared memory except the mutex itself */
+      memset(shared_data, 0, sizeof(struct shared_memory_data));
+
+      if (created)
         {
-          debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
-          shared_data->total_reserve_mb = 0;
-          shared_data->unused_peaks_mb = 0;
+          /* Initialize mutex on newly created shmem */
+          pthread_mutexattr_init (&mutex_attr);
+          pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
+          pthread_mutex_init (&shared_data->imminent_mutex, &mutex_attr);
+          pthread_mutexattr_destroy (&mutex_attr);
+          debug_write(MEM_DEBUG_INFO, "[DEBUG] Created NEW shared memory: all fields zeroed (PID=%d, makelevel=%u)\n", getpid(), makelevel);
+        }
+      else
+        {
+          /* The mutex should already be constructed if reusing, do not re-init it */
+          debug_write(MEM_DEBUG_INFO, "[DEBUG] Top-level make: fully zeroed shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
         }
     }
 
@@ -1169,13 +1167,6 @@ get_imminent_memory_mb (void)
       unused_peaks_mb = shared_data->unused_peaks_mb;
       pthread_mutex_unlock (&shared_data->imminent_mutex);
     }
-
-  /* Debug: Show imminent calculation details when called for PREDICT decisions */
-  /*debug_write("[DEBUG] Imminent calculation for PREDICT (PID=%d):\n", getpid());
-  debug_write("  Reserved memory (active processes): %luMB\n", reserved_mb);
-  debug_write("  Current compile usage: %luMB\n", total_tracked_mb);*/
-
-  //fprintf (stderr, "  Final result: %luMB\n", result);
 
   return reserved_mb + unused_peaks_mb;
 #else
