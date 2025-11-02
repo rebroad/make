@@ -956,10 +956,10 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
   now = time (NULL);
   fflush (stderr);
 
-  /* If final=1 and the new peak is lower, reduce by 10% of the difference */
+  /* If final=1 and the new peak is lower, reduce by 33% of the difference */
   if (final && memory_mb < prev_peak_mb) {
     memory_mb = prev_peak_mb - (prev_peak_mb - memory_mb) / 3;
-    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Reducing peak by 10%% of difference (peak: %luMB -> %luMB final: %d file: %s)\n",
+    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Reducing peak by 33%% of difference (peak: %luMB -> %luMB final: %d file: %s)\n",
                 prev_peak_mb, memory_mb, final,
                 memory_profiles[profile_idx].filename ? memory_profiles[profile_idx].filename : "unknown");
   } else {
