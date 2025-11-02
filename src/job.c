@@ -1499,6 +1499,7 @@ start_job_command (struct child *child)
       unsigned long required_mb = 0;
       unsigned long effective_free = 0;
       unsigned long imminent_mb = 0;
+      char *cmdline = NULL;
       block_sigs ();
 
       child->remote = 0;
@@ -1508,15 +1509,9 @@ start_job_command (struct child *child)
       if (memory_aware_flag) {
         unsigned long free_mb;
         char *filename = NULL;
-        char *cmdline = NULL;
 
         /* Extract filename from command using common extraction logic */
         filename = extract_filename_from_argv ((const char **)argv, "job", &cmdline, 0);
-
-        if (cmdline) {
-          debug_write(MEM_DEBUG_VERBOSE, "[JOB] PID=%d cmdline: %s\n", getpid(), cmdline);
-          free (cmdline);
-        }
 
         if (filename) {
           /* Look up profile index */
@@ -1596,6 +1591,14 @@ start_job_command (struct child *child)
 
 #endif /* !VMS */
       child->profile_idx = profile_idx;
+
+      /* Debug write cmdline with child PID */
+      if (cmdline) {
+        debug_write(MEM_DEBUG_VERBOSE, "[JOB] PID=%d PPID=%d cmdline: %s\n", child->pid, getpid(), cmdline);
+        free (cmdline);
+        cmdline = NULL;
+      }
+
       if (profile_idx >= 0) {
         char *filename = memory_profiles[profile_idx].filename;
         /* We have enough memory! Reserve it and proceed */
