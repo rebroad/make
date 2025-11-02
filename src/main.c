@@ -1819,13 +1819,13 @@ memory_monitor_thread_func (void *arg)
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
     if (shared_data) {
       int count;
+      unsigned int i;
       pthread_mutex_lock (&shared_data->imminent_mutex);
       count = shared_data->reservation_count;
-      for (int i = 0; i < count && i < MAX_RESERVATIONS; i++) {
-        shared_data->total_reserve_mb += shared_data->reservations[i].reserved_mb;
+      for (i = 0; i < (unsigned int)count && i < MAX_RESERVATIONS; i++)
         total_reserve_mb += shared_data->reservations[i].reserved_mb;
-      }
       /* Update shared memory with total current usage (calculated in the loop above) */
+      shared_data->total_reserve_mb = total_reserve_mb;
       shared_data->unused_peaks_mb = total_unused_peaks_mb;
       pthread_mutex_unlock (&shared_data->imminent_mutex);
     }
