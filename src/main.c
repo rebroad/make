@@ -1332,7 +1332,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   char bar[256];
   int bar_len = 20;
   size_t pos = 0;
-  size_t i;
   char status[512];
   int term_width;
   int visible_len = 50;  /* Adjusted for "X jobs" display */
@@ -1340,14 +1339,28 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   static int write_count = 0;
   static int skip_count = 0;
   unsigned long total_mb;
-  int make_filled, imminent_filled;
-  int other_filled, free_filled;
   char output_buf[1024];
   int output_len;
   ssize_t written;
   char debug_msg[128];
   int debug_len;
-  int total_used_filled;
+  /* Variables for 8-level block bar rendering */
+  static const char *block_chars[9] = {"", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+  const char *yellow = "\033[1;33m";
+  int cell_idx;
+  int cell_start_sub;
+  int cell_end_sub;
+  int make_sub;
+  int imminent_sub;
+  int total_used_sub;
+  int other_sub;
+  int free_sub;
+  int cell_fill;
+  const char *cell_color;
+  int purple_in_cell;
+  int green_in_cell;
+  int yellow_in_cell;
+  int gray_in_cell;
 
   if (!memory_aware_flag || disable_memory_display)
     return;
@@ -1380,45 +1393,70 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Get total memory */
   total_mb = free_mb / (100 - mem_percent) * 100;
 
-  /* Build multi-color memory bar (20 chars) */
+  /* Build multi-color memory bar with 8-level blocks (20 chars, 160 sub-pixels) */
   /* Bar shows: [make memory in purple][other used in green][imminent in yellow][free in gray] */
-  make_filled = (make_usage_mb * bar_len) / total_mb;
-  imminent_filled = (imminent_mb * bar_len) / total_mb;
+  /* Each cell has 8 levels: ▁▂▃▄▅▆▇█ (U+2581 to U+2588) */
 
-  /* Calculate other_filled and ensure it's not negative */
-  total_used_filled = (mem_percent * bar_len) / 100;
-  other_filled = total_used_filled - make_filled;
-  if (other_filled < 0) other_filled = 0;
+  /* Calculate total filled sub-pixels for each category (out of bar_len * 8 = 160 sub-pixels) */
+  make_sub = (make_usage_mb * bar_len * 8) / total_mb;
+  imminent_sub = (imminent_mb * bar_len * 8) / total_mb;
+  total_used_sub = (mem_percent * bar_len * 8) / 100;
+  other_sub = total_used_sub - make_sub;
+  if (other_sub < 0) other_sub = 0;
+  free_sub = bar_len * 8 - make_sub - other_sub - imminent_sub;
+  if (free_sub < 0) free_sub = 0;
 
-  free_filled = bar_len - make_filled - other_filled - imminent_filled;
-  if (free_filled < 0) free_filled = 0;
+  /* Render each cell with appropriate fill level and color */
+  for (cell_idx = 0; cell_idx < bar_len && pos < sizeof(bar) - 30; cell_idx++) {
+    cell_fill = 0;
+    cell_color = "";
+    cell_start_sub = cell_idx * 8;
+    cell_end_sub = cell_start_sub + 8;
 
-  /* Purple: make-tracked memory */
-  if (make_filled > 0) {
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", purple);
-    for (i = 0; i < (size_t)make_filled && pos < sizeof(bar) - 10; i++)
-      pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
-  }
+    /* Determine fill and color based on which category this cell spans */
+    if (cell_end_sub <= make_sub) {
+      /* Entirely purple cell */
+      cell_fill = 8;
+      cell_color = purple;
+    } else if (cell_start_sub < make_sub) {
+      /* Transition cell: purple to green - calculate actual fill level */
+      purple_in_cell = make_sub - cell_start_sub;
+      green_in_cell = cell_end_sub - make_sub;
+      if (green_in_cell > 8 - purple_in_cell) green_in_cell = 8 - purple_in_cell;
+      cell_fill = purple_in_cell + green_in_cell;
+      cell_color = green;
+    } else if (cell_end_sub <= make_sub + other_sub) {
+      /* Entirely green cell */
+      cell_fill = 8;
+      cell_color = green;
+    } else if (cell_start_sub < make_sub + other_sub) {
+      /* Transition cell: green to yellow - calculate actual fill level */
+      green_in_cell = (make_sub + other_sub) - cell_start_sub;
+      yellow_in_cell = cell_end_sub - (make_sub + other_sub);
+      if (yellow_in_cell > 8 - green_in_cell) yellow_in_cell = 8 - green_in_cell;
+      cell_fill = green_in_cell + yellow_in_cell;
+      cell_color = yellow;
+    } else if (cell_end_sub <= make_sub + other_sub + imminent_sub) {
+      /* Entirely yellow cell */
+      cell_fill = 8;
+      cell_color = yellow;
+    } else if (cell_start_sub < make_sub + other_sub + imminent_sub) {
+      /* Transition cell: yellow to gray - calculate actual fill level */
+      yellow_in_cell = (make_sub + other_sub + imminent_sub) - cell_start_sub;
+      gray_in_cell = cell_end_sub - (make_sub + other_sub + imminent_sub);
+      if (gray_in_cell > 8 - yellow_in_cell) gray_in_cell = 8 - yellow_in_cell;
+      cell_fill = yellow_in_cell + gray_in_cell;
+      cell_color = gray;
+    } else {
+      /* Entirely gray cell */
+      cell_fill = 8;
+      cell_color = gray;
+    }
 
-  /* Green: other used memory */
-  if (other_filled > 0) {
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", green);
-    for (i = 0; i < (size_t)other_filled && pos < sizeof(bar) - 10; i++)
-      pos += snprintf(bar + pos, sizeof(bar) - pos, "█");
-  }
-
-  /* Yellow: imminent memory */
-  if (imminent_filled > 0) {
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "\033[1;33m");
-    for (i = 0; i < (size_t)imminent_filled && pos < sizeof(bar) - 10; i++)
-      pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
-  }
-
-  /* Gray: free memory */
-  if (free_filled > 0) {
-    pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", gray);
-    for (i = 0; i < (size_t)free_filled && pos < sizeof(bar) - 10; i++)
-      pos += snprintf(bar + pos, sizeof(bar) - pos, "░");
+    /* Apply color and block character */
+    if (cell_fill > 0) {
+      pos += snprintf(bar + pos, sizeof(bar) - pos, "%s%s%s", cell_color, block_chars[cell_fill], reset);
+    }
   }
 
   /* Reset color */
