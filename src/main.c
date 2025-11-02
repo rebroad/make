@@ -1222,6 +1222,8 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long old_value;
+  unsigned long old_total_reserved;
+  unsigned long new_total_reserved;
   struct pid_reservation *res = NULL;
   int i, count;
   int empty_slot = -1;
@@ -1281,11 +1283,16 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
 
   /* If mb <= 0, zero out the existing value */
   if (mb <= 0) {
+    pthread_mutex_lock (&shared_data->total_reserved_mb_mutex);
+    old_total_reserved = shared_data->total_reserved_mb;
+    shared_data->total_reserved_mb -= old_value;
+    new_total_reserved = shared_data->total_reserved_mb;
+    pthread_mutex_unlock (&shared_data->total_reserved_mb_mutex);
     res->reserved_mb = 0;
     /* If releasing (mb <= 0), clear the PID to mark the slot as free for reuse */
     if (res->pid == pid) {
       res->pid = 0;
-      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused)\n", (int)pid);
+      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused), total_reserved_mb: %luMB -> %luMB\n", (int)pid, old_total_reserved, new_total_reserved);
     }
     /* Return 1 if negative value cancelled out the existing value */
     return (mb < 0 && old_value == (unsigned long)(-mb)) ? 1 : 0;
@@ -1293,10 +1300,23 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
 
   /* Positive value: overwrite with new value */
   res->reserved_mb = (unsigned long)mb;
+  pthread_mutex_lock (&shared_data->total_reserved_mb_mutex);
+  old_total_reserved = shared_data->total_reserved_mb;
+  if ((unsigned long)mb >= old_value) {
+    shared_data->total_reserved_mb += ((unsigned long)mb - old_value);
+  } else {
+    /* Avoid underflow if old_value > new mb */
+    if (shared_data->total_reserved_mb < (old_value - (unsigned long)mb))
+      shared_data->total_reserved_mb = 0;
+    else
+      shared_data->total_reserved_mb -= (old_value - (unsigned long)mb);
+  }
+  new_total_reserved = shared_data->total_reserved_mb;
+  pthread_mutex_unlock (&shared_data->total_reserved_mb_mutex);
 
   //pthread_mutex_unlock (&shared_data->imminent_mutex);
-  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u)\n",
-       old_value, (unsigned long)mb, filepath ? filepath : "?", (int)pid, makelevel);
+  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u), total_reserved_mb: %luMB -> %luMB\n",
+       old_value, (unsigned long)mb, filepath ? filepath : "?", (int)pid, makelevel, old_total_reserved, new_total_reserved);
   return 0;
 #else
   return 0;
