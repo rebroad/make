@@ -931,7 +931,7 @@ grow_memory_profiles (void)
   memory_profiles = new_profiles;
   memory_profiles_capacity = new_capacity;
 
-  debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Grew memory_profiles array to %u entries\n", new_capacity);
+  debug_write(MEM_DEBUG_MAX, "[MEMORY] Grew memory_profiles array to %u entries\n", new_capacity);
 }
 
 /* Record memory usage for a file using profile index (main make only) */
@@ -1211,91 +1211,95 @@ get_memory_stats (unsigned int *percent)
   return 0;
 }
 
-/* Find or create a reservation entry for the given PID */
-static struct pid_reservation *
-find_or_create_reservation (pid_t pid)
-{
-  struct pid_reservation *res = NULL;
-  int i;
-  int empty_slot = -1;
-  int count = shared_data->reservation_count;
-
-  /* First, look for existing entry for this PID (only check up to actual count) */
-  for (i = 0; i < count && i < MAX_RESERVATIONS; i++)
-    if (shared_data->reservations[i].pid == pid)
-      return &shared_data->reservations[i];
-
-  pthread_mutex_lock (&shared_data->reserved_count_mutex);
-  count = shared_data->reservation_count;
-  /* Need to find empty slot - first check slots before count (reused slots) */
-  for (i = 0; i < MAX_RESERVATIONS; i++)
-    if (shared_data->reservations[i].pid == 0) {
-      empty_slot = i;
-      break;
-    }
-
-  /* No existing entry, use empty slot if available */
-  if (empty_slot >= 0) {
-    res = &shared_data->reservations[empty_slot];
-    res->pid = pid;
-    res->reserved_mb = 0;
-    /* Update count if we're adding at the end */
-    if (empty_slot >= count)
-      shared_data->reservation_count = empty_slot + 1;
-    pthread_mutex_unlock (&shared_data->reserved_count_mutex);
-    return res;
-  }
-
-  /* No empty slot available - report error */
-  pthread_mutex_unlock (&shared_data->reserved_count_mutex);
-  debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: No available reservation slots (MAX_RESERVATIONS=%d exceeded). Cannot track memory for PID=%d\n",
-              MAX_RESERVATIONS, (int)pid);
-  return NULL;
-}
-
 /* Reserve or release memory for a process
-   Positive value: reserve memory
-   Negative value: release memory
+   mb: memory amount in MB (positive value to reserve, 0 or negative to release)
+   If mb <= 0, sets reserved_mb to 0.
+   If mb < 0, returns 1 (true) if the negative value cancelled out the existing value.
+   The new value simply overwrites the old value for this PID's reservation slot.
    Uses the provided PID (child PID for jobs, make PID for sub-makes) to track reservations */
-void
-reserve_memory_mb (pid_t pid, unsigned long mb, const char *filepath)
+int
+reserve_memory_mb (pid_t pid, long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long old_value;
-  struct pid_reservation *res;
+  struct pid_reservation *res = NULL;
+  int i, count;
+  int empty_slot = -1;
 
   if (memory_aware_flag && shared_data == NULL) {
       if (init_shared_memory () != 0)
-        return; /* Fallback if shared memory fails */
+        return 0; /* Fallback if shared memory fails */
   }
 
   if (!shared_data) {
     debug_write(MEM_DEBUG_ERROR, "[DEBUG] Shared memory not initialized, cannot reserve/release memory\n");
-    return;
+    return 0;
   }
 
   //pthread_mutex_lock (&shared_data->imminent_mutex);
 
-  res = find_or_create_reservation (pid);
+  /* Find or create reservation entry for this PID */
+  count = shared_data->reservation_count;
+
+  /* First, look for existing entry for this PID (only check up to actual count) */
+  for (i = 0; i < count && i < MAX_RESERVATIONS; i++)
+    if (shared_data->reservations[i].pid == pid) {
+      res = &shared_data->reservations[i];
+      break;
+    }
+
+  /* If not found, need to find or create a slot */
   if (!res) {
-    /* No slot available - log error but continue */
-    //pthread_mutex_unlock (&shared_data->imminent_mutex);
-    debug_write(MEM_DEBUG_ERROR, "[MEMORY] No reservation slot available for PID=%d\n", (int)pid);
-    return;
+    pthread_mutex_lock (&shared_data->reserved_count_mutex);
+    count = shared_data->reservation_count;
+
+    /* Look for empty slot */
+    for (i = 0; i < MAX_RESERVATIONS; i++)
+      if (shared_data->reservations[i].pid == 0) {
+        empty_slot = i;
+        break;
+      }
+
+    /* No existing entry, use empty slot if available */
+    if (empty_slot >= 0) {
+      res = &shared_data->reservations[empty_slot];
+      res->pid = pid;
+      res->reserved_mb = 0;
+      /* Update count if we're adding at the end */
+      if (empty_slot >= count) shared_data->reservation_count = empty_slot + 1;
+    } else {
+      /* No empty slot available - report error */
+      pthread_mutex_unlock (&shared_data->reserved_count_mutex);
+      debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: No available reservation slots (MAX_RESERVATIONS=%d exceeded). Cannot track memory for PID=%d\n",
+                  MAX_RESERVATIONS, (int)pid);
+      return 0;
+    }
+    pthread_mutex_unlock (&shared_data->reserved_count_mutex);
   }
 
   old_value = res->reserved_mb;
-  res->reserved_mb = mb;
 
-  /* If releasing (mb == 0), clear the PID to mark the slot as free for reuse */
-  if (mb == 0 && res->pid == pid) {
-    res->pid = 0;
-    debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused)\n", (int)pid);
+  /* If mb <= 0, zero out the existing value */
+  if (mb <= 0) {
+    res->reserved_mb = 0;
+    /* If releasing (mb <= 0), clear the PID to mark the slot as free for reuse */
+    if (res->pid == pid) {
+      res->pid = 0;
+      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused)\n", (int)pid);
+    }
+    /* Return 1 if negative value cancelled out the existing value */
+    return (mb < 0 && old_value == (unsigned long)(-mb)) ? 1 : 0;
   }
+
+  /* Positive value: overwrite with new value */
+  res->reserved_mb = (unsigned long)mb;
 
   //pthread_mutex_unlock (&shared_data->imminent_mutex);
   debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u)\n",
-       old_value, mb, filepath ? filepath : "?", (int)pid, makelevel);
+       old_value, (unsigned long)mb, filepath ? filepath : "?", (int)pid, makelevel);
+  return 0;
+#else
+  return 0;
 #endif
 }
 
@@ -1637,24 +1641,9 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         } else debug_write(MEM_DEBUG_ERROR, "[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
-      if (profile_peak_mb > 0 && shared_data) {
-        int released = 0;
-        struct pid_reservation *res;
-        //pthread_mutex_lock (&shared_data->imminent_mutex);
-        res = find_or_create_reservation (parent_pid); // TODO probably need to use pid instead of parent_pid
-        if (res && res->reserved_mb == profile_peak_mb) {
-          pthread_mutex_lock (&shared_data->total_reserved_mb_mutex);
-          shared_data->total_reserved_mb -= profile_peak_mb;
-          pthread_mutex_unlock (&shared_data->total_reserved_mb_mutex);
-          res->reserved_mb = 0;
-          res->pid = 0;  /* Clear PID to mark slot as free for reuse */
-          released = 1;
-        }
-        //pthread_mutex_unlock (&shared_data->imminent_mutex);
-        if (released)
+      if (profile_peak_mb > 0 && reserve_memory_mb(pid, -profile_peak_mb, strip_ptr))
           debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Released %luMB reservation for PID=%d (main make discovered descendant, using old_peak_mb)\n",
                 profile_peak_mb, parent_pid);
-      }
 
       /* Free the filename and cmdline if we extracted them */
       if (strip_ptr) free(strip_ptr);
