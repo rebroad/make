@@ -1292,7 +1292,8 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
     /* If releasing (mb <= 0), clear the PID to mark the slot as free for reuse */
     if (res->pid == pid) {
       res->pid = 0;
-      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused), total_reserved_mb: %luMB -> %luMB\n", (int)pid, old_total_reserved, new_total_reserved);
+      debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Freed reservation slot for PID=%d (slot can be reused), total_reserved_mb: %luMB -> %luMB (-%luMB)\n",
+            (int)pid, old_total_reserved, new_total_reserved, old_value);
     }
     /* Return 1 if negative value cancelled out the existing value */
     return (mb < 0 && old_value == (unsigned long)(-mb)) ? 1 : 0;
@@ -1315,8 +1316,8 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
   pthread_mutex_unlock (&shared_data->total_reserved_mb_mutex);
 
   //pthread_mutex_unlock (&shared_data->imminent_mutex);
-  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u), total_reserved_mb: %luMB -> %luMB\n",
-       old_value, (unsigned long)mb, filepath ? filepath : "?", (int)pid, makelevel, old_total_reserved, new_total_reserved);
+  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory[%d]: %luMB -> %luMB for %s (PID=%d, makelevel=%u), total_reserved_mb: %luMB -> %luMB\n",
+       i, old_value, (unsigned long)mb, filepath ? filepath : "?", (int)pid, makelevel, old_total_reserved, new_total_reserved);
   return 0;
 #else
   return 0;
