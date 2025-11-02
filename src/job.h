@@ -56,6 +56,8 @@ struct child
 
     pid_t pid;                  /* Child process's ID number.  */
 
+    int profile_idx;            /* Index into memory_profiles array, -1 if not found */
+
     unsigned int  remote:1;     /* Nonzero if executing remotely.  */
     unsigned int  noerror:1;    /* Nonzero if commands contained a '-'.  */
     unsigned int  good_stdin:1; /* Nonzero if this child has a good stdin.  */

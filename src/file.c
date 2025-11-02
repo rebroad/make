@@ -183,7 +183,6 @@ enter_file (const char *name)
   new = xcalloc (sizeof (struct file));
   new->name = new->hname = name;
   new->update_status = us_none;
-  new->profile_idx = -1;
 
   if (HASH_VACANT (f))
     {

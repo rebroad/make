@@ -1099,22 +1099,22 @@ reap_children (int block, int err)
         job_slots_used -= c->jobslot;
 
       /* Release reserved memory for this file if any was reserved */
-      if (c->file->profile_idx >= 0) {
+      if (c->profile_idx >= 0) {
         /*debug_write(MEM_DEBUG_INFO, "[MEMORY] reap_children: PID=%d makelevel=%u profile_idx=%d, memory_profiles=%p\n",
-                    getpid(), makelevel, c->file->profile_idx, memory_profiles);*/
+                    getpid(), makelevel, c->profile_idx, memory_profiles);*/
         if (memory_profiles == NULL) {
           debug_write(MEM_DEBUG_ERROR, "[MEMORY] ERROR: reap_children: memory_profiles is NULL but profile_idx=%d (PID=%d, makelevel=%u)\n",
-                      c->file->profile_idx, getpid(), makelevel);
+                      c->profile_idx, getpid(), makelevel);
         } else {
-          unsigned long peak_mb = memory_profiles[c->file->profile_idx].peak_memory_mb;
+          unsigned long peak_mb = memory_profiles[c->profile_idx].peak_memory_mb;
           if (peak_mb > 0) {
-            const char *profile_filename = memory_profiles[c->file->profile_idx].filename;
-            reserve_memory_mb(0, profile_filename ? profile_filename : c->file->name);
+            const char *profile_filename = memory_profiles[c->profile_idx].filename;
+            reserve_memory_mb(c->pid, 0, profile_filename ? profile_filename : c->file->name);
             debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed) (PID=%d, makelevel=%u)\n",
-                        peak_mb, profile_filename ? profile_filename : c->file->name, getpid(), makelevel);
+                        peak_mb, profile_filename ? profile_filename : c->file->name, (int)c->pid, makelevel);
           }
         }
-        c->file->profile_idx = -1;
+        c->profile_idx = -1;
       }
 
       /* Remove the child from the chain and free it.  */
@@ -1551,7 +1551,7 @@ start_job_command (struct child *child)
               effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
               if (required_mb <= effective_free) {
-                child->file->profile_idx = profile_idx;
+                child->profile_idx = profile_idx;
 
                 /* We have enough memory! Reserve it and proceed */
                 if (memory_profiles[profile_idx].last_used != -1) {
@@ -1565,7 +1565,6 @@ start_job_command (struct child *child)
                     fflush (stderr);
                   }
 
-                  reserve_memory_mb (required_mb, filename);
                   memory_profiles[profile_idx].last_used = -1;
                 }
 
@@ -1612,6 +1611,9 @@ start_job_command (struct child *child)
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
 #endif /* !VMS */
+      if (child->profile_idx >= 0) {
+        reserve_memory_mb (child->pid, memory_profiles[child->profile_idx].peak_memory_mb, memory_profiles[child->profile_idx].filename);
+      }
     }
 
 #else   /* __MSDOS__ or Amiga or WINDOWS32 */
@@ -1842,6 +1844,7 @@ new_job (struct file *file)
 
   c->file = file;
   c->sh_batch_file = NULL;
+  c->profile_idx = -1;  /* Initialize to -1 (0 is a valid profile index) */
 
   /* Cache dontcare flag because file->dontcare can be changed once we
      return. Check dontcare inheritance mechanism for details.  */

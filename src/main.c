@@ -1259,13 +1259,12 @@ find_or_create_reservation (pid_t pid)
 /* Reserve or release memory for a process
    Positive value: reserve memory
    Negative value: release memory
-   Uses the current process PID (getpid()) to track per-sub-make reservations */
+   Uses the provided PID (child PID for jobs, make PID for sub-makes) to track reservations */
 void
-reserve_memory_mb (unsigned long mb, const char *filepath)
+reserve_memory_mb (pid_t pid, unsigned long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long old_value;
-  pid_t my_pid = getpid();
   struct pid_reservation *res;
 
   if (memory_aware_flag && shared_data == NULL) {
@@ -1280,11 +1279,11 @@ reserve_memory_mb (unsigned long mb, const char *filepath)
 
   //pthread_mutex_lock (&shared_data->imminent_mutex);
 
-  res = find_or_create_reservation (my_pid);
+  res = find_or_create_reservation (pid);
   if (!res) {
     /* No slot available - log error but continue */
     //pthread_mutex_unlock (&shared_data->imminent_mutex);
-    debug_write(MEM_DEBUG_ERROR, "[MEMORY] No reservation slot available for PID=%d\n", my_pid);
+    debug_write(MEM_DEBUG_ERROR, "[MEMORY] No reservation slot available for PID=%d\n", (int)pid);
     return;
   }
 
@@ -1293,7 +1292,7 @@ reserve_memory_mb (unsigned long mb, const char *filepath)
 
   //pthread_mutex_unlock (&shared_data->imminent_mutex);
   debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u)\n",
-       old_value, mb, filepath ? filepath : "?", my_pid, makelevel);
+       old_value, mb, filepath ? filepath : "?", (int)pid, makelevel);
 #endif
 }
 
@@ -1639,7 +1638,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         int released = 0;
         struct pid_reservation *res;
         //pthread_mutex_lock (&shared_data->imminent_mutex);
-        res = find_or_create_reservation (parent_pid);
+        res = find_or_create_reservation (parent_pid); // TODO probably need to use pid instead of parent_pid
         if (res && res->reserved_mb == profile_peak_mb) {
           pthread_mutex_lock (&shared_data->total_reserved_mb_mutex);
           shared_data->total_reserved_mb -= profile_peak_mb;
