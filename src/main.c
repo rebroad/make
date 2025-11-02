@@ -1265,7 +1265,7 @@ find_or_create_reservation (pid_t pid)
    Negative value: release memory
    Uses the current process PID (getpid()) to track per-sub-make reservations */
 void
-reserve_memory_mb (long mb, const char *filepath)
+reserve_memory_mb (unsigned long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   unsigned long old_value;
