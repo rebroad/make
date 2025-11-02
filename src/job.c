@@ -1602,7 +1602,7 @@ start_job_command (struct child *child)
       if (profile_idx >= 0) {
         char *filename = memory_profiles[profile_idx].filename;
         /* We have enough memory! Reserve it and proceed */
-        if (memory_profiles[profile_idx].last_used != -1) {
+        if (memory_profiles[profile_idx].last_used > -1) {
           if (waited) {
             debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
                       getpid(), filename, waited / 10);
@@ -1612,8 +1612,13 @@ start_job_command (struct child *child)
                       getpid(), filename, required_mb, effective_free, imminent_mb);
             fflush (stderr);
           }
-          reserve_memory_mb (child->pid, required_mb, filename);
           memory_profiles[profile_idx].last_used = -1;
+        }
+        if (memory_profiles[profile_idx].last_used == -1) {
+          if (argv[0] && strcmp (argv[0], "echo") != 0) {
+            reserve_memory_mb (child->pid, required_mb, filename);
+            memory_profiles[profile_idx].last_used = -2;
+          }
         }
       }
     }
