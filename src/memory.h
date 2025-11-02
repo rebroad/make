@@ -26,7 +26,9 @@ char *extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, con
 
 /* Extract filename from argv array for memory profiling (before process starts)
    Returns malloc'd string (caller must free) or NULL if no filename found
+   If cmdline_out is not NULL, *cmdline_out will be set to a malloc'd copy of the cmdline (caller must free)
+   max_cmdline_len: maximum length for cmdline_out (0 = no limit)
    caller: "main" or "job" - used in temp file naming */
-char *extract_filename_from_argv (const char **argv, const char *caller);
+char *extract_filename_from_argv (const char **argv, const char *caller, char **cmdline_out, size_t max_cmdline_len);
 
 #endif /* MEMORY_H */

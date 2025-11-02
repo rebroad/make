@@ -59,9 +59,11 @@ debug_write (int log_level, const char *format, ...)
 }
 
 /* Common filename extraction logic - finds the last .cpp/.cc/.c file with "/" in the path
-   Returns malloc'd string (caller must free) or NULL if no filename found */
+   Returns malloc'd string (caller must free) or NULL if no filename found
+   If cmdline_out is not NULL, *cmdline_out will be set to a malloc'd copy of the text (caller must free)
+   max_cmdline_len: maximum length for cmdline_out (0 = no limit) */
 static char *
-extract_filename_common (const char *text, size_t text_len, const char *caller, int pid, int parent_pid, int depth, const char *debug_prefix)
+extract_filename_common (const char *text, size_t text_len, const char *caller, int pid, int parent_pid, int depth, char **cmdline_out, size_t max_cmdline_len)
 {
   char source_filename[1024];
   char tmp_filename[64];
@@ -147,9 +149,24 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     }
   }
 
+  /* Return cmdline if requested */
+  if (cmdline_out) {
+    *cmdline_out = NULL;
+    if (text_len > 0) {
+      size_t result_len = strlen(text);
+      if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
+        /* Truncate and add "..." */
+        *cmdline_out = xmalloc(max_cmdline_len + 1);
+        snprintf(*cmdline_out, max_cmdline_len + 1, "%.*s...", (int)(max_cmdline_len - 3), text);
+      } else {
+        *cmdline_out = xstrdup(text);
+      }
+    }
+  }
+
   /* Create debug temp file of the full cmdline */
   if (text_len > 0) {
-    snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%s_%d.%s.txt", debug_prefix, timestamp, caller);
+    snprintf(tmp_filename, sizeof(tmp_filename), "/tmp/make_%d.%s.txt", timestamp, caller);
     tmp_file = fopen(tmp_filename, "w");
     if (tmp_file) {
       /* Prepend "FOUND: %s" if strip_ptr is not NULL */
@@ -203,27 +220,17 @@ extract_filename_from_cmdline (pid_t pid, pid_t parent_pid, int depth, const cha
     if (cmdline_buf[i] == '\0') cmdline_buf[i] = ' ';
   cmdline_buf[cmdline_len - 1] = '\0';
 
-  /* Return cmdline if requested */
-  if (cmdline_out) {
-    size_t result_len = strlen(cmdline_buf);
-    if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
-      /* Truncate and add "..." */
-      *cmdline_out = xmalloc(max_cmdline_len + 1);
-      snprintf(*cmdline_out, max_cmdline_len + 1, "%.*s...", (int)(max_cmdline_len - 3), cmdline_buf);
-    } else {
-      *cmdline_out = xstrdup(cmdline_buf);
-    }
-  }
-
   /* Use common extraction logic */
-  return extract_filename_common(cmdline_buf, cmdline_len, caller, (int)pid, (int)parent_pid, depth, "cmdline");
+  return extract_filename_common(cmdline_buf, cmdline_len, caller, (int)pid, (int)parent_pid, depth, cmdline_out, max_cmdline_len);
 }
 
 /* Extract filename from argv array for memory profiling (before process starts)
    Returns malloc'd string (caller must free) or NULL if no filename found
+   If cmdline_out is not NULL, *cmdline_out will be set to a malloc'd copy of the cmdline (caller must free)
+   max_cmdline_len: maximum length for cmdline_out (0 = no limit)
    caller: "main" or "job" - used in temp file naming */
 char *
-extract_filename_from_argv (const char **argv, const char *caller)
+extract_filename_from_argv (const char **argv, const char *caller, char **cmdline_out, size_t max_cmdline_len)
 {
   char argv_buf[4096];
   int argc = 0;
@@ -247,5 +254,5 @@ extract_filename_from_argv (const char **argv, const char *caller)
   }
 
   /* Use common extraction logic */
-  return extract_filename_common(argv_buf, strlen(argv_buf), caller, 0, 0, 0, "argv");
+  return extract_filename_common(argv_buf, strlen(argv_buf), caller, 0, 0, 0, cmdline_out, max_cmdline_len);
 }

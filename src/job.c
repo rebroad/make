@@ -1508,9 +1508,15 @@ start_job_command (struct child *child)
       if (memory_aware_flag) {
         unsigned long free_mb;
         char *filename = NULL;
+        char *cmdline = NULL;
 
         /* Extract filename from command using common extraction logic */
-        filename = extract_filename_from_argv ((const char **)argv, "job");
+        filename = extract_filename_from_argv ((const char **)argv, "job", &cmdline, 0);
+
+        if (cmdline) {
+          debug_write(MEM_DEBUG_VERBOSE, "[JOB] PID=%d cmdline: %s\n", getpid(), cmdline);
+          free (cmdline);
+        }
 
         if (filename) {
           /* Look up profile index */
@@ -1603,7 +1609,6 @@ start_job_command (struct child *child)
                       getpid(), filename, required_mb, effective_free, imminent_mb);
             fflush (stderr);
           }
-
           reserve_memory_mb (child->pid, required_mb, filename);
           memory_profiles[profile_idx].last_used = -1;
         }
