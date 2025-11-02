@@ -1604,10 +1604,9 @@ start_job_command (struct child *child)
             fflush (stderr);
           }
 
+          reserve_memory_mb (child->pid, required_mb, filename);
           memory_profiles[profile_idx].last_used = -1;
         }
-
-        reserve_memory_mb (child->pid, required_mb, filename);
       }
     }
 
