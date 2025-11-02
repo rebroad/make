@@ -1533,21 +1533,18 @@ start_job_command (struct child *child)
 
             /* If we still don't have a profile index, create a new entry now (before the wait loop) */
             if (required_mb > 0 && profile_idx < 0 && memory_profiles != NULL) {
-              if (memory_profile_count >= memory_profiles_capacity)
-                grow_memory_profiles();
+              if (memory_profile_count >= memory_profiles_capacity) grow_memory_profiles();
               if (memory_profile_count < memory_profiles_capacity) {
                 memory_profiles[memory_profile_count].filename = xstrdup(filename);
                 memory_profiles[memory_profile_count].peak_memory_mb = required_mb;
                 memory_profiles[memory_profile_count].last_used = 0;
-                profile_idx = memory_profile_count;
-                memory_profile_count++;
+                profile_idx = memory_profile_count++;
               }
             }
 
             /* Wait loop: check if we have enough memory, accounting for imminent usage */
             while (profile_idx >= 0) {
-              unsigned long imminent_mb;
-              unsigned long effective_free;
+              unsigned long imminent_mb, effective_free;
 
               free_mb = get_memory_stats (NULL);
               imminent_mb = get_imminent_memory_mb ();
