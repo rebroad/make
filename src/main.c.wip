@@ -868,9 +868,9 @@ struct shared_memory_data {
   volatile unsigned int reservation_count;  /* Number of active reservation slots */
   struct pid_reservation reservations[MAX_RESERVATIONS];  /* Per-PID reservation tracking */
   volatile unsigned long unused_peaks_mb;  /* Sum of current memory usage of all running compilations */
+  volatile unsigned long total_reserve_mb;  /* Sum of all reserved memory */
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  pthread_mutex_t reserved_memory_mutex;
-  pthread_mutex_t unused_peaks_mutex;
+  pthread_mutex_t imminent_mutex;
 #endif
 } __attribute__((aligned(8)));
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
@@ -1023,8 +1023,7 @@ init_shared_memory (void)
       debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Created NEW shared memory: reservations initialized, unused_peaks_mb=0 (PID=%d, makelevel=%u)\n", getpid(), makelevel);
       pthread_mutexattr_init (&mutex_attr);
       pthread_mutexattr_setpshared (&mutex_attr, PTHREAD_PROCESS_SHARED);
-      pthread_mutex_init (&shared_data->reserved_memory_mutex, &mutex_attr);
-      pthread_mutex_init (&shared_data->current_usage_mutex, &mutex_attr);
+      pthread_mutex_init (&shared_data->imminent_mutex, &mutex_attr);
       pthread_mutexattr_destroy (&mutex_attr);
     }
   else
@@ -1034,7 +1033,7 @@ init_shared_memory (void)
       if (makelevel == 0)
         {
           debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Top-level make resetting shared memory to prevent stale data (PID=%d, makelevel=%u)\n", getpid(), makelevel);
-          shared_data->reserved_memory_mb = 0;
+          shared_data->total_reserve_mb = 0;
           shared_data->unused_peaks_mb = 0;
         }
     }
@@ -1165,19 +1164,10 @@ get_imminent_memory_mb (void)
   /* Thread-safe access to shared memory values */
   if (shared_data)
     {
-      pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-      /* Sum all per-PID reservations (only check up to actual count) */
-      reserved_mb = 0;
-      unsigned int count = shared_data->reservation_count;
-      for (int i = 0; i < count && i < MAX_RESERVATIONS; i++) {
-        reserved_mb += shared_data->reservations[i].reserved_mb;
-      }
-      pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-
-      pthread_mutex_lock (&shared_data->unused_peak_mutex);
+      pthread_mutex_lock (&shared_data->imminent_mutex);
+      reserved_mb = shared_data->total_reserve_mb;
       unused_peaks_mb = shared_data->unused_peaks_mb;
-      pthread_mutex_unlock (&shared_data->unused_peak_mutex);
-      //debug_write("[DEBUG] Read shared memory: reserved_memory_mb=%lu, unused_peaks_mb=%lu (PID=%d)\n", reserved_mb, unused_peaks_mb, getpid());
+      pthread_mutex_unlock (&shared_data->imminent_mutex);
     }
 
   /* Debug: Show imminent calculation details when called for PREDICT decisions */
@@ -1238,23 +1228,20 @@ find_or_create_reservation (pid_t pid)
   unsigned int count = shared_data->reservation_count;
 
   /* First, look for existing entry for this PID (only check up to actual count) */
-  for (i = 0; i < count && i < MAX_RESERVATIONS; i++) {
-    if (shared_data->reservations[i].pid == pid) {
+  for (i = 0; i < count && i < MAX_RESERVATIONS; i++)
+    if (shared_data->reservations[i].pid == pid)
       return &shared_data->reservations[i];
-    }
-  }
 
   /* Need to find empty slot - check from count position */
-  if (count < MAX_RESERVATIONS && shared_data->reservations[count].pid == 0) {
+  if (count < MAX_RESERVATIONS && shared_data->reservations[count].pid == 0)
     empty_slot = count;
-  } else {
+  else {
     /* Check beyond count for any empty slot */
-    for (i = count; i < MAX_RESERVATIONS; i++) {
+    for (i = count; i < MAX_RESERVATIONS; i++)
       if (shared_data->reservations[i].pid == 0) {
         empty_slot = i;
         break;
       }
-    }
   }
 
   /* No existing entry, use empty slot if available */
@@ -1273,14 +1260,6 @@ find_or_create_reservation (pid_t pid)
   return NULL;
 }
 
-/* Get current reservation value for a PID */
-static unsigned long
-get_reservation_for_pid (pid_t pid)
-{
-  struct pid_reservation *res = find_or_create_reservation (pid);
-  return res ? res->reserved_mb : 0;
-}
-
 /* Reserve or release memory for a process
    Positive value: reserve memory
    Negative value: release memory
@@ -1289,7 +1268,7 @@ void
 reserve_memory_mb (long mb, const char *filepath)
 {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
-  unsigned long old_value, new_value;
+  unsigned long old_value;
   pid_t my_pid = getpid();
 
   if (memory_aware_flag && shared_data == NULL) {
@@ -1302,32 +1281,22 @@ reserve_memory_mb (long mb, const char *filepath)
     return;
   }
 
-  pthread_mutex_lock (&shared_data->reserved_memory_mutex);
+  pthread_mutex_lock (&shared_data->imminent_mutex);
 
   struct pid_reservation *res = find_or_create_reservation (my_pid);
   if (!res) {
     /* No slot available - log error but continue */
+    pthread_mutex_unlock (&shared_data->imminent_mutex);
     debug_write(MEM_DEBUG_ERROR, "[MEMORY] No reservation slot available for PID=%d\n", my_pid);
-    pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
     return;
   }
 
   old_value = res->reserved_mb;
-  if (mb > 0) {
-    res->reserved_mb += mb;
-  } else if (mb < 0) {
-    unsigned long release_mb = (unsigned long)(-mb);
-    if (res->reserved_mb >= release_mb) {
-      res->reserved_mb -= release_mb;
-    } else {
-      res->reserved_mb = 0;
-    }
-  }
-  new_value = res->reserved_mb;
+  res->reserved_mb = mb;
 
-  pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %lu MB -> %lu MB (%s%ld MB) for %s (PID=%d, makelevel=%u)\n", old_value,
-       new_value, mb > 0 ? "+" : "", mb, filepath ? filepath : "?", my_pid, makelevel);
+  pthread_mutex_unlock (&shared_data->imminent_mutex);
+  debug_write(MEM_DEBUG_INFO, "[MEMORY] Reserved memory: %luMB -> %luMB for %s (PID=%d, makelevel=%u)\n",
+       old_value, mb, filepath ? filepath : "?", my_pid, makelevel);
 #endif
 }
 
@@ -1510,7 +1479,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
 static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_jobs,
-                                            unsigned long *total_imminent_mb)
+                                            unsigned long *unused_peaks_mb)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1660,18 +1629,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           main_monitoring_data.compile_count++;
           new_descendant = 1;
 
-          /* Release the reservation for this sub-make PID now that we have old_peak_mb */
-          if (profile_peak_mb > 0 && parent_pid > 0 && shared_data) {
-            pthread_mutex_lock (&shared_data->reserved_memory_mutex);
-            struct pid_reservation *res = find_or_create_reservation (parent_pid);
-            if (res && res->reserved_mb >= profile_peak_mb) {
-              res->reserved_mb -= profile_peak_mb;
-              debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for PID=%d (main make discovered descendant, using old_peak_mb)\n",
-                          profile_peak_mb, parent_pid);
-            }
-            pthread_mutex_unlock (&shared_data->reserved_memory_mutex);
-          }
-
           if (strip_ptr)
             debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] New descendant[%d] PID=%d PPID=%d (d:%d) pidx=%d ppidx=%d old_peak=%luMB rss=%luMB (file: %s)\n",
                         idx, (int)pid, (int)parent_pid, depth, profile_idx, parent_idx, profile_peak_mb, rss_kb / 1024, strip_ptr);
@@ -1693,7 +1650,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_jobs);
     total_rss_kb += child_rss_kb;
     if (total_jobs) *total_jobs += child_jobs;
-    if (total_imminent_mb) *total_imminent_mb += (main_monitoring_data.descendants[descendant_idx].old_peak_mb > main_monitoring_data.descendants[descendant_idx].current_mb)
+    if (unused_peaks_mb) *unused_peaks_mb += (main_monitoring_data.descendants[descendant_idx].old_peak_mb > main_monitoring_data.descendants[descendant_idx].current_mb)
                           ? main_monitoring_data.descendants[descendant_idx].old_peak_mb - main_monitoring_data.descendants[descendant_idx].current_mb
                           : 0;
 
@@ -1781,7 +1738,7 @@ memory_monitor_thread_func (void *arg)
   }
 
   while (monitor_thread_running) {
-    unsigned long total_imminent_mb = 0;
+    unsigned long total_unused_peaks_mb = 0;
     unsigned long total_reserve_mb = 0;
     unsigned int total_make_mem = 0;
     unsigned int total_jobs = 0;
@@ -1800,7 +1757,7 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_jobs, &total_imminent_mb) / 1024;
+    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_jobs, &total_unused_peaks_mb) / 1024;
     if (total_make_mem != last_total_make_mem || total_jobs != last_total_jobs) {
       debug_write(MEM_DEBUG_VERBOSE, "[DEBUG] Total jobs found: %u, total make memory: %uMB\n", total_jobs, total_make_mem);
       last_total_make_mem = total_make_mem;
@@ -1811,7 +1768,24 @@ memory_monitor_thread_func (void *arg)
     for (unsigned int i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
       FILE *stat_file;
+      unsigned long old_peak_mb = main_monitoring_data.descendants[i].old_peak_mb;
+      pid_t pid = main_monitoring_data.descendants[i].pid;
 
+      /* Release the reservation for this sub-make PID now that we have old_peak_mb */
+      if (old_peak_mb > 0 && shared_data) { // TODO - how to do only once?
+        int released = 0;
+        pthread_mutex_lock (&shared_data->imminent_mutex);
+        struct pid_reservation *res = find_or_create_reservation (pid);
+        if (res && res->reserved_mb == old_peak_mb) {
+          res->reserved_mb = 0;
+          released = 1;
+        }
+        pthread_mutex_unlock (&shared_data->imminent_mutex);
+        if (released)
+          debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Released %luMB reservation for PID=%d (main make discovered descendant, using old_peak_mb)\n",
+                old_peak_mb, pid);
+      }
+        
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
       stat_file = fopen(stat_path, "r");
@@ -1839,12 +1813,18 @@ memory_monitor_thread_func (void *arg)
       } else fclose(stat_file);
     }
 
-    /* Update shared memory with total current usage (calculated in the loop above) */
+
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
     if (shared_data) {
-      pthread_mutex_lock (&shared_data->unused_peaks_mutex);
-      shared_data->unused_peaks_mb = total_imminent_mb; // TODO - maybe just have a single immininent value factoring in the reserves (add above)?
-      pthread_mutex_unlock (&shared_data->unused_peaks_mutex);
+      pthread_mutex_lock (&shared_data->imminent_mutex);
+      unsigned int count = shared_data->reservation_count;
+      for (int i = 0; i < count && i < MAX_RESERVATIONS; i++) {
+        shared_data->total_reserve_mb += shared_data->reservations[i].reserved_mb;
+        total_reserve_mb += shared_data->reservations[i].reserved_mb;
+      }
+      /* Update shared memory with total current usage (calculated in the loop above) */
+      shared_data->unused_peaks_mb = total_unused_peaks_mb;
+      pthread_mutex_unlock (&shared_data->imminent_mutex);
     }
 #endif
 
@@ -1861,24 +1841,8 @@ memory_monitor_thread_func (void *arg)
       }
     }
 
-    /* Update status display - use get_imminent_memory_mb() to get the authoritative value */
-    {
-      unsigned long calculated_imminent = total_imminent_mb;
-      total_imminent_mb = get_imminent_memory_mb();
-
-      /* Debug if the two calculations differ by more than 10% */
-      if (calculated_imminent > 0 && total_imminent_mb > 0) {
-        unsigned long diff = calculated_imminent > total_imminent_mb
-                             ? calculated_imminent - total_imminent_mb
-                             : total_imminent_mb - calculated_imminent;
-        /* Check if diff is more than 10% of the average */
-        unsigned long avg = (calculated_imminent + total_imminent_mb) / 2;
-        if (diff * 10 > avg) {
-          debug_write(MEM_DEBUG_INFO, "[MEMORY] Imminent mismatch: calculated=%luMB vs authoritative=%luMB (diff=%luMB, %.1f%%)\n",
-                      calculated_imminent, total_imminent_mb, diff, (double)diff * 100.0 / avg);
-        }
-      }
-    }
+    // Update status display
+    total_imminent_mb = total_reserve_mb + total_unused_peaks_mb;
     display_memory_status (mem_percent, free_mb, 0, total_jobs, total_make_mem, total_imminent_mb);
 
   } /* while (monitor_thread_running) */
