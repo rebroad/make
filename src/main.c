@@ -1630,6 +1630,21 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         } else debug_write(MEM_DEBUG_ERROR, "[DEBUG] Max tracked descendants reached, skipping descendant PID %d\n", (int)pid);
       } // TODO - we could "else" track related descendants (parent_idx >= 0) or other PIDs (profile_idx < 0) via another descendants-like struct (for debugging)
 
+      if (profile_peak_mb > 0 && shared_data) {
+        int released = 0;
+        struct pid_reservation *res;
+        pthread_mutex_lock (&shared_data->imminent_mutex);
+        res = find_or_create_reservation (parent_pid);
+        if (res && res->reserved_mb == profile_peak_mb) {
+          res->reserved_mb = 0;
+          released = 1;
+        }
+        pthread_mutex_unlock (&shared_data->imminent_mutex);
+        if (released)
+          debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Released %luMB reservation for PID=%d (main make discovered descendant, using old_peak_mb)\n",
+                profile_peak_mb, parent_pid);
+      }
+
       /* Free the filename and cmdline if we extracted them */
       if (strip_ptr) free(strip_ptr);
       if (cmdline) free(cmdline);
@@ -1761,24 +1776,6 @@ memory_monitor_thread_func (void *arg)
     for (unsigned int i = 0; i < main_monitoring_data.compile_count; i++) {
       char stat_path[512];
       FILE *stat_file;
-      unsigned long old_peak_mb = main_monitoring_data.descendants[i].old_peak_mb;
-      pid_t pid = main_monitoring_data.descendants[i].pid;
-      struct pid_reservation *res;
-
-      /* Release the reservation for this sub-make PID now that we have old_peak_mb */
-      if (old_peak_mb > 0 && shared_data) { // TODO - how to do only once?
-        int released = 0;
-        pthread_mutex_lock (&shared_data->imminent_mutex);
-        res = find_or_create_reservation (pid);
-        if (res && res->reserved_mb == old_peak_mb) {
-          res->reserved_mb = 0;
-          released = 1;
-        }
-        pthread_mutex_unlock (&shared_data->imminent_mutex);
-        if (released)
-          debug_write(MEM_DEBUG_VERBOSE, "[MEMORY] Released %luMB reservation for PID=%d (main make discovered descendant, using old_peak_mb)\n",
-                old_peak_mb, pid);
-      }
 
       /* Check if this PID still exists */
       snprintf(stat_path, sizeof(stat_path), "/proc/%d/status", (int)main_monitoring_data.descendants[i].pid);
@@ -1786,9 +1783,6 @@ memory_monitor_thread_func (void *arg)
       if (!stat_file) {
         /* Process exited - record final memory and release reservation */
         int profile_idx = main_monitoring_data.descendants[i].profile_idx;
-        /*if (main_monitoring_data.descendants[i].old_peak_mb > 0)
-          reserve_memory_mb(-(long)main_monitoring_data.descendants[i].old_peak_mb,
-                           profile_idx >= 0 ? memory_profiles[profile_idx].filename : "unknown");*/
         if (profile_idx >= 0 && (main_monitoring_data.descendants[i].peak_mb > 0 || main_monitoring_data.descendants[i].old_peak_mb > 0)) {
           debug_write(MEM_DEBUG_INFO, "[MEMORY] PID=%d Compilation exited, final peak for %s: %luMB -> %luMB\n",
                       (int)main_monitoring_data.descendants[i].pid, memory_profiles[profile_idx].filename,
@@ -1813,8 +1807,15 @@ memory_monitor_thread_func (void *arg)
       unsigned int i;
       pthread_mutex_lock (&shared_data->imminent_mutex);
       count = shared_data->reservation_count;
-      for (i = 0; i < (unsigned int)count && i < MAX_RESERVATIONS; i++)
-        total_reserve_mb += shared_data->reservations[i].reserved_mb;
+      total_reserve_mb = 0;  /* Reset before summing */
+      for (i = 0; i < (unsigned int)count && i < MAX_RESERVATIONS; i++) {
+        unsigned long res_mb = shared_data->reservations[i].reserved_mb;
+        total_reserve_mb += res_mb;
+        if (res_mb > 0) {
+          debug_write(MEM_DEBUG_VERBOSE, "[DEBUG_SUM] reservation[%u]: PID=%d reserved_mb=%lu (total now=%lu)\n",
+                      i, (int)shared_data->reservations[i].pid, res_mb, total_reserve_mb);
+        }
+      }
       /* Update shared memory with total current usage (calculated in the loop above) */
       shared_data->total_reserve_mb = total_reserve_mb;
       shared_data->unused_peaks_mb = total_unused_peaks_mb;
