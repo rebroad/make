@@ -1109,8 +1109,8 @@ reap_children (int block, int err)
           unsigned long peak_mb = memory_profiles[c->profile_idx].peak_memory_mb;
           if (peak_mb > 0) {
             const char *profile_filename = memory_profiles[c->profile_idx].filename;
-            reserve_memory_mb(c->pid, 0, profile_filename ? profile_filename : c->file->name);
-            debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed) (PID=%d, makelevel=%u)\n",
+            if (reserve_memory_mb(c->pid, 0, profile_filename ? profile_filename : c->file->name))
+              debug_write(MEM_DEBUG_INFO, "[MEMORY] Released %luMB reservation for %s (job completed) (PID=%d, makelevel=%u)\n",
                         peak_mb, profile_filename ? profile_filename : c->file->name, (int)c->pid, makelevel);
           }
         }

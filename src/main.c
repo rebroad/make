@@ -1252,6 +1252,7 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
 
   /* If not found, need to find or create a slot */
   if (!res) {
+    if (mb == 0) return 0; // Nothing to do - already released
     pthread_mutex_lock (&shared_data->reserved_count_mutex);
     count = shared_data->reservation_count;
 
@@ -1296,7 +1297,7 @@ reserve_memory_mb (pid_t pid, long mb, const char *filepath)
             (int)pid, old_total_reserved, new_total_reserved, old_value);
     }
     /* Return 1 if negative value cancelled out the existing value */
-    return (mb < 0 && old_value == (unsigned long)(-mb)) ? 1 : 0;
+    return (mb == 0 || (mb < 0 && old_value == (unsigned long)(-mb))) ? 1 : 0;
   }
 
   /* Positive value: overwrite with new value */
