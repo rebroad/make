@@ -1494,6 +1494,11 @@ start_job_command (struct child *child)
     {
       /* Fork the child process.  */
     run_local:
+      int profile_idx = -1;
+      int waited = 0;
+      unsigned long required_mb = 0;
+      unsigned long effective_free = 0;
+      unsigned long imminent_mb = 0;
       block_sigs ();
 
       child->remote = 0;
@@ -1501,9 +1506,7 @@ start_job_command (struct child *child)
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       if (memory_aware_flag) {
-        unsigned long required_mb = 0;
         unsigned long free_mb;
-        int profile_idx = -1;
         char *filename = NULL;
 
         /* Extract filename from command using common extraction logic */
@@ -1528,9 +1531,9 @@ start_job_command (struct child *child)
             required_mb = get_file_memory_estimate (filename);
           }
 
+          free_mb = get_memory_stats (NULL);
+          imminent_mb = get_imminent_memory_mb ();
           if (required_mb > 0) {
-            int waited = 0;
-
             /* If we still don't have a profile index, create a new entry now (before the wait loop) */
             if (required_mb > 0 && profile_idx < 0 && memory_profiles != NULL) {
               if (memory_profile_count >= memory_profiles_capacity) grow_memory_profiles();
@@ -1544,32 +1547,9 @@ start_job_command (struct child *child)
 
             /* Wait loop: check if we have enough memory, accounting for imminent usage */
             while (profile_idx >= 0) {
-              unsigned long imminent_mb, effective_free;
-
-              free_mb = get_memory_stats (NULL);
-              imminent_mb = get_imminent_memory_mb ();
               effective_free = free_mb > imminent_mb ? free_mb - imminent_mb : 0;
 
-              if (required_mb <= effective_free) {
-                child->profile_idx = profile_idx;
-
-                /* We have enough memory! Reserve it and proceed */
-                if (memory_profiles[profile_idx].last_used != -1) {
-                  if (waited) {
-                    debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
-                              getpid(), filename, waited / 10);
-                    fflush (stderr);
-                  } else {
-                    debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - \033[1;32mOK\033[0m\n",
-                              getpid(), filename, required_mb, effective_free, imminent_mb);
-                    fflush (stderr);
-                  }
-
-                  memory_profiles[profile_idx].last_used = -1;
-                }
-
-                break;
-              }
+              if (required_mb <= effective_free) break;
 
               /* Not enough memory, wait */
               if (waited == 0) {
@@ -1579,14 +1559,12 @@ start_job_command (struct child *child)
               }
 
               usleep (100000);  /* Sleep 100ms */
+              free_mb = get_memory_stats (NULL);
+              imminent_mb = get_imminent_memory_mb ();
               waited++;
             } /* while (profile_idx >= 0) */
           } else {
             /* No data available, just report current state */
-            unsigned long imminent_mb;
-
-            free_mb = get_memory_stats (NULL);
-            imminent_mb = get_imminent_memory_mb ();
             debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: no data yet, %luMB free (%luMB imminent)\n",
                     getpid(), filename, free_mb, imminent_mb);
             fflush (stderr);
@@ -1611,8 +1589,25 @@ start_job_command (struct child *child)
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
 
 #endif /* !VMS */
-      if (child->profile_idx >= 0) {
-        reserve_memory_mb (child->pid, memory_profiles[child->profile_idx].peak_memory_mb, memory_profiles[child->profile_idx].filename);
+      child->profile_idx = profile_idx;
+      if (profile_idx >= 0) {
+        char *filename = memory_profiles[profile_idx].filename;
+        /* We have enough memory! Reserve it and proceed */
+        if (memory_profiles[profile_idx].last_used != -1) {
+          if (waited) {
+            debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: memory available after %ds, \033[1;34mPROCEEDING\033[0m\n",
+                      getpid(), filename, waited / 10);
+            fflush (stderr);
+          } else {
+            debug_write(MEM_DEBUG_PREDICT, "[PREDICT] PID=%d %s: needs %luMB, have %luMB free (%luMB imminent) - \033[1;32mOK\033[0m\n",
+                      getpid(), filename, required_mb, effective_free, imminent_mb);
+            fflush (stderr);
+          }
+
+          memory_profiles[profile_idx].last_used = -1;
+        }
+
+        reserve_memory_mb (child->pid, required_mb, filename);
       }
     }
 
