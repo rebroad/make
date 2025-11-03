@@ -1538,6 +1538,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     int profile_idx = -1;
     unsigned long child_rss_kb = 0;
     unsigned int child_jobs = 0;
+    int found_ppid = 0, found_vmrss = 0;
 
     cmdline = NULL;  /* Reset cmdline for each PID */
 
@@ -1552,11 +1553,18 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     stat_file = fopen(stat_path, "r");
     if (!stat_file) continue;
 
+    /* Track whether we've successfully parsed each field */
     while (fgets(line, sizeof(line), stat_file)) {
-      sscanf(line, "PPid: %d", &check_pid);
-      sscanf(line, "VmRSS: %lu kB", &rss_kb);
+      if (!found_ppid && sscanf(line, "PPid: %d", &check_pid) == 1) {
+        if (check_pid != parent_pid) break;
+        found_ppid = 1;
+      }
+      else if (!found_vmrss && sscanf(line, "VmRSS: %lu kB", &rss_kb) == 1) {
+        found_vmrss = 1;
+      }
 
-      if (check_pid > 0 && rss_kb > 0) break;
+      /* Break when we've successfully parsed both fields */
+      if (found_ppid && found_vmrss) break;
     }
     fclose(stat_file);
 
