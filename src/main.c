@@ -294,6 +294,7 @@ static pthread_t memory_monitor_thread;
 static time_t monitor_start_time = 0;
 #endif
 static volatile int monitor_thread_running = 0;
+static struct timeval make_start_time = {0, 0};
 
 /* Initialize memory monitoring settings from environment */
 static void
@@ -2461,6 +2462,10 @@ main (int argc, char **argv, char **envp)
 #endif
 
   initialize_variable_output ();
+
+  /* Record start time for duration reporting */
+  if (makelevel == 0)
+    gettimeofday(&make_start_time, NULL);
 
   /* Useful for attaching debuggers, etc.  */
   SPIN ("main-entry");
@@ -5192,7 +5197,14 @@ die (int status)
       dying = 1;
 
       if (makelevel == 0) {
-        debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u)\n", status, getpid(), makelevel);
+        struct timeval end_time;
+        double duration_seconds;
+
+        gettimeofday(&end_time, NULL);
+        duration_seconds = (end_time.tv_sec - make_start_time.tv_sec) +
+                           (end_time.tv_usec - make_start_time.tv_usec) / 1000000.0;
+        debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u, duration=%.3fs)\n",
+                    status, getpid(), makelevel, duration_seconds);
         save_memory_profiles ();
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
         cleanup_shared_memory ();
