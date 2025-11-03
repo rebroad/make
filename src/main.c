@@ -932,7 +932,8 @@ grow_memory_profiles (void)
   memory_profiles = new_profiles;
   memory_profiles_capacity = new_capacity;
 
-  debug_write(MEM_DEBUG_MAX, "[MEMORY] Grew memory_profiles array to %u entries\n", new_capacity);
+  debug_write(MEM_DEBUG_MAX, "[MEMORY] Grew memory_profiles array to %u entries (PID=%d PPID=%d makelevel=%u)\n",
+              new_capacity, (int)getpid(), (int)getppid(), makelevel);
 }
 
 /* Record memory usage for a file using profile index (main make only) */
@@ -2472,8 +2473,7 @@ main (int argc, char **argv, char **envp)
   initialize_variable_output ();
 
   /* Record start time for duration reporting */
-  if (makelevel == 0)
-    gettimeofday(&make_start_time, NULL);
+  gettimeofday(&make_start_time, NULL);
 
   /* Useful for attaching debuggers, etc.  */
   SPIN ("main-entry");
@@ -5201,18 +5201,17 @@ die (int status)
   if (!dying)
     {
       int err;
+      struct timeval end_time;
+      double duration_seconds;
 
       dying = 1;
 
+      gettimeofday(&end_time, NULL);
+      duration_seconds = (end_time.tv_sec - make_start_time.tv_sec) +
+                         (end_time.tv_usec - make_start_time.tv_usec) / 1000000.0;
+      debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u, duration=%.3fs)\n",
+                  status, getpid(), makelevel, duration_seconds);
       if (makelevel == 0) {
-        struct timeval end_time;
-        double duration_seconds;
-
-        gettimeofday(&end_time, NULL);
-        duration_seconds = (end_time.tv_sec - make_start_time.tv_sec) +
-                           (end_time.tv_usec - make_start_time.tv_usec) / 1000000.0;
-        debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u, duration=%.3fs)\n",
-                    status, getpid(), makelevel, duration_seconds);
         save_memory_profiles ();
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
         cleanup_shared_memory ();
