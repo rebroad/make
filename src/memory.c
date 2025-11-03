@@ -86,6 +86,26 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
     timestamp = hours * 10000000 + minutes * 100000 + seconds * 1000 + milliseconds; /* HHMMSSms */
   }
 
+  /* Return cmdline if requested */
+  if (cmdline_out) {
+    *cmdline_out = NULL;
+    if (text_len > 0) {
+      size_t result_len = strlen(text);
+      if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
+        /* Truncate and add "..." */
+        *cmdline_out = xmalloc(max_cmdline_len + 1);
+        snprintf(*cmdline_out, max_cmdline_len + 1, "%.*s...", (int)(max_cmdline_len - 3), text);
+      } else {
+        *cmdline_out = xstrdup(text);
+      }
+    }
+  }
+
+  /* Skip /bin/sh -c echo commands */
+  if (text_len >= 17 && strncmp(text, "/bin/sh -c echo ", 17) == 0) {
+    return NULL;
+  }
+
   /* Find ALL .cpp/.cc/.c occurrences, keep the LAST one with a "/" */
   end = NULL;
   ptr = (char *)text;
@@ -146,21 +166,6 @@ extract_filename_common (const char *text, size_t text_len, const char *caller, 
 
       /* Return malloc'd copy of the filename */
       result = xstrdup(strip_ptr);
-    }
-  }
-
-  /* Return cmdline if requested */
-  if (cmdline_out) {
-    *cmdline_out = NULL;
-    if (text_len > 0) {
-      size_t result_len = strlen(text);
-      if (max_cmdline_len > 0 && result_len > max_cmdline_len) {
-        /* Truncate and add "..." */
-        *cmdline_out = xmalloc(max_cmdline_len + 1);
-        snprintf(*cmdline_out, max_cmdline_len + 1, "%.*s...", (int)(max_cmdline_len - 3), text);
-      } else {
-        *cmdline_out = xstrdup(text);
-      }
     }
   }
 
