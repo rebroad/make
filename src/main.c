@@ -5209,7 +5209,8 @@ die (int status)
       gettimeofday(&end_time, NULL);
       duration_seconds = (end_time.tv_sec - make_start_time.tv_sec) +
                          (end_time.tv_usec - make_start_time.tv_usec) / 1000000.0;
-      debug_write(MEM_DEBUG_ERROR, "[EXIT] die() called with status=%d (PID=%d, makelevel=%u, duration=%.3fs)\n",
+      debug_write(duration_seconds > 0.1 ? MEM_DEBUG_ERROR : MEM_DEBUG_MAX,
+                  "[EXIT] die() called with status=%d (PID=%d, makelevel=%u, duration=%.3fs)\n",
                   status, getpid(), makelevel, duration_seconds);
       if (makelevel == 0) {
         save_memory_profiles ();
