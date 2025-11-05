@@ -1613,14 +1613,13 @@ start_job_command (struct child *child)
 
       /* Debug: job started with PID */
       DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: Started job for %s with child PID=%d (jobserver_tokens=%u, job_slots_used=%u)\n"),
-                    makelevel, (int)getpid(), (int)getppid(), child->file->name, (int)child->pid, jobserver_tokens, job_slots_used));
+                    makelevel, getpid(), getppid(), child->file->name, child->pid, jobserver_tokens, job_slots_used));
 
 #endif /* !VMS */
       child->profile_idx = profile_idx;
 
       /* Debug write cmdline with child PID */
       if (cmdline) {
-        DBM(MEM_DEBUG_VERBOSE, "[JOB] PID=%d PPID=%d cmdline: %s\n", child->pid, getpid(), cmdline);
         free (cmdline);
         cmdline = NULL;
       }
@@ -1818,9 +1817,28 @@ start_waiting_job (struct child *c)
       return 0;
     }
 
+  /* Check if we should wait based on active jobs count (only in memory-aware mode) */
+  if (memory_aware_flag && makelevel == 0) // TODO only makelevel==0 ?
+    {
+      unsigned int active_jobs = get_active_jobs_count ();
+      unsigned int max_jobs = jobserver_enabled () ? 0 : job_slots;  /* Use job_slots in non-jobserver mode, 0 means unlimited */
+
+      /* If we have a job limit and we're at or over it with active jobs, wait */
+      if (max_jobs > 0 && active_jobs >= max_jobs)
+        {
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active jobs limit reached for %s (active_jobs=%u >= max_jobs=%u), adding to waiting_jobs queue\n"),
+                        makelevel, (int)getpid(), (int)getppid(), c->file->name, active_jobs, max_jobs));
+          set_command_state (f, cs_running);
+          c->next = waiting_jobs;
+          waiting_jobs = c;
+          return 0;
+        }
+    }
+
   /* Start the first command; reap_children will run later command lines.  */
-  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Proceeding to start_job_command() for %s (load OK, job_slots_used=%u)\n"),
-                makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used));
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Proceeding to start_job_command() for %s (load OK, job_slots_used=%u, active_jobs=%u)\n"),
+                makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used,
+                memory_aware_flag && makelevel == 0 ? get_active_jobs_count () : 0));
   start_job_command (c);
 
   switch (f->command_state)
