@@ -145,7 +145,7 @@ set_blocking (int fd, int blocking)
 unsigned int
 jobserver_setup (int slots, const char *style)
 {
-  int r;
+  int r, total_slots;
 
 #if JOBSERVER_USE_FIFO
   if (!style || strcmp (style, "fifo") == 0)
@@ -208,7 +208,7 @@ jobserver_setup (int slots, const char *style)
     pfatal_with_name (_("duping jobs pipe"));
 
   /* Save original slots count for debug message (slots will be decremented in loop) */
-  int total_slots = slots + 1;  /* +1 for the parent's free token */
+  total_slots = slots + 1;  /* +1 for the parent's free token */
 
   while (slots--)
     {
