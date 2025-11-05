@@ -1747,7 +1747,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     total_rss_kb += child_rss_kb;
     if (total_jobs) *total_jobs += child_jobs;
     if (total_active_jobs) *total_active_jobs += child_active_jobs;
-    if (unused_peaks_mb) *unused_peaks_mb += (main_monitoring_data.descendants[descendant_idx].old_peak_mb > main_monitoring_data.descendants[descendant_idx].current_mb)
+    if (unused_peaks_mb && descendant_idx >= 0) *unused_peaks_mb += (main_monitoring_data.descendants[descendant_idx].old_peak_mb > main_monitoring_data.descendants[descendant_idx].current_mb)
                           ? main_monitoring_data.descendants[descendant_idx].old_peak_mb - main_monitoring_data.descendants[descendant_idx].current_mb
                           : 0;
 
