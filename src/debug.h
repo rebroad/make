@@ -22,42 +22,60 @@ this program.  If not, see <https://www.gnu.org/licenses/>.  */
 #define DB_PRINT        (0x010)
 #define DB_WHY          (0x020)
 #define DB_MAKEFILES    (0x100)
-/* Memory debug levels (ma1-ma5) */
-#define DB_MEM_1        (0x200)  /* Errors and important warnings */
-#define DB_MEM_2        (0x400)  /* Prediction/memory checking (includes DB_MEM_1) */
-#define DB_MEM_3        (0x800)  /* Memory operations (includes DB_MEM_1-2) */
-#define DB_MEM_4        (0x1000) /* Verbose debug details (includes DB_MEM_1-3) */
-#define DB_MEM_5        (0x2000) /* Maximum verbosity (includes DB_MEM_1-4) */
+/* Memory debug level stored in 3 bits (bits 9-11): 0-5 */
+#define DB_MEM_LEVEL_MASK  (0xE00)  /* Bits 9-11 */
+#define DB_MEM_LEVEL_SHIFT (9)
+#define DB_MEM_GET_LEVEL(_l) (((_l) & DB_MEM_LEVEL_MASK) >> DB_MEM_LEVEL_SHIFT)
+#define DB_MEM_SET_LEVEL(_l, _level) (((_l) & ~DB_MEM_LEVEL_MASK) | ((_level) << DB_MEM_LEVEL_SHIFT))
 
-#define DB_ALL          (0x3fff)  /* Includes all flags including memory debug */
+#define DB_ALL          (0x1fff)  /* Includes all flags (0xE00 is level, not a flag) */
 
 extern int db_level;
 
 #define ISDB(_l)    ((_l)&db_level)
 
 /* Check if memory debug level should be shown.
-   MEM_DEBUG_ERROR (1) requires DB_MEM_1
-   MEM_DEBUG_PREDICT (2) requires DB_MEM_2 (which includes DB_MEM_1)
-   MEM_DEBUG_INFO (3) requires DB_MEM_3 (which includes DB_MEM_1-2)
-   MEM_DEBUG_VERBOSE (4) requires DB_MEM_4 (which includes DB_MEM_1-3)
-   MEM_DEBUG_MAX (5) requires DB_MEM_5 (which includes DB_MEM_1-4) */
+   Memory debug level is stored in 3 bits (0-5), hierarchical:
+   Level N shows messages at level <= N */
 #define ISDB_MEM(_level) \
-  ((_level == 1 && ISDB(DB_MEM_1)) || \
-   (_level == 2 && ISDB(DB_MEM_2)) || \
-   (_level == 3 && ISDB(DB_MEM_3)) || \
-   (_level == 4 && ISDB(DB_MEM_4)) || \
-   (_level == 5 && ISDB(DB_MEM_5)))
+  ((_level) > 0 && (_level) <= DB_MEM_GET_LEVEL(db_level))
 
 /* When adding macros to this list be sure to update the value of
    XGETTEXT_OPTIONS in the po/Makevars file.  */
-#define DBS(_l,_x)  do{ if(ISDB(_l)) {print_spaces (depth); \
-									  printf _x; fflush (stdout);} }while(0)
+#define DBS(_l,_x)  do{ if(ISDB(_l)) { \
+  char _ts_buf[16]; \
+  db_timestamp(_ts_buf, sizeof(_ts_buf)); \
+  printf("%s", _ts_buf); \
+  print_spaces (depth); \
+  printf _x; \
+  fflush (stdout); \
+} }while(0)
 
-#define DBF(_l,_x)  do{ if(ISDB(_l)) {print_spaces (depth); \
-									  printf (_x, file->name); \
-									  fflush (stdout);} }while(0)
+#define DBF(_l,_x)  do{ if(ISDB(_l)) { \
+  char _ts_buf[16]; \
+  db_timestamp(_ts_buf, sizeof(_ts_buf)); \
+  printf("%s", _ts_buf); \
+  print_spaces (depth); \
+  printf (_x, file->name); \
+  fflush (stdout); \
+} }while(0)
 
-#define DB(_l,_x)   do{ if(ISDB(_l)) {printf _x; fflush (stdout);} }while(0)
+/* Helper function to get current timestamp as string (format: "SSSSSmmm ") */
+extern void db_timestamp (char *buf, size_t bufsize);
+
+#define DB(_l,_x)   do{ if(ISDB(_l)) { \
+  char _ts_buf[16]; \
+  db_timestamp(_ts_buf, sizeof(_ts_buf)); \
+  printf("%s", _ts_buf); \
+  printf _x; \
+  fflush (stdout); \
+} }while(0)
 
 /* Memory debug macro - replaces debug_write() */
-#define DBM(_level,_x) do{ if(ISDB_MEM(_level)) {printf _x; fflush (stdout);} }while(0)
+#define DBM(_level, ...) do{ if(ISDB_MEM(_level)) { \
+  char _ts_buf[16]; \
+  db_timestamp(_ts_buf, sizeof(_ts_buf)); \
+  printf("%s", _ts_buf); \
+  printf(__VA_ARGS__); \
+  fflush (stdout); \
+} }while(0)

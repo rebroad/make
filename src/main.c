@@ -181,6 +181,21 @@ static int debug_flag = 0;
 
 int db_level = 0;
 
+/* Get current timestamp as string (format: "SSSSSmmm ") */
+void
+db_timestamp (char *buf, size_t bufsize)
+{
+  struct timeval tv;
+  time_t secs;
+  int milliseconds;
+
+  gettimeofday(&tv, NULL);
+  secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
+  milliseconds = tv.tv_usec / 1000;  /* convert microseconds to milliseconds */
+
+  snprintf(buf, bufsize, "%02ld%03d ", (long)secs, milliseconds);
+}
+
 /* Synchronize output (--output-sync).  */
 
 char *output_sync_option = 0;
@@ -1579,8 +1594,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
         descendant_idx = i;
         profile_idx = main_monitoring_data.descendants[i].profile_idx;
         if (parent_idx != found_ppidx)
-          DBM(MEM_DEBUG_MAX, "[DEBUG] Found existing descendant[%d] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
-                    i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
+          DBM(MEM_DEBUG_MAX, "[DEBUG] Found existing descendant[%u] ppidx=%d fppidx=%d PID=%d PPID=%d (d:%d): old_peak=%luMB, rss=%luMB current_mb=%luMB peak=%luMB (file: %s)\n",
+                     i, parent_idx, found_ppidx, (int)pid, (int)parent_pid, depth, main_monitoring_data.descendants[i].old_peak_mb, rss_kb / 1024,
                     main_monitoring_data.descendants[i].current_mb, main_monitoring_data.descendants[i].peak_mb,
                     profile_idx >= 0 ? memory_profiles[profile_idx].filename : "");
       }
@@ -1637,7 +1652,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
             profile_idx = memory_profile_count;  /* Set the profile index for this new profile */
             memory_profile_count++;
             DBM(MEM_DEBUG_VERBOSE, "[MEMORY] Added new profile %s: %luMB, profile_count=%u\n",
-                       strip_ptr, 0, memory_profile_count);
+                       strip_ptr, rss_kb / 1024, memory_profile_count);
             fflush(stderr);
           }
         }
@@ -2066,7 +2081,11 @@ decode_debug_flags (void)
   const char **pp;
 
   if (debug_flag)
-    db_level = DB_ALL;
+    {
+      db_level = DB_ALL;
+      /* Set memory debug to max level when using --debug=all */
+      db_level = DB_MEM_SET_LEVEL(db_level, 5);
+    }
 
   if (trace_flag)
     db_level |= DB_PRINT | DB_WHY;
@@ -2082,6 +2101,8 @@ decode_debug_flags (void)
               {
               case 'a':
                 db_level |= DB_ALL;
+                /* Set memory debug to max level when using --debug=all */
+                db_level = DB_MEM_SET_LEVEL(db_level, 5);
                 break;
               case 'b':
                 db_level |= DB_BASIC;
@@ -2094,15 +2115,12 @@ decode_debug_flags (void)
                 break;
               case 'm':
                 /* Check for "ma" (memory awareness) followed by number */
-                if (tolower (p[1]) == 'a' && p[2] >= '1' && p[2] <= '5')
+                if (p[1] != '\0' && tolower (p[1]) == 'a'
+                    && p[2] != '\0' && p[2] >= '1' && p[2] <= '5')
                   {
                     int level = p[2] - '0';
-                    /* Set flags hierarchically: level N includes all lower levels */
-                    if (level >= 1) db_level |= DB_MEM_1;
-                    if (level >= 2) db_level |= DB_MEM_2;
-                    if (level >= 3) db_level |= DB_MEM_3;
-                    if (level >= 4) db_level |= DB_MEM_4;
-                    if (level >= 5) db_level |= DB_MEM_5;
+                    /* Store level in 3-bit field (bits 9-11) */
+                    db_level = (db_level & ~0xE00) | (level << 9);
                     /* Skip past "maN" */
                     p += 3;
                   }
