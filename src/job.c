@@ -1870,9 +1870,13 @@ new_job (struct file *file)
   unsigned int i;
 
   /* Debug: entry to new_job showing decision mode */
-  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: new_job() called for %s - job_slots=%u, jobserver_enabled=%d, job_slots_used=%u\n"),
-                makelevel, (int)getpid(), (int)getppid(), file->name,
-                job_slots, jobserver_enabled () ? 1 : 0, job_slots_used));
+  if (jobserver_enabled ())
+    DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: new_job() called for %s - JOBSERVER MODE (job_slots=0 is expected, jobserver manages slots), job_slots_used=%u\n"),
+                  makelevel, (int)getpid(), (int)getppid(), file->name, job_slots_used));
+  else
+    DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: new_job() called for %s - job_slots=%u, jobserver_enabled=0, job_slots_used=%u\n"),
+                  makelevel, (int)getpid(), (int)getppid(), file->name,
+                  job_slots, job_slots_used));
 
   /* Let any previously decided-upon jobs that are waiting
      for the load to go down start before this new one.  */

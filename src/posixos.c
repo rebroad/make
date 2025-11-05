@@ -207,6 +207,9 @@ jobserver_setup (int slots, const char *style)
   if (make_job_rfd () < 0)
     pfatal_with_name (_("duping jobs pipe"));
 
+  /* Save original slots count for debug message (slots will be decremented in loop) */
+  int total_slots = slots + 1;  /* +1 for the parent's free token */
+
   while (slots--)
     {
       EINTRLOOP (r, write (job_fds[1], &token, 1));
@@ -221,7 +224,7 @@ jobserver_setup (int slots, const char *style)
 
   /* Debug: jobserver setup (only top-level make creates jobserver) */
   DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Created jobserver with %d slots (type=%s, fifo=%s)\n"),
-                makelevel, (int)getpid(), (int)getppid(), slots + 1,
+                makelevel, (int)getpid(), (int)getppid(), total_slots,
                 js_type == js_fifo ? "fifo" : "pipe",
                 fifo_name ? fifo_name : "N/A"));
 
