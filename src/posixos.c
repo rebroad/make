@@ -504,12 +504,18 @@ jobserver_acquire (int timeout)
       FD_ZERO (&readfds);
       FD_SET (job_fds[0], &readfds);
 
+      /* Debug: about to wait for token (no tokens available) */
+      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAITING\033[0m for token (no tokens available in jobserver pipe)\n"),
+                    makelevel, (int)getpid(), (int)getppid()));
+
       r = pselect (job_fds[0]+1, &readfds, NULL, NULL, specp, &empty);
       if (r < 0)
         switch (errno)
           {
           case EINTR:
             /* SIGCHLD will show up as an EINTR.  */
+            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired)\n"),
+                          makelevel, (int)getpid(), (int)getppid()));
             return 0;
 
           case EBADF:
@@ -522,8 +528,12 @@ jobserver_acquire (int timeout)
           }
 
       if (r == 0)
-        /* Timeout.  */
-        return 0;
+        {
+          /* Timeout - no tokens available */
+          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mTIMEOUT\033[0m waiting for token (no tokens available after 1 second)\n"),
+                        makelevel, (int)getpid(), (int)getppid()));
+          return 0;
+        }
 
       /* The read FD is ready: read it!  This is non-blocking.  */
       EINTRLOOP (r, read (job_fds[0], &intake, 1));

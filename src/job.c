@@ -2126,8 +2126,8 @@ new_job (struct file *file)
           }
         else
           {
-            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Token acquisition failed or timed out for %s, retrying...\n"),
-                          makelevel, (int)getpid(), (int)getppid(), file->name));
+            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: \033[1;33mNO TOKENS AVAILABLE\033[0m for %s (jobserver_tokens=%u, job_slots_used=%u) - retrying after reaping children...\n"),
+                          makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens, job_slots_used));
           }
       }
       DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Exited token acquisition loop for %s (jobserver_tokens=%u)\n"),
