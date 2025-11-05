@@ -1634,9 +1634,6 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     /* Check if this process is a direct descendant of our parent */
     if (check_pid != parent_pid) continue;
 
-    /* Check if this is an active job (not zombie and using memory) */
-    if (total_active_jobs && (process_state != 'Z' || rss_kb > 0)) (*total_active_jobs)++;
-
     /* Found a descendant! Track its memory */
 
     total_rss_kb += rss_kb; // Add this descendant's RSS to the total
@@ -1762,6 +1759,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (descendant_idx >= 0 && profile_idx >= 0) {
       unsigned long new_current_mb = (rss_kb + child_rss_kb) / 1024;
       if (total_jobs) (*total_jobs)++; // Increment the total job count
+      if (total_active_jobs && (process_state != 'Z' || rss_kb > 0)) (*total_active_jobs)++;
       // Existing descendant - update memory tracking
       if (new_current_mb > main_monitoring_data.descendants[descendant_idx].current_mb || new_descendant) {
         DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Memory increase[%d] PID=%d PPID=%d (d:%d) %luMB -> %luMB (rss=%luMB child_rss=%luMB) child_jobs=%u (file: %s)\n",
