@@ -765,7 +765,6 @@ extern unsigned int job_slots;
 extern double max_load_average;
 extern unsigned long get_memory_stats (unsigned int *percent);
 extern unsigned long get_imminent_memory_mb (void);
-extern void debug_write (int log_level, const char *format, ...);
 extern int reserve_memory_mb (pid_t pid, long mb, const char *filepath);
 extern void calculate_memory_stats (const char *caller_file, int caller_line);
 extern int memory_aware_flag;
@@ -777,8 +776,6 @@ extern int memory_aware_flag;
 #define MEM_DEBUG_INFO    3  /* Memory operations (reserve, release) */
 #define MEM_DEBUG_VERBOSE 4  /* Verbose debug details */
 #define MEM_DEBUG_MAX     5  /* Maximum verbosity */
-
-extern int memory_debug_level;
 
 /* Memory profiling structures */
 struct file_memory_profile
