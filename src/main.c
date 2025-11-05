@@ -261,9 +261,6 @@ unsigned int job_slots;
 static unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
-/* Current number of active jobs (non-zombie or using memory) - updated by memory monitor thread */
-static unsigned int current_active_jobs = 0;
-
 static const int default_job_slots = INVALID_JOB_SLOTS;
 
 /* Value of job_slots that means no limit.  */
@@ -1204,10 +1201,8 @@ save_memory_profiles (void)
 unsigned int
 get_active_jobs_count (void)
 {
-  if (memory_aware_flag && shared_data == NULL)
-    if (init_shared_memory () != 0) return 0; /* Fallback if shared memory fails */
-  if (makelevel > 0 && shared_data) return shared_data->active_jobs; // sub-makes can access it directly
-  return current_active_jobs; // top-level make can access it directly
+  if (memory_aware_flag && shared_data == NULL && init_shared_memory () != 0) return 0;
+  return shared_data->active_jobs;
 }
 
 /* Get imminent memory usage (called from job.c before forking) */
@@ -1566,7 +1561,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
 
 /* Helper function to find descendants of a child process by scanning only processes with this as parent */
 static unsigned long find_child_descendants(pid_t parent_pid, int depth, int parent_idx, unsigned int *total_jobs,
-                                            unsigned long *unused_peaks_mb, unsigned int *total_active_jobs)
+                                            unsigned int *total_active_jobs, unsigned long *unused_peaks_mb)
 {
   DIR *proc_dir;
   struct dirent *entry;
@@ -1748,7 +1743,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     if (profile_idx >=0) send_idx = profile_idx;
     else send_idx = parent_idx;
     /* Recursively find descendants of this descendant */
-    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_jobs, unused_peaks_mb, &child_active_jobs);
+    child_rss_kb = find_child_descendants(pid, depth + 1, send_idx, &child_jobs, &child_active_jobs, unused_peaks_mb);
     total_rss_kb += child_rss_kb;
     if (total_jobs) *total_jobs += child_jobs;
     if (total_active_jobs) *total_active_jobs += child_active_jobs;
@@ -1849,6 +1844,7 @@ memory_monitor_thread_func (void *arg)
     unsigned int total_active_jobs = 0;
     static unsigned int last_total_make_mem = 0;
     static unsigned int last_total_jobs = 0;
+    static unsigned int last_total_active_jobs = 0;
     static time_t last_save_time = 0;
 
     /* Sleep 100ms between each check for accurate process memory tracking */
@@ -1862,14 +1858,13 @@ memory_monitor_thread_func (void *arg)
     }
 
     /* Update peak memory by finding descendants starting from our PID */
-    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_jobs, &total_unused_peaks_mb, &total_active_jobs) / 1024;
-    if (total_make_mem != last_total_make_mem || total_jobs != last_total_jobs) {
+    total_make_mem = find_child_descendants(getpid(), 0, -1, &total_jobs, &total_active_jobs, &total_unused_peaks_mb) / 1024;
+    if (total_make_mem != last_total_make_mem || total_jobs != last_total_jobs || total_active_jobs != last_total_active_jobs) {
       DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Total jobs found: %u (active: %u), total make memory: %uMB\n", total_jobs, total_active_jobs, total_make_mem);
       last_total_make_mem = total_make_mem;
       last_total_jobs = total_jobs;
+      last_total_active_jobs = total_active_jobs;
     }
-    /* Store active jobs count for use by job decision logic */
-    current_active_jobs = total_active_jobs;
 
     /* Check for exited descendants and calculate total current usage in one loop */
     for (unsigned int i = 0; i < main_monitoring_data.compile_count; i++) {
