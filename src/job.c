@@ -1818,7 +1818,7 @@ start_waiting_job (struct child *c)
     }
 
   /* Check if we should wait based on active jobs count (only in memory-aware mode) */
-  if (memory_aware_flag && makelevel == 0) // TODO only makelevel==0 ?
+  if (memory_aware_flag)
     {
       unsigned int active_jobs = get_active_jobs_count ();
       unsigned int max_jobs = jobserver_enabled () ? 0 : job_slots;  /* Use job_slots in non-jobserver mode, 0 means unlimited */
@@ -1837,8 +1837,7 @@ start_waiting_job (struct child *c)
 
   /* Start the first command; reap_children will run later command lines.  */
   DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Proceeding to start_job_command() for %s (load OK, job_slots_used=%u, active_jobs=%u)\n"),
-                makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used,
-                memory_aware_flag && makelevel == 0 ? get_active_jobs_count () : 0));
+                makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used, memory_aware_flag ? get_active_jobs_count () : 0));
   start_job_command (c);
 
   switch (f->command_state)
