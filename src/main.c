@@ -3532,6 +3532,9 @@ main (int argc, char **argv, char **envp)
           /* We're using the jobserver so set job_slots to 0.  */
           master_job_slots = job_slots;
           job_slots = 0;
+          /* Debug: top-level make jobserver setup */
+          DB (DB_JOBS, (_("[MAIN] makelevel=%u PID=%d PPID=%d: Top-level make created jobserver with master_job_slots=%u (jobserver_auth=%s)\n"),
+                        makelevel, (int)getpid(), (int)getppid(), master_job_slots, jobserver_auth));
         }
     }
 
@@ -3565,7 +3568,8 @@ main (int argc, char **argv, char **envp)
     }
 
   if (jobserver_auth)
-    DB (DB_VERBOSE|DB_JOBS, (_("Using jobserver controller %s\n"), jobserver_auth));
+    DB (DB_VERBOSE|DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Using jobserver controller %s\n"),
+                              makelevel, (int)getpid(), (int)getppid(), jobserver_auth));
   if (sync_mutex)
     DB (DB_VERBOSE, (_("Using output-sync mutex %s\n"), sync_mutex));
 

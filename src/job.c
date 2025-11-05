@@ -237,6 +237,17 @@ static int start_waiting_job (struct child *);
 
 struct child *children = 0;
 
+/* Helper function to count running children.  */
+static unsigned int
+count_children (void)
+{
+  unsigned int count = 0;
+  struct child *c;
+  for (c = children; c != 0; c = c->next)
+    ++count;
+  return count;
+}
+
 /* Number of children currently running.  */
 
 unsigned int job_slots_used = 0;
@@ -726,8 +737,8 @@ reap_children (int block, int err)
               goto process_child;
             }
 
-          DB (DB_JOBS, (_("Live child %p (%s) PID %s %s\n"),
-                        c, c->file->name, pid2str (c->pid),
+          DB (DB_JOBS, (_("[JOB_STATUS] makelevel=%u PID=%d PPID=%d: Live child %p (%s) PID %s %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), c, c->file->name, pid2str (c->pid),
                         c->remote ? _(" (remote)") : ""));
 #ifdef VMS
           break;
@@ -921,9 +932,9 @@ reap_children (int block, int err)
         continue;
 
       DB (DB_JOBS, (exit_sig == 0 && exit_code == 0
-                    ? _("Reaping winning child %p PID %s %s\n")
-                    : _("Reaping losing child %p PID %s %s\n"),
-                    c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
+                    ? _("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Reaping winning child %p PID %s %s\n")
+                    : _("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Reaping losing child %p PID %s %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
 
       /* If we have started jobs in this second, remove one.  */
       if (job_counter)
@@ -1090,8 +1101,8 @@ reap_children (int block, int err)
 
       if (c->pid > 0)
         {
-          DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
-                        c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
+          DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Removing child %p PID %s%s from chain.\n"),
+                        makelevel, (int)getpid(), (int)getppid(), c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
         }
 
       /* There is now another slot open.  */
@@ -1166,17 +1177,32 @@ free_child (struct child *child)
     ONS (fatal, NILF, "INTERNAL: Freeing child %p (%s) but no tokens left",
          child, child->file->name);
 
+  /* Debug: child finishing */
+  DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Child finishing %p (%s) - jobserver_tokens=%u, job_slots_used=%u\n"),
+                makelevel, (int)getpid(), (int)getppid(), child, child->file->name, jobserver_tokens, job_slots_used));
+
   /* If we're using the jobserver and this child is not the only outstanding
      job, put a token back into the pipe for it.  */
 
   if (jobserver_enabled () && jobserver_tokens > 1)
     {
+      DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Releasing token back to jobserver for %s (jobserver_tokens=%u > 1)\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child->file->name, jobserver_tokens));
       jobserver_release (1);
-      DB (DB_JOBS, (_("Released token for child %p (%s).\n"),
-                    child, child->file->name));
+      DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Released token for child %p (%s).\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child, child->file->name));
+    }
+  else if (jobserver_enabled () && jobserver_tokens == 1)
+    {
+      DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: Not releasing token (only 1 token held, last child) for %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child->file->name));
     }
 
   --jobserver_tokens;
+
+  /* Debug: after token decrement */
+  DB (DB_JOBS, (_("[JOB_FINISH] makelevel=%u PID=%d PPID=%d: After decrement, jobserver_tokens=%u for %s\n"),
+                makelevel, (int)getpid(), (int)getppid(), jobserver_tokens, child->file->name));
 
   if (handling_fatal_signal) /* Don't bother free'ing if about to die.  */
     return;
@@ -1494,12 +1520,16 @@ start_job_command (struct child *child)
     {
       /* Fork the child process.  */
     run_local:
-      int profile_idx = -1;
       int waited = 0;
       unsigned long required_mb = 0;
       unsigned long effective_free = 0;
       unsigned long imminent_mb = 0;
       char *cmdline = NULL;
+      int profile_idx = -1;
+
+      /* Debug: about to start job */
+      DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: About to start job for %s (jobserver_tokens=%u, job_slots_used=%u)\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child->file->name, jobserver_tokens, job_slots_used));
       block_sigs ();
 
       child->remote = 0;
@@ -1588,6 +1618,10 @@ start_job_command (struct child *child)
                                       child->good_stdin, argv);
 
       jobserver_post_child (ANY_SET (flags, COMMANDS_RECURSE));
+
+      /* Debug: job started with PID */
+      DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: Started job for %s with child PID=%d (jobserver_tokens=%u, job_slots_used=%u)\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child->file->name, (int)child->pid, jobserver_tokens, job_slots_used));
 
 #endif /* !VMS */
       child->profile_idx = profile_idx;
@@ -1793,8 +1827,8 @@ start_waiting_job (struct child *c)
       c->next = children;
       if (c->pid > 0)
         {
-          DB (DB_JOBS, (_("Putting child %p (%s) PID %s%s on the chain.\n"),
-                        c, c->file->name, pid2str (c->pid),
+          DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: Putting child %p (%s) PID %s%s on the chain.\n"),
+                        makelevel, (int)getpid(), (int)getppid(), c, c->file->name, pid2str (c->pid),
                         c->remote ? _(" (remote)") : ""));
           /* One more job slot is in use.  */
           ++job_slots_used;
@@ -1994,13 +2028,22 @@ new_job (struct file *file)
     while (1)
       {
         int got_token;
+        unsigned int child_count = count_children ();
 
-        DB (DB_JOBS, ("Need a job token; we %shave children\n",
-                      children ? "" : "don't "));
+        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Need a job token; we %shave children\n"),
+                      makelevel, (int)getpid(), (int)getppid(), children ? "" : "don't "));
+
+        /* Debug: job allocation decision */
+        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: new_job() for %s - jobserver_tokens=%u, job_slots_used=%u, waiting_jobs=%p\n"),
+                      makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens, job_slots_used, waiting_jobs));
 
         /* If we don't already have a job started, use our "free" token.  */
         if (!jobserver_tokens)
-          break;
+          {
+            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Using free token (no tokens held yet) for %s\n"),
+                          makelevel, (int)getpid(), (int)getppid(), file->name));
+            break;
+          }
 
         /* Prepare for jobserver token acquisition.  */
         jobserver_pre_acquire ();
@@ -2014,7 +2057,11 @@ new_job (struct file *file)
 
         /* If our "free" slot is available, use it; we don't need a token.  */
         if (!jobserver_tokens)
-          break;
+          {
+            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Free slot available after reaping for %s\n"),
+                          makelevel, (int)getpid(), (int)getppid(), file->name));
+            break;
+          }
 
         /* There must be at least one child already, or we have no business
            waiting for a token. */
@@ -2022,19 +2069,30 @@ new_job (struct file *file)
           O (fatal, NILF, "INTERNAL: no children as we go to sleep on read");
 
         /* Get a token.  */
+        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Attempting to acquire token for %s (jobserver_tokens=%u, job_slots_used=%u)\n"),
+                      makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens, job_slots_used));
         got_token = jobserver_acquire (waiting_jobs != NULL);
 
         /* If we got one, we're done here.  */
         if (got_token == 1)
           {
-            DB (DB_JOBS, (_("Obtained token for child %p (%s).\n"),
-                          c, c->file->name));
+            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Successfully obtained token for child %p (%s)\n"),
+                          makelevel, (int)getpid(), (int)getppid(), c, c->file->name));
             break;
+          }
+        else
+          {
+            DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Token acquisition failed or timed out for %s, retrying...\n"),
+                          makelevel, (int)getpid(), (int)getppid(), file->name));
           }
       }
 #endif
 
   ++jobserver_tokens;
+
+  /* Debug: jobserver token count after allocation */
+  DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: After allocation, jobserver_tokens=%u for %s\n"),
+                makelevel, (int)getpid(), (int)getppid(), jobserver_tokens, file->name));
 
   /* Trace the build.
      Use message here so that changes to working directories are logged.  */

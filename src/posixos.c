@@ -219,6 +219,12 @@ jobserver_setup (int slots, const char *style)
 
   job_root = 1;
 
+  /* Debug: jobserver setup (only top-level make creates jobserver) */
+  DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Created jobserver with %d slots (type=%s, fifo=%s)\n"),
+                makelevel, (int)getpid(), (int)getppid(), slots + 1,
+                js_type == js_fifo ? "fifo" : "pipe",
+                fifo_name ? fifo_name : "N/A"));
+
   return 1;
 }
 
@@ -296,6 +302,12 @@ jobserver_parse_auth (const char *auth)
   fd_noinherit (job_fds[0]);
   fd_noinherit (job_fds[1]);
 
+  /* Debug: sub-make connecting to jobserver */
+  DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Connected to jobserver (type=%s, fifo=%s)\n"),
+                makelevel, (int)getpid(), (int)getppid(),
+                js_type == js_fifo ? "fifo" : "pipe",
+                fifo_name ? fifo_name : "N/A"));
+
   return 1;
 }
 
@@ -368,6 +380,9 @@ void
 jobserver_release (int is_fatal)
 {
   int r;
+  /* Debug: token release */
+  DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Releasing token (writing char='%c')\n"),
+                makelevel, (int)getpid(), (int)getppid(), token));
   EINTRLOOP (r, write (job_fds[1], &token, 1));
   if (r != 1)
     {
@@ -516,6 +531,12 @@ jobserver_acquire (int timeout)
 
       /* read() should never return 0: only the parent make can reap all the
          tokens and close the write side...??  */
+      if (r > 0)
+        {
+          /* Debug: token acquired */
+          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Acquired token (read char='%c')\n"),
+                        makelevel, (int)getpid(), (int)getppid(), intake));
+        }
       return r > 0;
     }
 }
