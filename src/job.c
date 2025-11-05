@@ -1787,11 +1787,17 @@ start_waiting_job (struct child *c)
 {
   struct file *f = c->file;
 
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: start_waiting_job() called for %s (jobserver_tokens=%u, job_slots_used=%u)\n"),
+                makelevel, (int)getpid(), (int)getppid(), c->file->name, jobserver_tokens, job_slots_used));
+
   /* If we can start a job remotely, we always want to, and don't care about
      the local load average.  We record that the job should be started
      remotely in C->remote for start_job_command to test.  */
 
   c->remote = start_remote_job_p (1);
+  if (c->remote)
+    DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Job %s will be started remotely (bypassing load check)\n"),
+                  makelevel, (int)getpid(), (int)getppid(), c->file->name));
 
   /* If we are running at least one job already and the load average
      is too high, make this one wait.  */
@@ -1802,6 +1808,8 @@ start_waiting_job (struct child *c)
 #endif
           ))
     {
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Load too high for %s (job_slots_used=%u), adding to waiting_jobs queue\n"),
+                    makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used));
       /* Put this child on the chain of children waiting for the load average
          to go down.  */
       set_command_state (f, cs_running);
@@ -1811,6 +1819,8 @@ start_waiting_job (struct child *c)
     }
 
   /* Start the first command; reap_children will run later command lines.  */
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Proceeding to start_job_command() for %s (load OK, job_slots_used=%u)\n"),
+                makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used));
   start_job_command (c);
 
   switch (f->command_state)
@@ -1858,6 +1868,11 @@ new_job (struct file *file)
   struct child *c;
   char **lines;
   unsigned int i;
+
+  /* Debug: entry to new_job showing decision mode */
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: new_job() called for %s - job_slots=%u, jobserver_enabled=%d, job_slots_used=%u\n"),
+                makelevel, (int)getpid(), (int)getppid(), file->name,
+                job_slots, jobserver_enabled () ? 1 : 0, job_slots_used));
 
   /* Let any previously decided-upon jobs that are waiting
      for the load to go down start before this new one.  */
@@ -2000,8 +2015,18 @@ new_job (struct file *file)
      don't bother; also job_slots will == 0 if we're using the jobserver.  */
 
   if (job_slots != 0)
-    while (job_slots_used == job_slots)
-      reap_children (1, 0);
+    {
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: NON-JOBSERVER MODE: job_slots=%u, job_slots_used=%u for %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), job_slots, job_slots_used, file->name));
+      while (job_slots_used == job_slots)
+        {
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Waiting for job slot (job_slots_used=%u == job_slots=%u) for %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
+          reap_children (1, 0);
+        }
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Job slot available (job_slots_used=%u < job_slots=%u) for %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
+    }
 
 #ifdef MAKE_JOBSERVER
   /* If we are controlling multiple jobs make sure we have a token before
@@ -2017,16 +2042,16 @@ new_job (struct file *file)
      this is where the old parallel job code waits, so...  */
 
   else if (jobserver_enabled ())
-    while (1)
-      {
-        int got_token;
+    {
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: JOBSERVER MODE: Entering token acquisition loop for %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), file->name));
+      while (1)
+        {
+          int got_token;
 
-        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Need a job token; we %shave children\n"),
-                      makelevel, (int)getpid(), (int)getppid(), children ? "" : "don't "));
-
-        /* Debug: job allocation decision */
-        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: new_job() for %s - jobserver_tokens=%u, job_slots_used=%u, waiting_jobs=%p\n"),
-                      makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens, job_slots_used, waiting_jobs));
+          DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Token loop iteration for %s - jobserver_tokens=%u, job_slots_used=%u, we %shave children, waiting_jobs=%p\n"),
+                        makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens, job_slots_used,
+                        children ? "" : "don't ", waiting_jobs));
 
         /* If we don't already have a job started, use our "free" token.  */
         if (!jobserver_tokens)
@@ -2037,6 +2062,8 @@ new_job (struct file *file)
           }
 
         /* Prepare for jobserver token acquisition.  */
+        DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Preparing for token acquisition (jobserver_tokens=%u > 0), reaping children and starting waiting jobs for %s\n"),
+                      makelevel, (int)getpid(), (int)getppid(), jobserver_tokens, file->name));
         jobserver_pre_acquire ();
 
         /* Reap anything that's currently waiting.  */
@@ -2077,8 +2104,21 @@ new_job (struct file *file)
                           makelevel, (int)getpid(), (int)getppid(), file->name));
           }
       }
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Exited token acquisition loop for %s (jobserver_tokens=%u)\n"),
+                    makelevel, (int)getpid(), (int)getppid(), file->name, jobserver_tokens));
+    }
+#else
+  /* No jobserver support compiled in */
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: No jobserver support compiled in for %s\n"),
+                makelevel, (int)getpid(), (int)getppid(), file->name));
 #endif
 
+  /* NOTE: We increment jobserver_tokens unconditionally here, even in
+     non-jobserver mode. This is because the child finish code (see
+     child_finished() around line 1190) always decrements jobserver_tokens
+     and has a fatal check if it's 0. So we need to maintain the invariant
+     that jobserver_tokens tracks the number of running jobs, regardless
+     of whether we're using the jobserver mechanism or not. */
   ++jobserver_tokens;
 
   /* Debug: jobserver token count after allocation */
@@ -2149,6 +2189,8 @@ new_job (struct file *file)
 
   /* The job is now primed.  Start it running.
      (This will notice if there is in fact no recipe.)  */
+  DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: About to call start_waiting_job() for %s (jobserver_tokens=%u, job_slots_used=%u)\n"),
+                makelevel, (int)getpid(), (int)getppid(), c->file->name, jobserver_tokens, job_slots_used));
   start_waiting_job (c);
 
   if (job_slots == 1 || not_parallel)
