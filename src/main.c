@@ -181,19 +181,19 @@ static int debug_flag = 0;
 
 int db_level = 0;
 
-/* Get current timestamp as string (format: "SSSSSmmm ") */
+/* Get current timestamp as string (format: "SSnnnnnn " where SS=seconds, nnnnnn=microseconds) */
 void
 db_timestamp (char *buf, size_t bufsize)
 {
   struct timeval tv;
   time_t secs;
-  int milliseconds;
+  long microseconds;
 
   gettimeofday(&tv, NULL);
   secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
-  milliseconds = tv.tv_usec / 1000;  /* convert microseconds to milliseconds */
+  microseconds = tv.tv_usec;  /* microseconds (0-999999) */
 
-  snprintf(buf, bufsize, "%02ld%03d ", (long)secs, milliseconds);
+  snprintf(buf, bufsize, "%02ld%06ld ", (long)secs, microseconds);
 }
 
 /* Synchronize output (--output-sync).  */

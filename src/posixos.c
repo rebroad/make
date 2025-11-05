@@ -212,10 +212,15 @@ jobserver_setup (int slots, const char *style)
 
   while (slots--)
     {
+      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Writing initial token '%c' to jobserver (%d slots remaining)\n"),
+                    makelevel, (int)getpid(), (int)getppid(), token, slots));
       EINTRLOOP (r, write (job_fds[1], &token, 1));
       if (r != 1)
         pfatal_with_name (_("init jobserver pipe"));
     }
+
+  DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Finished writing %d initial tokens to jobserver\n"),
+                makelevel, (int)getpid(), (int)getppid(), total_slots - 1));
 
   /* When using pselect() we want the read to be non-blocking.  */
   set_blocking (job_fds[0], 0);
