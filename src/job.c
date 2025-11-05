@@ -1514,23 +1514,21 @@ start_job_command (struct child *child)
       unsigned long effective_free = 0;
       unsigned long imminent_mb = 0;
       char *cmdline = NULL;
+      char *filename = NULL;
       int profile_idx = -1;
 
-      /* Debug: about to start job */
-      DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: About to start job for %s (jobserver_tokens=%u, job_slots_used=%u)\n"),
-                    makelevel, (int)getpid(), (int)getppid(), child->file->name, jobserver_tokens, job_slots_used));
-      block_sigs ();
+      if (memory_aware_flag)
+        filename = extract_filename_from_argv ((const char **)argv, "job", &cmdline, 0);
 
-      child->remote = 0;
+      /* Debug: about to start job */
+      DB (DB_JOBS, (_("[JOB_START] makelevel=%u PID=%d PPID=%d: About to start job for %s (jobserver_tokens=%u, job_slots_used=%u) cmdline: %s\n"),
+                    makelevel, (int)getpid(), (int)getppid(), child->file->name, jobserver_tokens, job_slots_used,
+                    cmdline ? cmdline : "(none)"));
 
       /* Predictive memory check: extract source file and check if we have enough memory */
       /* This needs to happen BEFORE jobserver_pre_child so we can decide whether to proceed */
       if (memory_aware_flag) {
         unsigned long free_mb;
-        char *filename = NULL;
-
-        /* Extract filename from command using common extraction logic */
-        filename = extract_filename_from_argv ((const char **)argv, "job", &cmdline, 0);
 
         if (filename) {
           /* Look up profile index */
@@ -1592,8 +1590,13 @@ start_job_command (struct child *child)
 
           /* Free the filename extracted from argv */
           free (filename);
+          filename = NULL;
         }
       }
+
+      block_sigs ();
+
+      child->remote = 0;
 
 #ifdef VMS
       child->pid = child_execute_job ((struct childbase *)child, 1, argv);
@@ -1623,7 +1626,7 @@ start_job_command (struct child *child)
       }
 
       if (profile_idx >= 0) {
-        char *filename = memory_profiles[profile_idx].filename;
+        filename = memory_profiles[profile_idx].filename;
         /* We have enough memory! Reserve it and proceed */
         if (memory_profiles[profile_idx].last_used > -1) {
           if (waited) {
