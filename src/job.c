@@ -237,17 +237,6 @@ static int start_waiting_job (struct child *);
 
 struct child *children = 0;
 
-/* Helper function to count running children.  */
-static unsigned int
-count_children (void)
-{
-  unsigned int count = 0;
-  struct child *c;
-  for (c = children; c != 0; c = c->next)
-    ++count;
-  return count;
-}
-
 /* Number of children currently running.  */
 
 unsigned int job_slots_used = 0;
@@ -2028,7 +2017,6 @@ new_job (struct file *file)
     while (1)
       {
         int got_token;
-        unsigned int child_count = count_children ();
 
         DB (DB_JOBS, (_("[JOB_ALLOC] makelevel=%u PID=%d PPID=%d: Need a job token; we %shave children\n"),
                       makelevel, (int)getpid(), (int)getppid(), children ? "" : "don't "));
