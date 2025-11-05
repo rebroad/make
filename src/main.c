@@ -892,7 +892,8 @@ struct shared_memory_data {
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
 static struct shared_memory_data *shared_data = NULL;
 static int shared_memory_fd = -1;
-static const char *SHARED_MEMORY_NAME = "/make_memory_shared";
+static char *shared_memory_name = NULL;  /* Unique per top-level make (e.g., /make_memory_shared12345) */
+#define SHARED_MEMORY_PREFIX "/make_memory_shared"
 #endif
 
 /* Global dirty flag for memory profiles */
@@ -991,6 +992,31 @@ record_file_memory_usage_by_index (int profile_idx, unsigned long memory_mb, int
 
 /* Forward declarations */
 static int init_shared_memory (void);
+static const char *get_shared_memory_name (void);
+
+/* Get shared memory name - unique per top-level make, passed to sub-makes via env */
+static const char *
+get_shared_memory_name (void)
+{
+  const char *env_name;
+
+  /* Sub-makes get the name from environment variable */
+  if (makelevel > 0)
+    {
+      env_name = getenv ("MAKE_SHARED_MEMORY_NAME");
+      if (env_name)
+        return env_name;
+    }
+
+  /* Top-level make: generate unique name based on PID */
+  if (shared_memory_name == NULL)
+    {
+      shared_memory_name = xmalloc (strlen (SHARED_MEMORY_PREFIX) + INTSTR_LENGTH + 1);
+      sprintf (shared_memory_name, "%s%" MK_PRI64_PREFIX "d", SHARED_MEMORY_PREFIX, (long long)make_pid ());
+    }
+
+  return shared_memory_name;
+}
 
 /* Initialize shared memory for inter-process communication */
 static int
@@ -999,9 +1025,13 @@ init_shared_memory (void)
 #if defined(HAVE_SYS_MMAN_H) && defined(HAVE_SHM_OPEN) && defined(HAVE_PTHREAD_H)
   int created = 0;
   struct stat st;
+  const char *shm_name;
+
+  /* Get the shared memory name (unique per top-level make) */
+  shm_name = get_shared_memory_name ();
 
   /* Create or open shared memory object */
-  shared_memory_fd = shm_open (SHARED_MEMORY_NAME, O_CREAT | O_RDWR, 0666);
+  shared_memory_fd = shm_open (shm_name, O_CREAT | O_RDWR, 0666);
   if (shared_memory_fd == -1)
     {
       perror ("shm_open");
@@ -1089,17 +1119,25 @@ cleanup_shared_memory (void)
 
   /* Remove the shared memory object from the system */
   /* Only try to unlink if we actually created shared memory */
-  if (shared_memory_fd != -1) {
-    if (shm_unlink (SHARED_MEMORY_NAME) == -1) {
+  if (shared_memory_name != NULL) {
+    const char *shm_name = get_shared_memory_name ();
+    if (shm_unlink (shm_name) == -1) {
       /* Only report error if it's not "No such file" (ENOENT) */
       if (errno != ENOENT) {
         perror ("shm_unlink");
       } else {
-        DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Shared memory object %s not found (already cleaned up)\n", SHARED_MEMORY_NAME);
+        DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Shared memory object %s not found (already cleaned up)\n", shm_name);
       }
     } else {
-      DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Successfully removed shared memory object: %s\n", SHARED_MEMORY_NAME);
+      DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Successfully removed shared memory object: %s\n", shm_name);
     }
+
+    /* Free the shared memory name */
+    if (shared_memory_name != NULL)
+      {
+        free (shared_memory_name);
+        shared_memory_name = NULL;
+      }
   } else {
     DBM(MEM_DEBUG_VERBOSE, "[DEBUG] No shared memory to clean up (never created)\n");
   }
@@ -1562,7 +1600,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
     unsigned long child_rss_kb = 0;
     unsigned int child_jobs = 0;
     unsigned int child_active_jobs = 0;
-    int found_ppid = 0, found_vmrss = 0, found_state = 0;
+    int found_ppid = 0, found_state = 0;
     char process_state = 0;  /* Process state: 'Z' = zombie, 'R' = running, 'S' = sleeping, etc. */
 
     cmdline = NULL;  /* Reset cmdline for each PID */
@@ -1589,10 +1627,7 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
           found_ppid = 1;
         }
         continue;
-      } else if (sscanf(line, "VmRSS: %lu kB", &rss_kb) == 1) {
-        found_vmrss = 1;
-        break;
-      }
+      } else if (sscanf(line, "VmRSS: %lu kB", &rss_kb) == 1) break;
     }
     fclose(stat_file);
 
@@ -3052,6 +3087,15 @@ main (int argc, char **argv, char **envp)
   if (memory_aware_flag && init_shared_memory () != 0)
     {
       fprintf (stderr, "Warning: Failed to initialize shared memory for memory monitoring\n");
+    }
+  else if (memory_aware_flag && makelevel == 0)
+    {
+      /* Set environment variable for sub-makes to find the shared memory */
+      const char *shm_name = get_shared_memory_name ();
+      define_variable_cname ("MAKE_SHARED_MEMORY_NAME", shm_name,
+                             o_default, 0)->export = v_export;
+      DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Set MAKE_SHARED_MEMORY_NAME=%s for sub-makes (PID=%d, makelevel=%u)\n",
+          shm_name, getpid(), makelevel);
     }
 
   /* Set always_make_flag if -B was given and we've not restarted already.  */
