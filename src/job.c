@@ -1817,24 +1817,6 @@ start_waiting_job (struct child *c)
       return 0;
     }
 
-  /* Check if we should wait based on active jobs count (only in memory-aware mode) */
-  if (memory_aware_flag)
-    {
-      unsigned int active_jobs = get_active_jobs_count ();
-      unsigned int max_jobs = jobserver_enabled () ? 0 : job_slots;  /* Use job_slots in non-jobserver mode, 0 means unlimited */
-
-      /* If we have a job limit and we're at or over it with active jobs, wait */
-      if (max_jobs > 0 && active_jobs >= max_jobs)
-        {
-          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active jobs limit reached for %s (active_jobs=%u >= max_jobs=%u), adding to waiting_jobs queue\n"),
-                        makelevel, (int)getpid(), (int)getppid(), c->file->name, active_jobs, max_jobs));
-          set_command_state (f, cs_running);
-          c->next = waiting_jobs;
-          waiting_jobs = c;
-          return 0;
-        }
-    }
-
   /* Start the first command; reap_children will run later command lines.  */
   DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Proceeding to start_job_command() for %s (load OK, job_slots_used=%u, active_jobs=%u)\n"),
                 makelevel, (int)getpid(), (int)getppid(), c->file->name, job_slots_used, memory_aware_flag ? get_active_jobs_count () : 0));
@@ -2037,16 +2019,39 @@ new_job (struct file *file)
 
   if (job_slots != 0)
     {
-      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: NON-JOBSERVER MODE: job_slots=%u, job_slots_used=%u for %s\n"),
-                    makelevel, (int)getpid(), (int)getppid(), job_slots, job_slots_used, file->name));
-      while (job_slots_used == job_slots)
+      unsigned int current_jobs;
+      unsigned int max_jobs = job_slots;
+
+      /* In memory-aware mode, use active jobs count instead of job_slots_used */
+      if (memory_aware_flag && makelevel == 0)
         {
-          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Waiting for job slot (job_slots_used=%u == job_slots=%u) for %s\n"),
-                        makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
-          reap_children (1, 0);
+          current_jobs = get_active_jobs_count ();
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: NON-JOBSERVER MODE (memory-aware): job_slots=%u, active_jobs=%u (job_slots_used=%u) for %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), job_slots, current_jobs, job_slots_used, file->name));
+          while (current_jobs >= max_jobs)
+            {
+              DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Waiting for active job slot (active_jobs=%u >= job_slots=%u) for %s\n"),
+                            makelevel, (int)getpid(), (int)getppid(), current_jobs, max_jobs, file->name));
+              reap_children (1, 0);
+              current_jobs = get_active_jobs_count ();
+            }
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active job slot available (active_jobs=%u < job_slots=%u) for %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), current_jobs, max_jobs, file->name));
         }
-      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Job slot available (job_slots_used=%u < job_slots=%u) for %s\n"),
-                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
+      else
+        {
+          /* Non-memory-aware mode: use traditional job_slots_used */
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: NON-JOBSERVER MODE: job_slots=%u, job_slots_used=%u for %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), job_slots, job_slots_used, file->name));
+          while (job_slots_used == job_slots)
+            {
+              DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Waiting for job slot (job_slots_used=%u == job_slots=%u) for %s\n"),
+                            makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
+              reap_children (1, 0);
+            }
+          DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Job slot available (job_slots_used=%u < job_slots=%u) for %s\n"),
+                        makelevel, (int)getpid(), (int)getppid(), job_slots_used, job_slots, file->name));
+        }
     }
 
 #ifdef MAKE_JOBSERVER
