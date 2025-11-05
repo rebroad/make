@@ -502,6 +502,23 @@ jobserver_acquire (int timeout)
       char intake;
       unsigned int active_jobs = 0;
 
+      /* First, try a non-blocking read to see if a token is immediately available */
+      EINTRLOOP (r, read (job_fds[0], &intake, 1));
+      if (r > 0)
+        {
+          /* Got token immediately - no waiting needed */
+          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Acquired token immediately (read char='%c') - job_slots_used=%u\n"),
+                        makelevel, (int)getpid(), (int)getppid(), intake, job_slots_used));
+          return 1;
+        }
+
+      if (r < 0 && errno != EAGAIN)
+        {
+          /* Unexpected error */
+          pfatal_with_name (_("read jobs pipe"));
+        }
+
+      /* Token not immediately available - need to wait */
       FD_ZERO (&readfds);
       FD_SET (job_fds[0], &readfds);
 
@@ -537,6 +554,12 @@ jobserver_acquire (int timeout)
                         makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
           return 0;
         }
+
+      /* The read FD is ready: token is available! */
+      if (memory_aware_flag)
+        active_jobs = get_active_jobs_count ();
+      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) - job_slots_used=%u, active_jobs=%u\n"),
+                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
 
       /* The read FD is ready: read it!  This is non-blocking.  */
       EINTRLOOP (r, read (job_fds[0], &intake, 1));
