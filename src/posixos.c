@@ -500,13 +500,16 @@ jobserver_acquire (int timeout)
       fd_set readfds;
       int r;
       char intake;
+      unsigned int active_jobs = 0;
 
       FD_ZERO (&readfds);
       FD_SET (job_fds[0], &readfds);
 
       /* Debug: about to wait for token (no tokens available) */
-      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAITING\033[0m for token (no tokens available in jobserver pipe)\n"),
-                    makelevel, (int)getpid(), (int)getppid()));
+      if (memory_aware_flag)
+        active_jobs = get_active_jobs_count ();
+      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAITING\033[0m for token (no tokens available in jobserver pipe) - job_slots_used=%u, active_jobs=%u\n"),
+                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
 
       r = pselect (job_fds[0]+1, &readfds, NULL, NULL, specp, &empty);
       if (r < 0)
@@ -514,8 +517,8 @@ jobserver_acquire (int timeout)
           {
           case EINTR:
             /* SIGCHLD will show up as an EINTR.  */
-            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired)\n"),
-                          makelevel, (int)getpid(), (int)getppid()));
+            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired) - job_slots_used=%u, active_jobs=%u\n"),
+                          makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
             return 0;
 
           case EBADF:
@@ -530,8 +533,8 @@ jobserver_acquire (int timeout)
       if (r == 0)
         {
           /* Timeout - no tokens available */
-          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mTIMEOUT\033[0m waiting for token (no tokens available after 1 second)\n"),
-                        makelevel, (int)getpid(), (int)getppid()));
+          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mTIMEOUT\033[0m waiting for token (no tokens available after 1 second) - job_slots_used=%u, active_jobs=%u\n"),
+                        makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
           return 0;
         }
 
