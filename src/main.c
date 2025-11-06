@@ -1236,15 +1236,15 @@ get_imminent_memory_mb (void)
 }
 
 unsigned long
-get_memory_stats (unsigned int *percent)
+get_memory_stats (unsigned long *total_mb)
 {
 #ifdef __linux__
   FILE *meminfo;
   unsigned long total_kb = 0, avail_kb = 0;
   char line[256];
 
-  if (percent)
-    *percent = 0;
+  if (total_mb)
+    *total_mb = 0;
 
   meminfo = fopen ("/proc/meminfo", "r");
   if (!meminfo)
@@ -1260,10 +1260,10 @@ get_memory_stats (unsigned int *percent)
 
   fclose (meminfo);
 
-  if (avail_kb > 0)
+  if (avail_kb > 0 && total_kb > 0)
     {
-      if (percent && total_kb > 0)
-        *percent = (unsigned int)(100 - (avail_kb * 100 / total_kb));
+      if (total_mb)
+        *total_mb = total_kb / 1024;
       return avail_kb / 1024;
     }
 #endif
@@ -1398,7 +1398,7 @@ static int monitor_tty_fd = -1;
 
 #ifdef HAVE_PTHREAD_H
 static void
-display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_jobs, unsigned int total_active_jobs, unsigned long make_usage_mb, unsigned long imminent_mb)
+display_memory_status (unsigned long total_mb, unsigned long free_mb, int force, unsigned int total_jobs, unsigned int total_active_jobs, unsigned long make_usage_mb, unsigned long imminent_mb)
 {
   static struct timeval last_display = {0, 0};
   struct timeval now;
@@ -1420,7 +1420,6 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   int col_pos;
   static int write_count = 0;
   static int skip_count = 0;
-  unsigned long total_mb;
   int make_filled, imminent_filled;
   int other_filled, free_filled;
   char output_buf[1024];
@@ -1429,6 +1428,13 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   char debug_msg[128];
   int debug_len;
   int total_used_filled;
+  unsigned int mem_percent;
+  double total_used_filled_exact;
+  double imminent_filled_exact;
+  double make_filled_exact;
+  unsigned long total_used_mb;
+  int overflow;
+  unsigned long other_mb;
 
   if (!memory_aware_flag || disable_memory_display)
     return;
@@ -1458,26 +1464,52 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   spinner = spinners[spinner_state % 10];
   spinner_state++;
 
-  /* Get total memory */
-  total_mb = free_mb / (100 - mem_percent) * 100;
+  /* Calculate memory percentage from total_mb and free_mb */
+  if (total_mb > 0) {
+    mem_percent = (unsigned int)(100 - (free_mb * 100 / total_mb));
+  } else {
+    mem_percent = 0;
+  }
 
   /* Build multi-color memory bar (20 chars) */
   /* Bar shows: [make memory in purple][other used in green][imminent in yellow][free in gray] */
-  make_filled = (make_usage_mb * bar_len) / total_mb;
-  imminent_filled = (imminent_mb * bar_len) / total_mb;
 
-  /* Calculate other_filled and ensure it's not negative */
-  total_used_filled = (mem_percent * bar_len) / 100;
-  other_filled = total_used_filled - make_filled;
-  if (other_filled < 0) other_filled = 0;
+  /* First, calculate total used memory (purple + green) with proper rounding */
+  /* mem_percent is the percentage of memory currently used */
+  total_used_filled_exact = (mem_percent * bar_len) / 100.0;
+  total_used_filled = (int)(total_used_filled_exact + 0.5); /* Round to nearest */
+  if (total_used_filled > bar_len) total_used_filled = bar_len;
+
+  /* Calculate imminent memory (predicted additional usage) */
+  imminent_filled_exact = (imminent_mb * bar_len) / (double)total_mb;
+  imminent_filled = (int)(imminent_filled_exact + 0.5); /* Round to nearest */
+  if (imminent_filled < 0) imminent_filled = 0;
+
+  /* Now split total_used_filled between make and other based on their proportions */
+  total_used_mb = total_mb - free_mb;
+  if (total_used_mb > 0 && total_used_filled > 0) {
+    /* Calculate make_filled proportionally within used memory */
+    make_filled_exact = (make_usage_mb * total_used_filled) / (double)total_used_mb;
+    make_filled = (int)(make_filled_exact + 0.5); /* Round to nearest */
+    if (make_filled < 0) make_filled = 0;
+    if (make_filled > total_used_filled) make_filled = total_used_filled;
+
+    /* Other memory is the remainder of used memory */
+    other_filled = total_used_filled - make_filled;
+    if (other_filled < 0) other_filled = 0;
+  } else {
+    /* No used memory or no total used */
+    make_filled = 0;
+    other_filled = 0;
+  }
 
   /* Calculate free_filled - ensure total doesn't exceed bar_len */
   free_filled = bar_len - make_filled - other_filled - imminent_filled;
 
   /* If segments exceed bar_len, normalize by reducing imminent_filled first (it's predicted, not actual) */
   if (free_filled < 0) {
-    int overflow = -free_filled;
-    unsigned long other_mb = total_mb - free_mb - make_usage_mb; /* Approximate other memory */
+    overflow = -free_filled;
+    other_mb = total_mb - free_mb - make_usage_mb; /* Approximate other memory */
     DBM(MEM_DEBUG_VERBOSE, "[MEMORY] Bar overflow detected: make=%luMB + other~%luMB + imminent=%luMB exceeds total=%luMB, reducing imminent by %d chars\n",
                 make_usage_mb, other_mb, imminent_mb, total_mb, overflow);
     imminent_filled -= overflow;
@@ -1788,8 +1820,8 @@ static unsigned long find_child_descendants(pid_t parent_pid, int depth, int par
 static void *
 memory_monitor_thread_func (void *arg)
 {
-  unsigned int mem_percent;
   unsigned long free_mb;
+  unsigned long total_mb;
 
   //debug_write("[DEBUG] Memory monitor thread started (PID=%d)\n", (int)getpid());
 #if DEBUG_MEMORY_MONITOR
@@ -1872,9 +1904,9 @@ memory_monitor_thread_func (void *arg)
     /* Sleep 100ms between each check for accurate process memory tracking */
     usleep(100000);
 
-    free_mb = get_memory_stats(&mem_percent); // TODO get total_mem instead of percent
+    free_mb = get_memory_stats(&total_mb);
 
-    if (mem_percent == 0) {
+    if (total_mb == 0) {
       DBM(MEM_DEBUG_ERROR, "[ERROR] Could not determine memory usage!\n");
       return NULL;
     }
@@ -1958,7 +1990,7 @@ memory_monitor_thread_func (void *arg)
 
     // Update status display
     total_imminent_mb = total_reserved_mb + total_unused_peaks_mb;
-    display_memory_status (mem_percent, free_mb, 0, total_jobs, total_active_jobs, total_make_mem, total_imminent_mb);
+    display_memory_status (total_mb, free_mb, 0, total_jobs, total_active_jobs, total_make_mem, total_imminent_mb);
 
   } /* while (monitor_thread_running) */
 
