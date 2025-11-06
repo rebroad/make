@@ -1408,7 +1408,7 @@ display_memory_status (unsigned long total_mb, unsigned long free_mb, int force,
   const char *gray = "\033[0;90m";
   const char *white = "\033[1;37m";
   const char *reset = "\033[0m";
-  const char *spinners[] = {"·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢", "·"};
+  const char *spinners[] = {"·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"};
   const char *spinner;
   char bar[256];
   int bar_len = 20;
@@ -1461,7 +1461,7 @@ display_memory_status (unsigned long total_mb, unsigned long free_mb, int force,
   last_display = now;
 
   /* Spinner to show we're alive */
-  spinner = spinners[spinner_state % 11];
+  spinner = spinners[spinner_state % 10];
   spinner_state++;
 
   /* Calculate memory percentage from total_mb and free_mb */
