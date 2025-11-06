@@ -1518,8 +1518,7 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Calculate position (right-aligned with 2 char margin) */
   /* Note: actual visible length is less than total due to ANSI codes */
   col_pos = term_width - visible_len;
-  if (col_pos < 1)
-    col_pos = 1;
+  if (col_pos < 1) col_pos = 1;
 
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */

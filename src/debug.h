@@ -40,24 +40,27 @@ extern int db_level;
 #define ISDB_MEM(_level) \
   ((_level) > 0 && (_level) <= DB_MEM_GET_LEVEL(db_level))
 
+/* Helper macro to expand _x properly for fprintf - uses variadic to handle parenthesized args */
+#define FPRINTF_STDERR_EXPAND(...) fprintf(stderr, __VA_ARGS__)
+
 /* When adding macros to this list be sure to update the value of
    XGETTEXT_OPTIONS in the po/Makevars file.  */
 #define DBS(_l,_x)  do{ if(ISDB(_l)) { \
   char _ts_buf[16]; \
   db_timestamp(_ts_buf, sizeof(_ts_buf)); \
-  printf("%s", _ts_buf); \
+  fprintf(stderr, "%s", _ts_buf); \
   print_spaces (depth); \
-  printf _x; \
-  fflush (stdout); \
+  FPRINTF_STDERR_EXPAND _x; \
+  fflush (stderr); \
 } }while(0)
 
 #define DBF(_l,_x)  do{ if(ISDB(_l)) { \
   char _ts_buf[16]; \
   db_timestamp(_ts_buf, sizeof(_ts_buf)); \
-  printf("%s", _ts_buf); \
+  fprintf(stderr, "%s", _ts_buf); \
   print_spaces (depth); \
-  printf (_x, file->name); \
-  fflush (stdout); \
+  fprintf(stderr, _x, file->name); \
+  fflush (stderr); \
 } }while(0)
 
 /* Helper function to get current timestamp as string (format: "SSSSSmmm ") */
@@ -66,16 +69,16 @@ extern void db_timestamp (char *buf, size_t bufsize);
 #define DB(_l,_x)   do{ if(ISDB(_l)) { \
   char _ts_buf[16]; \
   db_timestamp(_ts_buf, sizeof(_ts_buf)); \
-  printf("%s", _ts_buf); \
-  printf _x; \
-  fflush (stdout); \
+  fprintf(stderr, "%s", _ts_buf); \
+  FPRINTF_STDERR_EXPAND _x; \
+  fflush (stderr); \
 } }while(0)
 
 /* Memory debug macro - replaces debug_write() */
 #define DBM(_level, ...) do{ if(ISDB_MEM(_level)) { \
   char _ts_buf[16]; \
   db_timestamp(_ts_buf, sizeof(_ts_buf)); \
-  printf("%s", _ts_buf); \
-  printf(__VA_ARGS__); \
-  fflush (stdout); \
+  fprintf(stderr, "%s", _ts_buf); \
+  fprintf(stderr, __VA_ARGS__); \
+  fflush (stderr); \
 } }while(0)
