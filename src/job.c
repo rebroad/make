@@ -1820,9 +1820,26 @@ start_waiting_job (struct child *c)
   /* Check if we should wait based on active jobs count (only in memory-aware mode) */
   if (memory_aware_flag) {
     unsigned int active_jobs = get_active_jobs_count ();
-    if (active_jobs >= job_slots) {
-      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active jobs count (%u) >= job slots (%u) for %s, adding to waiting_jobs queue\n"),
-                    makelevel, (int)getpid(), (int)getppid(), active_jobs, job_slots, c->file->name));
+    unsigned int job_limit;
+
+    /* In jobserver mode, use master_job_slots if available (from environment in sub-makes).
+       In non-jobserver mode, use job_slots. */
+    if (jobserver_enabled ()) {
+      if (master_job_slots == 0) {
+        /* No master_job_slots available, skip the check */
+        job_limit = 0;  /* Will skip the comparison */
+      } else {
+        /* Use master_job_slots (from environment in sub-makes) */
+        job_limit = master_job_slots;
+      }
+    } else {
+      /* Non-jobserver mode: use job_slots */
+      job_limit = job_slots;
+    }
+
+    if (job_limit > 0 && active_jobs >= job_limit) {
+      DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active jobs count (%u) >= job limit (%u) for %s, adding to waiting_jobs queue\n"),
+                    makelevel, (int)getpid(), (int)getppid(), active_jobs, job_limit, c->file->name));
       set_command_state (f, cs_running);
       c->next = waiting_jobs;
       waiting_jobs = c;

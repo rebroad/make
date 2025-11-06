@@ -762,6 +762,7 @@ extern unsigned int no_intermediates;
 
 extern char *jobserver_auth;
 extern unsigned int job_slots;
+extern unsigned int master_job_slots;  /* Original job slots when using jobserver (from env in sub-makes) */
 extern unsigned int job_slots_used;  /* Number of currently running child processes */
 extern double max_load_average;
 extern unsigned long get_memory_stats (unsigned long *total_mb);

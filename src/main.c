@@ -258,7 +258,7 @@ struct rlimit stack_limit;
 unsigned int job_slots;
 
 #define INVALID_JOB_SLOTS (-1)
-static unsigned int master_job_slots = 0;
+unsigned int master_job_slots = 0;
 static int arg_job_slots = INVALID_JOB_SLOTS;
 
 static const int default_job_slots = INVALID_JOB_SLOTS;
@@ -3123,12 +3123,18 @@ main (int argc, char **argv, char **envp)
       makelevel = 0;
   }
 
+  /* Read MASTER_JOB_SLOTS from environment if available (for sub-makes) */
+  {
+    const char *env_value = getenv ("MASTER_JOB_SLOTS");
+    if (env_value && env_value[0] != '\0' && env_value[0] != '-')
+      master_job_slots = make_toui (env_value, NULL);
+  }
+
   /* Define MAKE_TOP_LEVEL_CWD as a make variable for child processes (only for top-level make) */
   if (makelevel == 0)
     {
       char *top_cwd = getcwd(NULL, 0);
-      define_variable_global("MAKE_TOP_LEVEL_CWD", sizeof("MAKE_TOP_LEVEL_CWD") - 1,
-                              top_cwd, o_env, 0, NILF);
+      define_variable_cname ("MAKE_TOP_LEVEL_CWD", top_cwd, o_env, 0);
       DBM(MEM_DEBUG_VERBOSE, "[DEBUG] Defined MAKE_TOP_LEVEL_CWD=%s as make variable (PID=%d, makelevel=%u)\n", top_cwd, getpid(), makelevel);
     }
 
@@ -3679,6 +3685,14 @@ main (int argc, char **argv, char **envp)
           /* We're using the jobserver so set job_slots to 0.  */
           master_job_slots = job_slots;
           job_slots = 0;
+          /* Set MASTER_JOB_SLOTS environment variable for sub-makes */
+          {
+            char buf[INTSTR_LENGTH + 1];
+            struct variable *v;
+            sprintf (buf, "%u", master_job_slots);
+            v = define_variable_cname ("MASTER_JOB_SLOTS", buf, o_env, 1);
+            v->export = v_export;
+          }
         }
     }
 
