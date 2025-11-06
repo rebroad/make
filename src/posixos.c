@@ -524,8 +524,8 @@ jobserver_acquire (int timeout)
           {
           case EINTR:
             /* SIGCHLD will show up as an EINTR.  */
-            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired) - job_slots_used=%u,
-                          active_jobs=%u\n"), makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
+            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired) - job_slots_used=%u, active_jobs=%u\n"),
+                          makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
             return 0;
 
           case EBADF:
