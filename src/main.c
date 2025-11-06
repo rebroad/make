@@ -1392,8 +1392,8 @@ static void terminal_cleanup_atexit (void);
 /* Cached terminal width - set once at monitor start, NEVER query ioctl() from thread! */
 static int cached_term_width = 0;
 
-/* Monitor thread's private non-blocking stderr fd (dup of STDERR_FILENO) */
-static int monitor_stderr_fd = -1;
+/* Monitor thread's private fd for terminal display (opened from /dev/tty) */
+static int monitor_tty_fd = -1;
 #endif
 
 #ifdef HAVE_PTHREAD_H
@@ -1537,12 +1537,12 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
     /* Debug EVERY write for now to see gaps */
 #if DEBUG_MEMORY_MONITOR
     debug_len = snprintf(debug_msg, sizeof(debug_msg), "[W%d]", write_count);
-    written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, debug_msg, debug_len);
+    written = write(monitor_tty_fd >= 0 ? monitor_tty_fd : STDERR_FILENO, debug_msg, debug_len);
     (void)written;
 #endif
 
-    /* write() to monitor's private non-blocking fd - never blocks! */
-    written = write(monitor_stderr_fd >= 0 ? monitor_stderr_fd : STDERR_FILENO, output_buf, output_len);
+    /* write() to /dev/tty (or fallback fd) - goes directly to terminal, bypassing stdout/stderr redirection */
+    written = write(monitor_tty_fd >= 0 ? monitor_tty_fd : STDERR_FILENO, output_buf, output_len);
     if (written < 0 && (errno == EPIPE || errno == EBADF)) {
       int saved_errno = errno;
       write_monitor_debug_file ("display_memory_status (broken pipe detected)", saved_errno);
@@ -1821,16 +1821,21 @@ memory_monitor_thread_func (void *arg)
   DBM(MEM_DEBUG_INFO, "[MONITOR] No ioctl support, disabling memory display\n");
 #endif
 
-  /* Use dup() to create private fd for monitor thread
-   * NOTE: We do NOT set O_NONBLOCK because that flag is shared between the original
-   * and dup'd fd (they point to the same file description), which would break echo/printf
-   * in child processes with "write error". Instead, we rely on write() being fast. */
-  monitor_stderr_fd = dup(STDERR_FILENO);
-  if (monitor_stderr_fd >= 0) {
-    DBM(MEM_DEBUG_INFO, "[MONITOR] Using private fd=%d (dup of stderr=%d), term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
-                monitor_stderr_fd, STDERR_FILENO, cached_term_width, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
+  /* Open /dev/tty directly for memory bar display - this ensures it goes to the terminal
+   * even when stdout/stderr are redirected. Falls back to stderr if /dev/tty unavailable. */
+  monitor_tty_fd = open("/dev/tty", O_WRONLY | O_NOCTTY);
+  if (monitor_tty_fd >= 0) {
+    DBM(MEM_DEBUG_INFO, "[MONITOR] Using /dev/tty fd=%d for memory bar, term_width=%d, isatty(stderr)=%d, isatty(stdout)=%d\n",
+                monitor_tty_fd, cached_term_width, isatty(STDERR_FILENO), isatty(STDOUT_FILENO));
   } else {
-    DBM(MEM_DEBUG_INFO, "[ERROR] Failed to dup() stderr, monitor will use STDERR_FILENO\n");
+    /* Fallback to stderr if /dev/tty not available (e.g., no controlling terminal) */
+    monitor_tty_fd = dup(STDERR_FILENO);
+    if (monitor_tty_fd >= 0) {
+      DBM(MEM_DEBUG_INFO, "[MONITOR] /dev/tty unavailable, using stderr fd=%d (dup of stderr=%d), term_width=%d\n",
+                  monitor_tty_fd, STDERR_FILENO, cached_term_width);
+    } else {
+      DBM(MEM_DEBUG_INFO, "[ERROR] Failed to open /dev/tty or dup() stderr, memory bar disabled\n");
+    }
   }
 
   while (monitor_thread_running) {
@@ -1944,9 +1949,9 @@ memory_monitor_thread_func (void *arg)
 #endif
 
   /* Close our private stderr fd */
-  if (monitor_stderr_fd >= 0) {
-    close (monitor_stderr_fd);
-    monitor_stderr_fd = -1;
+  if (monitor_tty_fd >= 0) {
+    close (monitor_tty_fd);
+    monitor_tty_fd = -1;
   }
 
   return NULL;
@@ -2003,14 +2008,14 @@ reset_terminal_state (void)
   ssize_t written;
   int tty_fd = -1;
 
-  /* Try the monitor's stderr fd first if available */
-  if (monitor_stderr_fd >= 0) {
-    written = write(monitor_stderr_fd, reset_seq, sizeof(reset_seq) - 1);
+  /* Try the monitor's tty fd first if available */
+  if (monitor_tty_fd >= 0) {
+    written = write(monitor_tty_fd, reset_seq, sizeof(reset_seq) - 1);
     if (written >= 0) {
-      write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd success)", 0);
+      write_monitor_debug_file ("reset_terminal_state (monitor_tty_fd success)", 0);
       return;
     }
-    write_monitor_debug_file ("reset_terminal_state (monitor_stderr_fd failed)", errno);
+    write_monitor_debug_file ("reset_terminal_state (monitor_tty_fd failed)", errno);
   }
 
   /* Fallback: try /dev/tty directly */
@@ -3008,8 +3013,10 @@ main (int argc, char **argv, char **envp)
   /* Now that we know we'll be running, force stdout to be line-buffered.  */
 #ifdef HAVE_SETVBUF
   setvbuf (stdout, 0, _IOLBF, BUFSIZ);
+  setvbuf (stderr, 0, _IOLBF, BUFSIZ);
 #elif HAVE_SETLINEBUF
   setlinebuf (stdout);
+  setlinebuf (stderr);
 #endif
 
   /* Handle shuffle mode argument.  */
