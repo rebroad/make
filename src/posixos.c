@@ -217,6 +217,11 @@ jobserver_setup (int slots, const char *style)
       EINTRLOOP (r, write (job_fds[1], &token, 1));
       if (r != 1)
         pfatal_with_name (_("init jobserver pipe"));
+      if (memory_aware_flag) { // Double up for memory-aware mode
+        EINTRLOOP (r, write (job_fds[1], &token, 1));
+        if (r != 1)
+          pfatal_with_name (_("init jobserver pipe"));
+      }
     }
 
   DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Finished writing %d initial tokens to jobserver\n"),
@@ -531,8 +536,7 @@ jobserver_acquire (int timeout)
       }
 
       /* Debug: about to wait for token (no tokens available) */
-      if (memory_aware_flag)
-        active_jobs = get_active_jobs_count ();
+      if (memory_aware_flag) active_jobs = get_active_jobs_count ();
       DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAITING\033[0m for token (no tokens available in jobserver pipe) - job_slots_used=%u, active_jobs=%u\n"),
                     makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
 
