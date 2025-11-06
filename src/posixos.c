@@ -484,6 +484,8 @@ jobserver_acquire (int timeout)
   struct timespec spec;
   struct timespec *specp = NULL;
   sigset_t empty;
+  struct timeval wait_start = {0, 0};
+  int wait_started = 0;
 
   sigemptyset (&empty);
 
@@ -522,6 +524,12 @@ jobserver_acquire (int timeout)
       FD_ZERO (&readfds);
       FD_SET (job_fds[0], &readfds);
 
+      /* Record wait start time if this is the first wait */
+      if (!wait_started) {
+        gettimeofday(&wait_start, NULL);
+        wait_started = 1;
+      }
+
       /* Debug: about to wait for token (no tokens available) */
       if (memory_aware_flag)
         active_jobs = get_active_jobs_count ();
@@ -556,10 +564,27 @@ jobserver_acquire (int timeout)
         }
 
       /* The read FD is ready: token is available! */
-      if (memory_aware_flag)
-        active_jobs = get_active_jobs_count ();
-      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) - job_slots_used=%u, active_jobs=%u\n"),
-                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
+      if (memory_aware_flag) active_jobs = get_active_jobs_count ();
+
+      /* Calculate wait duration */
+      if (wait_started) {
+        struct timeval wait_end;
+        long wait_ms, wait_us;
+        gettimeofday(&wait_end, NULL);
+        wait_ms = (wait_end.tv_sec - wait_start.tv_sec) * 1000;
+        wait_us = wait_end.tv_usec - wait_start.tv_usec;
+        wait_ms += wait_us / 1000;
+        /* Handle negative microseconds (carry from seconds) */
+        if (wait_us < 0 && wait_ms > 0) {
+          wait_ms--;
+          wait_us += 1000000;
+        }
+        DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) after %ldms wait - job_slots_used=%u, active_jobs=%u\n"),
+                      makelevel, (int)getpid(), (int)getppid(), wait_ms, job_slots_used, active_jobs));
+      } else {
+        DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) - job_slots_used=%u, active_jobs=%u\n"),
+                      makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
+      }
 
       /* The read FD is ready: read it!  This is non-blocking.  */
       EINTRLOOP (r, read (job_fds[0], &intake, 1));
