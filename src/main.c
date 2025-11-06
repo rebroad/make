@@ -790,6 +790,21 @@ debug_signal_handler (int sig UNUSED)
 }
 #endif
 
+/* Get current timestamp as string (format: "SSnnnnnn " where SS=seconds, nnnnnn=microseconds) */
+void
+db_timestamp (char *buf, size_t bufsize)
+{
+  struct timeval tv;
+  time_t secs;
+  long microseconds;
+
+  gettimeofday(&tv, NULL);
+  secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
+  microseconds = tv.tv_usec;  /* microseconds (0-999999) */
+
+  snprintf(buf, bufsize, "%02ld%06ld ", (long)secs, microseconds);
+}
+
 static void
 decode_debug_flags (void)
 {
