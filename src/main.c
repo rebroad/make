@@ -1398,7 +1398,7 @@ static int monitor_stderr_fd = -1;
 
 #ifdef HAVE_PTHREAD_H
 static void
-display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_jobs, unsigned long make_usage_mb, unsigned long imminent_mb)
+display_memory_status (unsigned int mem_percent, unsigned long free_mb, int force, unsigned int total_jobs, unsigned int total_active_jobs, unsigned long make_usage_mb, unsigned long imminent_mb)
 {
   static struct timeval last_display = {0, 0};
   struct timeval now;
@@ -1508,9 +1508,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Build the status string - show total job count */
   /* Use the total_jobs count we already calculated (no need to scan /proc again) */
 
-  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s%u jobs%s",
+  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s%u *%u) jobs%s",
             spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-            gray, total_jobs, reset);
+            gray, total_jobs, total_active_jobs, reset);
 
   /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
   term_width = cached_term_width;
@@ -1935,7 +1935,7 @@ memory_monitor_thread_func (void *arg)
 
     // Update status display
     total_imminent_mb = total_reserved_mb + total_unused_peaks_mb;
-    display_memory_status (mem_percent, free_mb, 0, total_jobs, total_make_mem, total_imminent_mb);
+    display_memory_status (mem_percent, free_mb, 0, total_jobs, total_active_jobs, total_make_mem, total_imminent_mb);
 
   } /* while (monitor_thread_running) */
 
