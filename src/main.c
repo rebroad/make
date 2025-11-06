@@ -1471,8 +1471,18 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   other_filled = total_used_filled - make_filled;
   if (other_filled < 0) other_filled = 0;
 
+  /* Calculate free_filled - ensure total doesn't exceed bar_len */
   free_filled = bar_len - make_filled - other_filled - imminent_filled;
-  if (free_filled < 0) free_filled = 0;
+
+  /* If segments exceed bar_len, normalize by reducing imminent_filled first (it's predicted, not actual) */
+  if (free_filled < 0) {
+    int overflow = -free_filled;
+    unsigned long other_mb = total_mb - free_mb - make_usage_mb; /* Approximate other memory */
+    DBM(MEM_DEBUG_VERBOSE, "[MEMORY] Bar overflow detected: make=%luMB + other~%luMB + imminent=%luMB exceeds total=%luMB, reducing imminent by %d chars\n",
+                make_usage_mb, other_mb, imminent_mb, total_mb, overflow);
+    imminent_filled -= overflow;
+    free_filled += overflow;
+  }
 
   /* Purple: make-tracked memory */
   if (make_filled > 0) {
