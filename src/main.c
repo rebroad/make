@@ -1508,9 +1508,9 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Build the status string - show total job count */
   /* Use the total_jobs count we already calculated (no need to scan /proc again) */
 
-  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s%u *%u) jobs%s",
+  snprintf(status, sizeof(status), "%s%s %s%u%%%s %s(%luMB)%s %s%u/%u jobs%s",
             spinner, bar, white, mem_percent, reset, gray, free_mb, reset,
-            gray, total_jobs, total_active_jobs, reset);
+            gray, total_active_jobs, total_jobs, reset);
 
   /* Use cached terminal width - NEVER ioctl() from thread (it blocks!) */
   term_width = cached_term_width;
