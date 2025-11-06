@@ -1523,11 +1523,12 @@ display_memory_status (unsigned int mem_percent, unsigned long free_mb, int forc
   /* Move up one line, save cursor, move to right side, display, restore, move down */
   /* This makes the status appear on the line ABOVE the current compilation message */
   /* Use write() for unbuffered, lock-free output - bypasses stdio locking! */
-  /* CRITICAL: Only use cursor save/restore if stderr AND stdout are TTYs - avoid corruption when piped */
-  if (isatty(STDERR_FILENO) && isatty(STDOUT_FILENO)) {
+  /* Since we're writing to /dev/tty directly, we can use cursor positioning if /dev/tty is a TTY */
+  /* Check if our tty fd is actually a TTY (it should be, but check to be safe) */
+  if (monitor_tty_fd >= 0 && isatty(monitor_tty_fd)) {
     output_len = snprintf(output_buf, sizeof(output_buf), "\033[A\033[s\033[%dG%s\033[u\033[B", col_pos, status);
   } else {
-    /* Not a TTY or being piped - just use simple newline to avoid corrupting piped output */
+    /* Not a TTY or fallback mode - just use simple newline to avoid corrupting output */
     output_len = snprintf(output_buf, sizeof(output_buf), "%s\n", status);
   }
 
@@ -1791,28 +1792,36 @@ memory_monitor_thread_func (void *arg)
 
   /* Cache terminal width ONCE before setting non-blocking (ioctl can block!) */
   /* Get terminal width safely by saving/restoring terminal state */
+  /* Use /dev/tty to get terminal width even when stdout/stderr are redirected */
 #ifdef HAVE_SYS_IOCTL_H
   {
     struct winsize w;
     struct termios saved_termios;
+    int tty_fd = -1;
 
-    /* Save current terminal state if stderr is a TTY */
-    int saved_termios_ok = isatty(STDERR_FILENO) && (tcgetattr(STDERR_FILENO, &saved_termios) == 0);
+    /* Try to open /dev/tty for terminal width detection */
+    tty_fd = open("/dev/tty", O_RDWR | O_NOCTTY);
+    if (tty_fd >= 0) {
+      /* Save current terminal state */
+      int saved_termios_ok = (tcgetattr(tty_fd, &saved_termios) == 0);
 
-    /* Get terminal window size */
-    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-      cached_term_width = w.ws_col;
-    }
+      /* Get terminal window size from /dev/tty */
+      if (ioctl(tty_fd, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
+        cached_term_width = w.ws_col;
+      }
 
-    /* Restore terminal state if we saved it */
-    if (saved_termios_ok) {
-      tcsetattr(STDERR_FILENO, TCSANOW, &saved_termios);
+      /* Restore terminal state if we saved it */
+      if (saved_termios_ok) {
+        tcsetattr(tty_fd, TCSANOW, &saved_termios);
+      }
+
+      close(tty_fd);
     }
 
     /* If we couldn't get terminal width, disable memory display */
     if (!cached_term_width) {
       disable_memory_display = 1;
-      DBM(MEM_DEBUG_INFO, "[MONITOR] Could not obtain terminal width, disabling memory display\n");
+      DBM(MEM_DEBUG_INFO, "[MONITOR] Could not obtain terminal width from /dev/tty, disabling memory display\n");
     }
   }
 #else
