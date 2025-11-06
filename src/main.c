@@ -158,6 +158,21 @@ static int debug_flag = 0;
 
 int db_level = 0;
 
+/* Get current timestamp as string (format: "SSnnnnnn " where SS=seconds, nnnnnn=microseconds) */
+void
+db_timestamp (char *buf, size_t bufsize)
+{
+  struct timeval tv;
+  time_t secs;
+  long microseconds;
+
+  gettimeofday(&tv, NULL);
+  secs = tv.tv_sec % 60;  /* seconds from 0 to 59 */
+  microseconds = tv.tv_usec;  /* microseconds (0-999999) */
+
+  snprintf(buf, bufsize, "%02ld%06ld ", (long)secs, microseconds);
+}
+
 /* Synchronize output (--output-sync).  */
 
 char *output_sync_option = 0;
@@ -1641,8 +1656,10 @@ main (int argc, char **argv, char **envp)
   /* Now that we know we'll be running, force stdout to be line-buffered.  */
 #ifdef HAVE_SETVBUF
   setvbuf (stdout, 0, _IOLBF, BUFSIZ);
+  setvbuf (stderr, 0, _IOLBF, BUFSIZ);
 #elif HAVE_SETLINEBUF
   setlinebuf (stdout);
+  setlinebuf (stderr);
 #endif
 
   /* Handle shuffle mode argument.  */
