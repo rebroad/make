@@ -2591,10 +2591,6 @@ main (int argc, char **argv, char **envp)
   unsigned int restarts = 0;
   unsigned int syncing = 0;
   int argv_slots;  /* The jobslot info we got from our parent process.  */
-
-
-
-  /* Memory profiles will be loaded lazily when needed for PREDICT decisions */
 #ifdef WINDOWS32
   const char *unix_path = NULL;
   const char *windows32_path = NULL;
@@ -2618,8 +2614,7 @@ main (int argc, char **argv, char **envp)
   if (ANY_SET (check_io_state (), IO_STDOUT_OK))
     atexit (close_stdout);
   /* Only top-level make should stop the monitor thread */
-  if (makelevel == 0)
-    atexit (stop_memory_monitor_atexit);
+  if (makelevel == 0) atexit (stop_memory_monitor_atexit);
 #endif
 
   output_init (&make_sync);
@@ -3725,6 +3720,8 @@ main (int argc, char **argv, char **envp)
         }
     }
 
+  if (jobserver_auth)
+    DB (DB_VERBOSE|DB_JOBS, (_("Using jobserver controller %s\n"), jobserver_auth));
   if (sync_mutex)
     DB (DB_VERBOSE, (_("Using output-sync mutex %s\n"), sync_mutex));
 

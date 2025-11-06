@@ -219,8 +219,7 @@ jobserver_setup (int slots, const char *style)
         pfatal_with_name (_("init jobserver pipe"));
       if (memory_aware_flag) { // Double up for memory-aware mode
         EINTRLOOP (r, write (job_fds[1], &token, 1));
-        if (r != 1)
-          pfatal_with_name (_("init jobserver pipe"));
+        if (r != 1) pfatal_with_name (_("init jobserver pipe"));
       }
     }
 
@@ -234,8 +233,7 @@ jobserver_setup (int slots, const char *style)
 
   /* Debug: jobserver setup (only top-level make creates jobserver) */
   DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Created jobserver with %d slots (type=%s, fifo=%s)\n"),
-                makelevel, (int)getpid(), (int)getppid(), total_slots,
-                js_type == js_fifo ? "fifo" : "pipe",
+                makelevel, (int)getpid(), (int)getppid(), total_slots, js_type == js_fifo ? "fifo" : "pipe",
                 fifo_name ? fifo_name : "N/A"));
 
   return 1;
@@ -317,8 +315,7 @@ jobserver_parse_auth (const char *auth)
 
   /* Debug: sub-make connecting to jobserver */
   DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Connected to jobserver (type=%s, fifo=%s)\n"),
-                makelevel, (int)getpid(), (int)getppid(),
-                js_type == js_fifo ? "fifo" : "pipe",
+                makelevel, (int)getpid(), (int)getppid(), js_type == js_fifo ? "fifo" : "pipe",
                 fifo_name ? fifo_name : "N/A"));
 
   return 1;
@@ -509,23 +506,6 @@ jobserver_acquire (int timeout)
       char intake;
       unsigned int active_jobs = 0;
 
-      /* First, try a non-blocking read to see if a token is immediately available */
-      EINTRLOOP (r, read (job_fds[0], &intake, 1));
-      if (r > 0)
-        {
-          /* Got token immediately - no waiting needed */
-          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: Acquired token immediately (read char='%c') - job_slots_used=%u\n"),
-                        makelevel, (int)getpid(), (int)getppid(), intake, job_slots_used));
-          return 1;
-        }
-
-      if (r < 0 && errno != EAGAIN)
-        {
-          /* Unexpected error */
-          pfatal_with_name (_("read jobs pipe"));
-        }
-
-      /* Token not immediately available - need to wait */
       FD_ZERO (&readfds);
       FD_SET (job_fds[0], &readfds);
 
@@ -537,8 +517,6 @@ jobserver_acquire (int timeout)
 
       /* Debug: about to wait for token (no tokens available) */
       if (memory_aware_flag) active_jobs = get_active_jobs_count ();
-      DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAITING\033[0m for token (no tokens available in jobserver pipe) - job_slots_used=%u, active_jobs=%u\n"),
-                    makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
 
       r = pselect (job_fds[0]+1, &readfds, NULL, NULL, specp, &empty);
       if (r < 0)
@@ -546,8 +524,8 @@ jobserver_acquire (int timeout)
           {
           case EINTR:
             /* SIGCHLD will show up as an EINTR.  */
-            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired) - job_slots_used=%u, active_jobs=%u\n"),
-                          makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
+            DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;33mWAIT INTERRUPTED\033[0m by signal (no token acquired) - job_slots_used=%u,
+                          active_jobs=%u\n"), makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
             return 0;
 
           case EBADF:
@@ -570,7 +548,7 @@ jobserver_acquire (int timeout)
       /* The read FD is ready: token is available! */
       if (memory_aware_flag) active_jobs = get_active_jobs_count ();
 
-      /* Calculate wait duration */
+      /* Calculate wait duration and debug if wait was significant (>200ms) */
       if (wait_started) {
         struct timeval wait_end;
         long wait_ms, wait_us;
@@ -583,11 +561,11 @@ jobserver_acquire (int timeout)
           wait_ms--;
           wait_us += 1000000;
         }
-        DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) after %ldms wait - job_slots_used=%u, active_jobs=%u\n"),
-                      makelevel, (int)getpid(), (int)getppid(), wait_ms, job_slots_used, active_jobs));
-      } else {
-        DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available (read FD ready) - job_slots_used=%u, active_jobs=%u\n"),
-                      makelevel, (int)getpid(), (int)getppid(), job_slots_used, active_jobs));
+        /* Only debug if wait was significant (>200ms) */
+        if (wait_ms > 200) {
+          DB (DB_JOBS, (_("[JOBSERVER] makelevel=%u PID=%d PPID=%d: \033[1;32mRESUMING\033[0m - token became available after %ldms wait - job_slots_used=%u, active_jobs=%u\n"),
+                        makelevel, (int)getpid(), (int)getppid(), wait_ms, job_slots_used, active_jobs));
+        }
       }
 
       /* The read FD is ready: read it!  This is non-blocking.  */
