@@ -1,5 +1,4 @@
-= Make decendants within shared memory? (If already a memory_profile, create the decendant within job.c) still use reserved_mb? or total of old_peaks?
-= Unreserve_mb as soon as new decendant detected (and use total_old_peaks = total_current_mb instead for imminent calc)
 = Remove some of that TTY fix code (as probably wasn't needed given the final fix was simple)
-= Make memory_profiles resize as needed
-= Fix memory bar (imminent can take it over 100%)
+= Instead of iterating through ALL of /proc, we should iterate through the reserved array and the decendants array.
+= In fact, we could probably combined reserved and decendants into one. Create entres within job.c (and add to reserved_mb), then when we see it in
+  monitor_thread, mark it active (by updating peak_mb) and remove it from the reserve_mb total.
