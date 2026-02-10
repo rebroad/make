@@ -1837,7 +1837,10 @@ start_waiting_job (struct child *c)
       job_limit = job_slots;
     }
 
-    if (job_limit > 0 && active_jobs >= job_limit) {
+    /* Only enforce active-jobs gating when parallelism is >1.
+       This avoids spinning in -j1 / serial mode while still applying
+       the gate for parallel builds. */
+    if (job_limit > 1 && active_jobs >= job_limit) {
       DB (DB_JOBS, (_("[JOB_DECIDE] makelevel=%u PID=%d PPID=%d: Active jobs count (%u) >= job limit (%u) for %s, adding to waiting_jobs queue\n"),
                     makelevel, (int)getpid(), (int)getppid(), active_jobs, job_limit, c->file->name));
       set_command_state (f, cs_running);
