@@ -1,3 +1,4 @@
+= Add CPUtime usage per file -> reliable progres bars!
 = Remove some of that TTY fix code (as probably wasn't needed given the final fix was simple)
 = Instead of iterating through ALL of /proc, we should iterate through the reserved array and the decendants array.
 = In fact, we could probably combined reserved and decendants into one. Create entres within job.c (and add to reserved_mb), then when we see it in
